@@ -4,6 +4,7 @@
 
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   Table,
   TableBody,
@@ -124,6 +125,7 @@ export function HospitalTable({ hospitals }: HospitalTableProps) {
         <TableHeader>
           <TableRow>
             <SortableHeader label="โรงพยาบาล" columnKey="name" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <TableHead>ฝากครรภ์</TableHead>
             <SortableHeader label="ระดับ" columnKey="level" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortableHeader label="เสี่ยงต่ำ" columnKey="low" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortableHeader label="เสี่ยงปานกลาง" columnKey="medium" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -144,6 +146,14 @@ export function HospitalTable({ hospitals }: HospitalTableProps) {
               onClick={() => router.push(`/hospitals/${h.hcode}`)}
             >
               <TableCell className="font-medium">{h.name}</TableCell>
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                <Link
+                  href={`/hospitals/${h.hcode}/pregnancies`}
+                  className="rounded-md bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100 transition-colors"
+                >
+                  ดูฝากครรภ์
+                </Link>
+              </TableCell>
               <TableCell>
                 <Badge variant="outline">{h.level}</Badge>
               </TableCell>
