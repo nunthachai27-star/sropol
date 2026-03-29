@@ -274,8 +274,9 @@ export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageK
   firstOfMonth.setHours(0, 0, 0, 0);
   const monthStart = firstOfMonth.toISOString();
 
-  const deliveredRows = await db.query<{ total: number; low_apgar: number; lbw: number }>(
+  const deliveredRows = await db.query<{ total: number; abnormal: number; low_apgar: number; lbw: number }>(
     `SELECT COUNT(*) as total,
+            SUM(CASE WHEN cn.apgar_1min < 7 OR cn.birth_weight_g < 2500 THEN 1 ELSE 0 END) as abnormal,
             SUM(CASE WHEN cn.apgar_1min < 7 THEN 1 ELSE 0 END) as low_apgar,
             SUM(CASE WHEN cn.birth_weight_g < 2500 THEN 1 ELSE 0 END) as lbw
      FROM cached_newborns cn
@@ -284,8 +285,9 @@ export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageK
     [monthStart],
   );
 
-  const dr = deliveredRows[0] || { total: 0, low_apgar: 0, lbw: 0 };
+  const dr = deliveredRows[0] || { total: 0, abnormal: 0, low_apgar: 0, lbw: 0 };
   const totalDelivered = Number(dr.total) || 0;
+  const abnormal = Number(dr.abnormal) || 0;
   const lowApgar = Number(dr.low_apgar) || 0;
   const lbw = Number(dr.lbw) || 0;
 
@@ -294,7 +296,7 @@ export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageK
     labor,
     delivered: {
       total: totalDelivered,
-      normal: totalDelivered - lowApgar - lbw,
+      normal: totalDelivered - abnormal,
       lowApgar,
       lbw,
     },
@@ -309,11 +311,14 @@ export async function getDashboardAlerts(db: DatabaseAdapter): Promise<Dashboard
   );
 
   // Overdue ANC: pregnancies where last_anc_date is > 28 days ago
+  // Uses date string comparison — works in both SQLite and PostgreSQL
+  const twentyEightDaysAgo = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString();
   const overdueAnc = await db.query<{ count: number }>(
     `SELECT COUNT(*) as count FROM maternal_journeys
      WHERE care_stage = 'PREGNANCY'
        AND last_anc_date IS NOT NULL
-       AND julianday('now') - julianday(last_anc_date) > 28`,
+       AND last_anc_date < ?`,
+    [twentyEightDaysAgo],
   );
 
   // In-transit referrals
