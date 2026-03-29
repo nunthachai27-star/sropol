@@ -156,3 +156,113 @@ export const CHECK_TABLES: SqlQueryTemplate = {
     WHERE table_schema = DATABASE()
       AND table_name IN ('ipt', 'ipt_pregnancy', 'ipt_labour', 'ipt_pregnancy_vital_sign', 'labor', 'patient')`,
 };
+
+// ANC registered patients (filtered by registration date)
+export const ANC_PATIENTS: SqlQueryTemplate = {
+  postgresql: `
+      SELECT pa.person_anc_id, pa.person_id, pt.hn,
+             CONCAT(pt.pname, pt.fname, ' ', pt.lname) AS fullname,
+             pt.cid, pt.birthday,
+             pa.preg_no, pa.lmp, pa.edc, pa.anc_register_date
+      FROM person_anc pa
+      JOIN patient pt ON pt.person_id = pa.person_id
+      WHERE pa.anc_register_date >= $1
+      ORDER BY pa.anc_register_date DESC`,
+  mysql: `
+      SELECT pa.person_anc_id, pa.person_id, pt.hn,
+             CONCAT(pt.pname, pt.fname, ' ', pt.lname) AS fullname,
+             pt.cid, pt.birthday,
+             pa.preg_no, pa.lmp, pa.edc, pa.anc_register_date
+      FROM person_anc pa
+      JOIN patient pt ON pt.person_id = pa.person_id
+      WHERE pa.anc_register_date >= ?
+      ORDER BY pa.anc_register_date DESC`,
+};
+
+// ANC visit services for a specific person_anc_id
+export const ANC_SERVICES: SqlQueryTemplate = {
+  postgresql: `
+      SELECT pas.person_anc_service_id, pas.person_anc_id,
+             pas.service_date, pas.anc_service_number,
+             pas.pa_week, pas.pa_day,
+             pas.fundal_height, pas.bw,
+             os.bps, os.bpd,
+             pas.fetal_heart_rate,
+             pas.baby_position, pas.baby_lead,
+             pas.pass_quality, pas.doctor_code
+      FROM person_anc_service pas
+      LEFT JOIN opdscreen os ON os.vn = pas.vn
+      WHERE pas.person_anc_id = $1
+      ORDER BY pas.service_date`,
+  mysql: `
+      SELECT pas.person_anc_service_id, pas.person_anc_id,
+             pas.service_date, pas.anc_service_number,
+             pas.pa_week, pas.pa_day,
+             pas.fundal_height, pas.bw,
+             os.bps, os.bpd,
+             pas.fetal_heart_rate,
+             pas.baby_position, pas.baby_lead,
+             pas.pass_quality, pas.doctor_code
+      FROM person_anc_service pas
+      LEFT JOIN opdscreen os ON os.vn = pas.vn
+      WHERE pas.person_anc_id = ?
+      ORDER BY pas.service_date`,
+};
+
+// ANC risk flags for a specific person_anc_id
+export const ANC_RISKS: SqlQueryTemplate = {
+  postgresql: `
+      SELECT par.person_anc_risk_id, par.person_anc_id, par.anc_risk_id
+      FROM person_anc_risk par
+      WHERE par.person_anc_id = $1`,
+  mysql: `
+      SELECT par.person_anc_risk_id, par.person_anc_id, par.anc_risk_id
+      FROM person_anc_risk par
+      WHERE par.person_anc_id = ?`,
+};
+
+// ANC classifying items for a specific person_anc_id
+export const ANC_CLASSIFYING: SqlQueryTemplate = {
+  postgresql: `
+      SELECT pac.person_anc_classifying_id, pac.person_anc_id,
+             pac.person_anc_classifying_item_id, pac.check_value
+      FROM person_anc_classifying pac
+      WHERE pac.person_anc_id = $1`,
+  mysql: `
+      SELECT pac.person_anc_classifying_id, pac.person_anc_id,
+             pac.person_anc_classifying_item_id, pac.check_value
+      FROM person_anc_classifying pac
+      WHERE pac.person_anc_id = ?`,
+};
+
+// Infant records for a specific admission number
+export const LABOUR_INFANTS: SqlQueryTemplate = {
+  postgresql: `
+      SELECT li.ipt_labour_infant_id, li.ipt_labour_id, li.an,
+             li.infant_number, li.sex, li.birth_weight, li.body_length, li.head_length,
+             li.temperature, li.rr, li.hr,
+             li.apgar_score_min1, li.apgar_score_min5, li.apgar_score_min10,
+             li.infant_check_ppv, li.infant_check_et_tube, li.infant_check_chest_pump,
+             li.infant_check_oxygen_box, li.infant_check_narcan,
+             li.infant_check_feed_milk, li.infant_check_vitk, li.infant_check_eyepaste,
+             li.infant_check_bcg, li.infant_check_hepb, li.infant_check_azt,
+             li.infant_icd10, li.infant_hn, li.infant_an, li.infant_dchstts,
+             li.birth_date, li.birth_time
+      FROM ipt_labour_infant li
+      JOIN ipt_labour il ON il.ipt_labour_id = li.ipt_labour_id
+      WHERE il.an = $1`,
+  mysql: `
+      SELECT li.ipt_labour_infant_id, li.ipt_labour_id, li.an,
+             li.infant_number, li.sex, li.birth_weight, li.body_length, li.head_length,
+             li.temperature, li.rr, li.hr,
+             li.apgar_score_min1, li.apgar_score_min5, li.apgar_score_min10,
+             li.infant_check_ppv, li.infant_check_et_tube, li.infant_check_chest_pump,
+             li.infant_check_oxygen_box, li.infant_check_narcan,
+             li.infant_check_feed_milk, li.infant_check_vitk, li.infant_check_eyepaste,
+             li.infant_check_bcg, li.infant_check_hepb, li.infant_check_azt,
+             li.infant_icd10, li.infant_hn, li.infant_an, li.infant_dchstts,
+             li.birth_date, li.birth_time
+      FROM ipt_labour_infant li
+      JOIN ipt_labour il ON il.ipt_labour_id = li.ipt_labour_id
+      WHERE il.an = ?`,
+};
