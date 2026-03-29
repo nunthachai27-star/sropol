@@ -30,11 +30,25 @@ export async function initiateReferral(
   return getReferralById(db, id);
 }
 
+async function assertReferralStatus(
+  db: DatabaseAdapter,
+  referralId: string,
+  expectedStatus: ReferralStatus,
+): Promise<void> {
+  const current = await getReferralById(db, referralId);
+  if (current.status !== expectedStatus) {
+    throw new Error(
+      `ไม่สามารถดำเนินการได้: สถานะปัจจุบัน "${current.status}" ต้องเป็น "${expectedStatus}"`,
+    );
+  }
+}
+
 export async function acceptReferral(
   db: DatabaseAdapter,
   referralId: string,
   acceptedBy: string,
 ): Promise<CachedReferral> {
+  await assertReferralStatus(db, referralId, ReferralStatus.INITIATED);
   const now = new Date().toISOString();
   await db.execute(
     `UPDATE cached_referrals SET status = ?, accepted_at = ?, accepted_by = ?, updated_at = ? WHERE id = ?`,
@@ -49,6 +63,7 @@ export async function rejectReferral(
   reason: string,
   suggestedAlternativeId?: string,
 ): Promise<CachedReferral> {
+  await assertReferralStatus(db, referralId, ReferralStatus.INITIATED);
   const now = new Date().toISOString();
   await db.execute(
     `UPDATE cached_referrals SET status = ?, rejected_at = ?, rejection_reason = ?, suggested_alternative_id = ?, updated_at = ? WHERE id = ?`,
@@ -62,6 +77,7 @@ export async function markInTransit(
   referralId: string,
   transportMode: string,
 ): Promise<CachedReferral> {
+  await assertReferralStatus(db, referralId, ReferralStatus.ACCEPTED);
   const now = new Date().toISOString();
   await db.execute(
     `UPDATE cached_referrals SET status = ?, departed_at = ?, transport_mode = ?, updated_at = ? WHERE id = ?`,
@@ -75,6 +91,7 @@ export async function confirmArrival(
   referralId: string,
   _receivingAn: string,
 ): Promise<CachedReferral> {
+  await assertReferralStatus(db, referralId, ReferralStatus.IN_TRANSIT);
   const now = new Date().toISOString();
   await db.execute(
     `UPDATE cached_referrals SET status = ?, arrived_at = ?, updated_at = ? WHERE id = ?`,

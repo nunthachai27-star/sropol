@@ -266,3 +266,30 @@ export const LABOUR_INFANTS: SqlQueryTemplate = {
       JOIN ipt_labour il ON il.ipt_labour_id = li.ipt_labour_id
       WHERE il.an = ?`,
 };
+
+export const REFEROUT_PREGNANCY: SqlQueryTemplate = {
+  postgresql: `
+      SELECT ro.refer_number, ro.refer_date, p.hn,
+             ro.refer_hospcode, ro.icd10,
+             ro.referout_emergency_type_id
+      FROM referout ro
+      JOIN ovst o ON o.vn = ro.vn
+      JOIN patient p ON p.hn = o.hn
+      JOIN ipt_pregnancy ip ON ip.an = (
+        SELECT i.an FROM ipt i WHERE i.vn = o.vn LIMIT 1
+      )
+      WHERE ro.refer_date >= $1
+      ORDER BY ro.refer_date DESC`,
+  mysql: `
+      SELECT ro.refer_number, ro.refer_date, p.hn,
+             ro.refer_hospcode, ro.icd10,
+             ro.referout_emergency_type_id
+      FROM referout ro
+      JOIN ovst o ON o.vn = ro.vn
+      JOIN patient p ON p.hn = o.hn
+      JOIN ipt_pregnancy ip ON ip.an = (
+        SELECT i.an FROM ipt i WHERE i.vn = o.vn LIMIT 1
+      )
+      WHERE ro.refer_date >= ?
+      ORDER BY ro.refer_date DESC`,
+};

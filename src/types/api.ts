@@ -301,3 +301,20 @@ export interface DashboardAlerts {
   overdueAnc: number;
   inTransitReferrals: number;
 }
+
+export interface ReferralListResponse {
+  referrals: ReferralListItem[];
+  pagination: Pagination;
+}
+
+export interface ReferralDetailResponse {
+  referral: ReferralListItem & {
+    diagnosisCode: string | null;
+    rejectionReason: string | null;
+    transportMode: string | null;
+    acceptedAt: string | null;
+    departedAt: string | null;
+    rejectedAt: string | null;
+    journeyId: string;
+  };
+}
