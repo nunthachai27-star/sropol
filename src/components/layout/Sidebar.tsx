@@ -14,6 +14,9 @@ import {
   ChevronRight,
   Menu,
   X,
+  Baby,
+  ArrowRightLeft,
+  BarChart3,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -26,7 +29,10 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/', label: 'แดชบอร์ด', icon: LayoutDashboard },
+  { href: '/pregnancies', label: 'ฝากครรภ์', icon: Baby },
   { href: '/hospitals', label: 'โรงพยาบาล', icon: Building2 },
+  { href: '/referrals', label: 'ส่งต่อ', icon: ArrowRightLeft },
+  { href: '/outcomes', label: 'ผลลัพธ์ทารก', icon: BarChart3 },
   { href: '/admin', label: 'ตั้งค่า', icon: Settings, adminOnly: true },
 ];
 
@@ -78,7 +84,7 @@ export function Sidebar() {
           <div className="min-w-0">
             <div className="text-lg font-bold tracking-tight text-white">KK-LRMS</div>
             <div className="truncate text-sm text-slate-400">
-              ระบบติดตามการคลอด
+              ระบบติดตามครรภ์-คลอด
             </div>
           </div>
         )}

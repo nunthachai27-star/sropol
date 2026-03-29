@@ -8,6 +8,8 @@ import { useKioskMode } from '@/hooks/useKioskMode';
 import { useSyncTrigger } from '@/hooks/useSyncTrigger';
 import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
 import { SummaryCards } from '@/components/dashboard/SummaryCards';
+import { StageKPICards } from '@/components/dashboard/StageKPICards';
+import { AlertBar } from '@/components/dashboard/AlertBar';
 import { RiskDistributionChart } from '@/components/dashboard/RiskDistributionChart';
 import { ConnectionSummary } from '@/components/dashboard/ConnectionSummary';
 import { HighRiskPatientList } from '@/components/dashboard/HighRiskPatientList';
@@ -18,7 +20,7 @@ import { Monitor, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function DashboardPage() {
   useSetBreadcrumbs([{ label: 'แดชบอร์ด' }]);
-  const { hospitals, summary, updatedAt, isLoading, mutate } = useDashboard();
+  const { hospitals, summary, stageKPIs, alerts, updatedAt, isLoading, mutate } = useDashboard();
   const { patients: highRiskPatients, isLoading: hrLoading, mutate: hrMutate } = useHighRiskPatients();
   const { isKiosk, toggleKiosk, exitKiosk } = useKioskMode();
 
@@ -164,10 +166,16 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Row 1: Summary Cards */}
+      {/* Row 1: Alert Bar */}
+      <AlertBar alerts={alerts} />
+
+      {/* Row 2: Stage KPI Cards (Pregnancy / Labor / Delivered) */}
+      <StageKPICards stageKPIs={stageKPIs} />
+
+      {/* Row 3: Summary Cards (labor risk breakdown) */}
       <SummaryCards summary={summary} />
 
-      {/* Row 2: Risk Distribution + Connection Summary */}
+      {/* Row 4: Risk Distribution + Connection Summary */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <RiskDistributionChart summary={summary} />
