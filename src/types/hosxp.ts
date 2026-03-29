@@ -110,6 +110,7 @@ export interface HosxpAncServiceRow {
   bw: number | null;
   bps: number | null;
   bpd: number | null;
+  height: number | null;
   fetal_heart_rate: number | null;
   baby_position: string | null;
   baby_lead: string | null;

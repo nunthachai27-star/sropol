@@ -41,6 +41,17 @@ export interface AncRiskLevelConfig {
   action: string;
 }
 
+// Mapping from HOSxP anc_risk_id to lab boolean flags
+// These IDs correspond to entries in the HOSxP anc_risk lookup table
+export const HOSXP_RISK_TO_LAB_FLAGS: Record<number, keyof Pick<AncRiskInput, 'rhNegative' | 'hbsAgPositive' | 'syphilisPositive' | 'hivPositive' | 'thalassemiaDisease' | 'niptHighRisk'>> = {
+  21: 'rhNegative',
+  22: 'hbsAgPositive',
+  23: 'syphilisPositive',
+  24: 'hivPositive',
+  25: 'thalassemiaDisease',
+  26: 'niptHighRisk',
+};
+
 export const ANC_RISK_LEVEL_ORDER: Record<AncRiskLevel, number> = {
   [AncRiskLevel.LOW]: 0,
   [AncRiskLevel.HR1]: 1,

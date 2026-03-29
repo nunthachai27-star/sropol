@@ -186,7 +186,7 @@ export const ANC_SERVICES: SqlQueryTemplate = {
              pas.service_date, pas.anc_service_number,
              pas.pa_week, pas.pa_day,
              pas.fundal_height, pas.bw,
-             os.bps, os.bpd,
+             os.bps, os.bpd, os.height,
              pas.fetal_heart_rate,
              pas.baby_position, pas.baby_lead,
              pas.pass_quality, pas.doctor_code
@@ -199,7 +199,7 @@ export const ANC_SERVICES: SqlQueryTemplate = {
              pas.service_date, pas.anc_service_number,
              pas.pa_week, pas.pa_day,
              pas.fundal_height, pas.bw,
-             os.bps, os.bpd,
+             os.bps, os.bpd, os.height,
              pas.fetal_heart_rate,
              pas.baby_position, pas.baby_lead,
              pas.pass_quality, pas.doctor_code

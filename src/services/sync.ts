@@ -10,6 +10,7 @@ import { upsertNewborn } from '@/services/newborn';
 import { evaluateAncRisk } from '@/services/anc-risk';
 import type { HosxpPersonAncRow, HosxpAncServiceRow, HosxpAncRiskRow, HosxpAncClassifyingRow, HosxpLabourInfantRow } from '@/types/hosxp';
 import type { AncRiskInput } from '@/config/anc-risk-rules';
+import { HOSXP_RISK_TO_LAB_FLAGS } from '@/config/anc-risk-rules';
 import { AncRiskLevel } from '@/types/domain';
 
 export interface SyncPatientData {
@@ -770,27 +771,48 @@ export async function syncAncData(
     const patientClassifying = ancClassifying.filter((c) => c.person_anc_id === anc.person_anc_id);
     const latestVisit = lastVisit;
 
-    const riskInput: AncRiskInput = {
-      age,
-      heightCm: 160, // Default — real value from opdscreen
-      prePregnancyBmi: 22, // Default — real value from opdscreen
-      gravida: anc.preg_no,
-      bpSystolic: latestVisit?.bps ?? 120,
-      bpDiastolic: latestVisit?.bpd ?? 80,
-      o2Sat: 98,
-      hct: 36,
-      hb: 12,
-      hosxpRiskIds: patientRisks.map((r) => r.anc_risk_id),
-      classifyingItems: patientClassifying.map((c) => ({
-        itemId: c.person_anc_classifying_item_id,
-        value: c.check_value,
-      })),
+    // Get height from first ANC visit with opdscreen data
+    const firstVisitWithHeight = visits.find((v) => v.height != null);
+    const heightCm = firstVisitWithHeight?.height ?? 160;
+
+    // Get weight from first visit for pre-pregnancy BMI
+    const firstVisitWeight = visits.find((v) => v.bw != null)?.bw;
+    const prePregnancyBmi = (firstVisitWeight && heightCm > 0)
+      ? (firstVisitWeight / ((heightCm / 100) ** 2))
+      : 22;
+
+    // Derive lab boolean flags from HOSxP risk IDs
+    const labFlags = {
       rhNegative: false,
       hbsAgPositive: false,
       syphilisPositive: false,
       hivPositive: false,
       thalassemiaDisease: false,
       niptHighRisk: false,
+    };
+    for (const riskId of patientRisks.map((r) => r.anc_risk_id)) {
+      const flagKey = HOSXP_RISK_TO_LAB_FLAGS[riskId];
+      if (flagKey) {
+        labFlags[flagKey] = true;
+      }
+    }
+
+    const riskInput: AncRiskInput = {
+      age,
+      heightCm,
+      prePregnancyBmi,
+      gravida: anc.preg_no,
+      bpSystolic: latestVisit?.bps ?? 120,
+      bpDiastolic: latestVisit?.bpd ?? 80,
+      o2Sat: 98, // Not available in standard ANC data
+      hct: 36,   // Would need lab query — use default for now
+      hb: 12,    // Would need lab query — use default for now
+      hosxpRiskIds: patientRisks.map((r) => r.anc_risk_id),
+      classifyingItems: patientClassifying.map((c) => ({
+        itemId: c.person_anc_classifying_item_id,
+        value: c.check_value,
+      })),
+      ...labFlags,
     };
 
     const riskResult = evaluateAncRisk(riskInput);
