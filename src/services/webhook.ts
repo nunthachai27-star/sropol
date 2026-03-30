@@ -28,6 +28,7 @@ export interface WebhookPatientPayload {
   us_weight_g?: number | null;
   hematocrit_pct?: number | null;
   labor_status?: string; // ACTIVE (default), DELIVERED
+  action?: 'upsert' | 'delete'; // default: 'upsert'
 }
 
 export type WebhookMode = 'incremental' | 'full_snapshot';
@@ -42,6 +43,7 @@ export interface WebhookResult {
   newAdmissions: number;
   discharges: number;
   transfers: number;
+  deleted: number;
 }
 
 // ─── ANC webhook payload ───
@@ -67,6 +69,7 @@ export interface WebhookAncPatient {
   edc?: string;
   riskLevel?: string;
   visits?: WebhookAncVisit[];
+  action?: 'upsert' | 'delete'; // default: 'upsert'
 }
 
 export interface WebhookAncPayload {
@@ -79,6 +82,7 @@ export interface WebhookAncResult {
   patientsProcessed: number;
   created: number;
   updated: number;
+  deleted: number;
 }
 
 // ─── Referral webhook payload ───
@@ -91,6 +95,7 @@ export interface WebhookReferralPayload {
   reason?: string;
   transportMode?: string;
   arrivedAt?: string;
+  action?: 'update' | 'delete'; // default: 'update'
 }
 
 export interface WebhookReferralResult {
@@ -287,8 +292,28 @@ export async function processWebhookPayload(
   );
   const existingAns = existing.map((r) => r.an);
 
-  // Transform webhook patients to SyncPatientData
-  const patients: SyncPatientData[] = payload.patients.map((p) => {
+  // Handle deletes first — remove patients marked for deletion
+  const toDelete = payload.patients.filter((p) => p.action === 'delete');
+  let deletedCount = 0;
+  for (const p of toDelete) {
+    await db.execute(
+      `DELETE FROM cpd_scores WHERE patient_id IN (SELECT id FROM cached_patients WHERE hospital_id = ? AND an = ?)`,
+      [hospitalId, p.an],
+    );
+    await db.execute(
+      `DELETE FROM cached_vital_signs WHERE patient_id IN (SELECT id FROM cached_patients WHERE hospital_id = ? AND an = ?)`,
+      [hospitalId, p.an],
+    );
+    await db.execute(
+      `DELETE FROM cached_patients WHERE hospital_id = ? AND an = ?`,
+      [hospitalId, p.an],
+    );
+    deletedCount++;
+  }
+
+  // Transform remaining patients (upsert) to SyncPatientData
+  const toUpsert = payload.patients.filter((p) => p.action !== 'delete');
+  const patients: SyncPatientData[] = toUpsert.map((p) => {
     const encryptedName = encrypt(p.name, encryptionKey);
     const encryptedCid = p.cid ? encrypt(p.cid, encryptionKey) : null;
     const cidHash = p.cid
@@ -388,6 +413,7 @@ export async function processWebhookPayload(
     newAdmissions: changes.newAdmissions.length,
     discharges: dischargeCount,
     transfers: transfers.length,
+    deleted: deletedCount,
   };
 }
 
@@ -409,8 +435,32 @@ export async function processAncWebhook(
 
   let created = 0;
   let updated = 0;
+  let deleted = 0;
 
   for (const patient of payload.patients) {
+    // Handle delete action — soft delete by setting care_stage to CANCELLED
+    if (patient.action === 'delete') {
+      const existing = await getJourneyByHn(db, patient.hn, hospitalId);
+      if (existing) {
+        // Delete related records first
+        await db.execute(`DELETE FROM cached_anc_visits WHERE journey_id = ?`, [existing.id]);
+        await db.execute(`DELETE FROM cached_anc_risks WHERE journey_id = ?`, [existing.id]);
+        await db.execute(`DELETE FROM cached_newborns WHERE journey_id = ?`, [existing.id]);
+        await db.execute(`DELETE FROM cached_referrals WHERE journey_id = ?`, [existing.id]);
+        await db.execute(`UPDATE cached_patients SET journey_id = NULL WHERE journey_id = ?`, [existing.id]);
+        await db.execute(`DELETE FROM maternal_journeys WHERE id = ?`, [existing.id]);
+        deleted++;
+
+        sseManager.broadcast('patient-update', {
+          type: 'journey_update',
+          hcode,
+          journeyId: existing.id,
+          careStage: 'DELETED',
+        });
+      }
+      continue;
+    }
+
     const encryptedName = encrypt(patient.name, encryptionKey);
     const encryptedCid = patient.cid ? encrypt(patient.cid, encryptionKey) : null;
     const cidHash = patient.cid
@@ -472,6 +522,7 @@ export async function processAncWebhook(
     patientsProcessed: payload.patients.length,
     created,
     updated,
+    deleted,
   };
 }
 
@@ -488,6 +539,27 @@ export async function processReferralWebhook(
     [hospitalId],
   );
   const hcode = hospitalRows[0]?.hcode ?? '';
+
+  // Handle delete action — remove referral record (human error correction)
+  if (payload.action === 'delete') {
+    await db.execute(
+      `DELETE FROM cached_referrals WHERE refer_number = ?`,
+      [payload.referralId],
+    );
+
+    sseManager.broadcast('patient-update', {
+      type: 'referral_update',
+      fromHcode: hcode,
+      toHcode: '',
+      referralId: payload.referralId,
+      status: 'DELETED',
+    });
+
+    return {
+      referralId: payload.referralId,
+      status: 'DELETED',
+    };
+  }
 
   // Look up the referral by external ID
   const existing = await db.query<{ id: string; to_hospital_id: string }>(
