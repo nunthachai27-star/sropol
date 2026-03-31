@@ -34,6 +34,7 @@ export interface WebhookPatientPayload {
 export type WebhookMode = 'incremental' | 'full_snapshot';
 
 export interface WebhookPayload {
+  hospitalCode: string; // Must match API key's hospital
   patients: WebhookPatientPayload[];
   mode?: WebhookMode; // default: 'incremental'
 }
@@ -540,11 +541,14 @@ export async function processReferralWebhook(
   );
   const hcode = hospitalRows[0]?.hcode ?? '';
 
+  // Compound key: hospital_id + refer_number (hospitalCode validated at route level)
+  const matchKey = { fromHospitalId: hospitalId, referNumber: payload.referralId };
+
   // Handle delete action — remove referral record (human error correction)
   if (payload.action === 'delete') {
     await db.execute(
-      `DELETE FROM cached_referrals WHERE refer_number = ?`,
-      [payload.referralId],
+      `DELETE FROM cached_referrals WHERE from_hospital_id = ? AND refer_number = ?`,
+      [matchKey.fromHospitalId, matchKey.referNumber],
     );
 
     sseManager.broadcast('patient-update', {
@@ -561,10 +565,10 @@ export async function processReferralWebhook(
     };
   }
 
-  // Look up the referral by external ID
+  // Look up the referral by compound key: hospital_id + refer_number
   const existing = await db.query<{ id: string; to_hospital_id: string }>(
-    `SELECT id, to_hospital_id FROM cached_referrals WHERE refer_number = ?`,
-    [payload.referralId],
+    `SELECT id, to_hospital_id FROM cached_referrals WHERE from_hospital_id = ? AND refer_number = ?`,
+    [matchKey.fromHospitalId, matchKey.referNumber],
   );
 
   if (existing.length > 0) {
@@ -572,18 +576,18 @@ export async function processReferralWebhook(
     const now = new Date().toISOString();
     if (payload.status === 'ACCEPTED') {
       await db.execute(
-        `UPDATE cached_referrals SET status = 'ACCEPTED', accepted_at = ?, updated_at = ? WHERE refer_number = ?`,
-        [now, now, payload.referralId],
+        `UPDATE cached_referrals SET status = 'ACCEPTED', accepted_at = ?, updated_at = ? WHERE from_hospital_id = ? AND refer_number = ?`,
+        [now, now, matchKey.fromHospitalId, matchKey.referNumber],
       );
     } else if (payload.status === 'IN_TRANSIT') {
       await db.execute(
-        `UPDATE cached_referrals SET status = 'IN_TRANSIT', departed_at = ?, transport_mode = ?, updated_at = ? WHERE refer_number = ?`,
-        [now, payload.transportMode ?? null, now, payload.referralId],
+        `UPDATE cached_referrals SET status = 'IN_TRANSIT', departed_at = ?, transport_mode = ?, updated_at = ? WHERE from_hospital_id = ? AND refer_number = ?`,
+        [now, payload.transportMode ?? null, now, matchKey.fromHospitalId, matchKey.referNumber],
       );
     } else if (payload.status === 'ARRIVED') {
       await db.execute(
-        `UPDATE cached_referrals SET status = 'ARRIVED', arrived_at = ?, updated_at = ? WHERE refer_number = ?`,
-        [payload.arrivedAt ?? now, now, payload.referralId],
+        `UPDATE cached_referrals SET status = 'ARRIVED', arrived_at = ?, updated_at = ? WHERE from_hospital_id = ? AND refer_number = ?`,
+        [payload.arrivedAt ?? now, now, matchKey.fromHospitalId, matchKey.referNumber],
       );
     }
 

@@ -48,6 +48,21 @@ export async function POST(request: NextRequest) {
 
     const sseManager = SseManager.getInstance();
     const payloadType = (body as Record<string, unknown>).type;
+    const payloadHospCode = (body as Record<string, unknown>).hospitalCode;
+
+    // Validate hospitalCode matches API key's hospital (if provided)
+    if (payloadHospCode && typeof payloadHospCode === 'string') {
+      const hospRows = await db.query<{ hcode: string }>(
+        'SELECT hcode FROM hospitals WHERE id = ?',
+        [keyInfo.hospitalId],
+      );
+      if (hospRows.length > 0 && hospRows[0].hcode !== payloadHospCode) {
+        return NextResponse.json(
+          { error: `hospitalCode "${payloadHospCode}" ไม่ตรงกับ API key ของโรงพยาบาล "${hospRows[0].hcode}"` },
+          { status: 403 },
+        );
+      }
+    }
 
     // Route to the appropriate handler based on payload type
     if (payloadType === 'anc_data') {

@@ -455,6 +455,7 @@ describe('ANC/Referral Webhook Integration', () => {
     it('deletes cached_patients row plus CPD scores and vital signs', async () => {
       // Step 1: Admit a labor patient via webhook
       const admitPayload: WebhookPayload = {
+        hospitalCode: '99902',
         patients: [
           {
             hn: 'LBR-DEL',
@@ -494,6 +495,7 @@ describe('ANC/Referral Webhook Integration', () => {
 
       // Step 2: Send delete action for the same patient
       const deletePayload: WebhookPayload = {
+        hospitalCode: '99902',
         patients: [
           {
             hn: 'LBR-DEL',
@@ -535,6 +537,7 @@ describe('ANC/Referral Webhook Integration', () => {
 
     it('deleting a non-existent AN is a no-op', async () => {
       const deletePayload: WebhookPayload = {
+        hospitalCode: '99902',
         patients: [
           {
             hn: 'LBR-GHOST',

@@ -84,6 +84,7 @@ describe('Webhook Pipeline Integration', () => {
 
       // Step 3: Validate and process webhook payload
       const payload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [
           {
             hn: 'WH-001', an: 'WAN-001', name: 'นาง ทดสอบ เว็บฮุค',
@@ -174,6 +175,7 @@ describe('Webhook Pipeline Integration', () => {
 
       // First webhook: admit patient
       const initial: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [{
           hn: 'WH-UPD', an: 'WAN-UPD', name: 'นาง อัพเดท ข้อมูล',
           age: 30, gravida: 2, ga_weeks: 38, admit_date: '2026-03-08T08:00:00+07:00',
@@ -194,6 +196,7 @@ describe('Webhook Pipeline Integration', () => {
 
       // Second webhook: same patient, updated GA
       const updated: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [{
           hn: 'WH-UPD', an: 'WAN-UPD', name: 'นาง อัพเดท ข้อมูล',
           age: 30, gravida: 2, ga_weeks: 39, admit_date: '2026-03-08T08:00:00+07:00',
@@ -223,6 +226,7 @@ describe('Webhook Pipeline Integration', () => {
       await createApiKey(db, webhookHospitalId, 'PDPA Test');
 
       const payload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [{
           hn: 'WH-PDPA', an: 'WAN-PDPA', name: 'นาง มาลี สมบูรณ์',
           cid: '0000000000022', age: 25, admit_date: '2026-03-08T08:00:00+07:00',
@@ -249,6 +253,7 @@ describe('Webhook Pipeline Integration', () => {
 
     it('patient without CID has null cid and cid_hash', async () => {
       const payload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [{
           hn: 'WH-NOCID', an: 'WAN-NOCID', name: 'นาง ไม่มี บัตร',
           age: 22, admit_date: '2026-03-08T08:00:00+07:00',
@@ -270,6 +275,7 @@ describe('Webhook Pipeline Integration', () => {
   describe('Scenario 4: CPD score calculation from webhook data', () => {
     it('calculates HIGH risk score for high-risk clinical factors', async () => {
       const payload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [{
           hn: 'WH-HR', an: 'WAN-HR', name: 'นาง เสี่ยง สูง',
           age: 35, gravida: 1, ga_weeks: 42, anc_count: 2,
@@ -297,6 +303,7 @@ describe('Webhook Pipeline Integration', () => {
 
     it('handles partial clinical data — reports missing factors', async () => {
       const payload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [{
           hn: 'WH-PARTIAL', an: 'WAN-PARTIAL', name: 'นาง ข้อมูล บางส่วน',
           age: 28, gravida: 2, ga_weeks: 38,
@@ -320,6 +327,7 @@ describe('Webhook Pipeline Integration', () => {
 
     it('broadcasts high_risk_alert SSE for new HIGH risk patient', async () => {
       const payload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [{
           hn: 'WH-ALERT', an: 'WAN-ALERT', name: 'นาง แจ้งเตือน',
           age: 32, gravida: 1, ga_weeks: 42, anc_count: 1,
@@ -371,6 +379,7 @@ describe('Webhook Pipeline Integration', () => {
 
       // Now webhook same patient at webhook hospital (different AN, same CID)
       const payload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [{
           hn: 'WH-XFER', an: 'WAN-XFER', name: 'นาง ย้าย มา',
           cid: sharedCid, age: 30, gravida: 2, ga_weeks: 39,
@@ -454,6 +463,7 @@ describe('Webhook Pipeline Integration', () => {
 
       // Webhook patient at non-HOSxP hospital
       const payload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [{
           hn: 'WH-MIX', an: 'WAN-MIX', name: 'นาง Webhook Patient',
           age: 30, gravida: 1, ga_weeks: 41, anc_count: 2,
@@ -483,6 +493,7 @@ describe('Webhook Pipeline Integration', () => {
     it('handles DELIVERED status from webhook', async () => {
       // First: admit patient
       const admitPayload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [{
           hn: 'WH-DEL', an: 'WAN-DEL', name: 'นาง คลอด แล้ว',
           age: 26, gravida: 2, ga_weeks: 39,
@@ -502,6 +513,7 @@ describe('Webhook Pipeline Integration', () => {
 
       // Then: update to DELIVERED
       const deliverPayload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [{
           hn: 'WH-DEL', an: 'WAN-DEL', name: 'นาง คลอด แล้ว',
           age: 26, gravida: 2, ga_weeks: 39,
@@ -529,6 +541,7 @@ describe('Webhook Pipeline Integration', () => {
     it('full_snapshot discharges patients not in the payload', async () => {
       // Step 1: Admit 3 patients via incremental webhook
       const admitPayload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [
           { hn: 'WH-FS1', an: 'WAN-FS1', name: 'Patient A', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
           { hn: 'WH-FS2', an: 'WAN-FS2', name: 'Patient B', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
@@ -548,6 +561,7 @@ describe('Webhook Pipeline Integration', () => {
 
       // Step 2: Send full_snapshot with only Patient B (A and C delivered)
       const snapshotPayload: WebhookPayload = {
+        hospitalCode: '99901',
         mode: 'full_snapshot',
         patients: [
           { hn: 'WH-FS2', an: 'WAN-FS2', name: 'Patient B', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
@@ -592,6 +606,7 @@ describe('Webhook Pipeline Integration', () => {
     it('full_snapshot with all current patients produces zero discharges', async () => {
       // Admit 2 patients
       const admitPayload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [
           { hn: 'WH-FN1', an: 'WAN-FN1', name: 'Patient X', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
           { hn: 'WH-FN2', an: 'WAN-FN2', name: 'Patient Y', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
@@ -603,6 +618,7 @@ describe('Webhook Pipeline Integration', () => {
 
       // full_snapshot with same 2 patients → no discharges
       const snapshotPayload: WebhookPayload = {
+        hospitalCode: '99901',
         mode: 'full_snapshot',
         patients: [
           { hn: 'WH-FN1', an: 'WAN-FN1', name: 'Patient X', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
@@ -622,6 +638,7 @@ describe('Webhook Pipeline Integration', () => {
     it('incremental webhook does not discharge patients not in payload', async () => {
       // Admit 3 patients
       const admitPayload: WebhookPayload = {
+        hospitalCode: '99901',
         patients: [
           { hn: 'WH-IN1', an: 'WAN-IN1', name: 'Keep Active A', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
           { hn: 'WH-IN2', an: 'WAN-IN2', name: 'Keep Active B', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
@@ -634,6 +651,7 @@ describe('Webhook Pipeline Integration', () => {
 
       // Incremental: only send update for Patient B
       const updatePayload: WebhookPayload = {
+        hospitalCode: '99901',
         mode: 'incremental',
         patients: [
           { hn: 'WH-IN2', an: 'WAN-IN2', name: 'Keep Active B', age: 28, ga_weeks: 39, admit_date: '2026-03-06T09:00:00+07:00' },
