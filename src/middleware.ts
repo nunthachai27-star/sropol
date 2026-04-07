@@ -4,7 +4,7 @@ import { auth } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
 // Public paths that don't require authentication
-const PUBLIC_PATHS = ['/login', '/about', '/api/auth', '/api/health', '/api/webhooks'];
+const PUBLIC_PATHS = ['/login', '/about', '/api/auth', '/api/health', '/api/webhooks', '/api/referrals/check'];
 const STATIC_PATHS = ['/_next', '/favicon.ico'];
 
 // T108: Add security headers to all responses
