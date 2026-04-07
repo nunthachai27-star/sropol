@@ -18,12 +18,12 @@ describe('Newborn Service', () => {
        VALUES ('${hospitalId}', '10670', 'รพ.ขอนแก่น', 'A_S', 1, 'ONLINE', datetime('now'), datetime('now'))`,
     );
     await db.execute(
-      `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
-       VALUES ('${journeyId1}', '${hospitalId}', '${hospitalId}', '12345', 'Test1', 28, 1, 0, 'DELIVERED', 'LOW', 5, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
+      `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, cid, cid_hash, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
+       VALUES ('${journeyId1}', '${hospitalId}', '${hospitalId}', '12345', 'Test1', 'enc_cid', 'cidhash_test', 28, 1, 0, 'DELIVERED', 'LOW', 5, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
     );
     await db.execute(
-      `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
-       VALUES ('${journeyId2}', '${hospitalId}', '${hospitalId}', '12346', 'Test2', 30, 2, 1, 'DELIVERED', 'LOW', 4, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
+      `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, cid, cid_hash, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
+       VALUES ('${journeyId2}', '${hospitalId}', '${hospitalId}', '12346', 'Test2', 'enc_cid', 'cidhash_test', 30, 2, 1, 'DELIVERED', 'LOW', 4, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
     );
   });
 
@@ -118,8 +118,8 @@ describe('Newborn Service', () => {
       );
       const otherJourneyId = 'journey-other';
       await db.execute(
-        `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
-         VALUES ('${otherJourneyId}', '${otherHospId}', '${otherHospId}', '99999', 'Other', 25, 1, 0, 'DELIVERED', 'LOW', 3, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
+        `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, cid, cid_hash, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
+         VALUES ('${otherJourneyId}', '${otherHospId}', '${otherHospId}', '99999', 'Other', 'enc_cid', 'cidhash_test', 25, 1, 0, 'DELIVERED', 'LOW', 3, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
       );
 
       await upsertNewborn(db, {

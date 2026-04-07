@@ -6,7 +6,7 @@ import { encrypt, getEncryptionKey } from '@/lib/encryption';
 import { upsertCachedPatients, detectChanges, detectTransfers, markPatientsDelivered, calculateAndStoreCpdScores } from '@/services/sync';
 import type { SyncPatientData } from '@/services/sync';
 import { SseManager } from '@/lib/sse';
-import { getJourneyByHn, createJourney } from '@/services/journey';
+import { getActiveJourneyByCid, getJourneyByHn, createJourney } from '@/services/journey';
 import { AncRiskLevel } from '@/types/domain';
 
 // ─── Webhook payload types ───
@@ -15,7 +15,7 @@ export interface WebhookPatientPayload {
   hn: string;
   an: string;
   name: string;
-  cid?: string | null;
+  cid: string;           // เลขบัตรประชาชน 13 หลัก (required for cross-hospital matching)
   age: number;
   gravida?: number | null;
   ga_weeks?: number | null;
@@ -61,14 +61,17 @@ export interface WebhookAncVisit {
 }
 
 export interface WebhookAncPatient {
-  hn: string;
+  hn: string | null;  // null for community ANC patients not registered in hospital patient table
   name: string;
-  cid?: string;
+  cid: string;            // เลขบัตรประชาชน 13 หลัก (required for cross-hospital matching)
   birthday: string;
   pregNo: number;
   lmp?: string;
   edc?: string;
   riskLevel?: string;
+  changwatCode?: string;        // จังหวัด 2-digit (e.g. "40" = ขอนแก่น)
+  amphurCode?: string;          // อำเภอ 2-digit
+  tambonCode?: string;          // ตำบล 2-digit
   visits?: WebhookAncVisit[];
   action?: 'upsert' | 'delete'; // default: 'upsert'
 }
@@ -88,16 +91,39 @@ export interface WebhookAncResult {
 
 // ─── Referral webhook payload ───
 
-export interface WebhookReferralPayload {
-  type: 'referral_update';
-  hospitalCode: string;
-  referralId: string;
-  status: string;
-  reason?: string;
-  transportMode?: string;
-  arrivedAt?: string;
-  action?: 'update' | 'delete'; // default: 'update'
+// CREATE — sent by sending hospital (รพ.ต้นทาง)
+export interface WebhookReferralCreatePayload {
+  type: 'referral';
+  hospitalCode: string;          // sender's HCODE (matches API key)
+  referralId: string;            // sender's referral ID (compound key)
+  hn: string;                    // patient HN at sending hospital
+  cid: string;                   // national ID (เลขบัตรประชาชน) — same across all hospitals
+  name: string;                  // patient name (auto-encrypted)
+  toHospitalCode: string;        // destination hospital HCODE
+  reason: string;                // referral reason
+  diagnosisCode?: string;        // ICD-10 code
+  urgencyLevel?: string;         // ROUTINE | URGENT | EMERGENCY (default: ROUTINE)
+  changwatCode?: string;         // จังหวัด 2-digit (patient address for GIS)
+  amphurCode?: string;           // อำเภอ 2-digit
+  tambonCode?: string;           // ตำบล 2-digit
+  action?: 'upsert' | 'delete'; // default: 'upsert'
 }
+
+// UPDATE — sent by receiving hospital (รพ.ปลายทาง)
+export interface WebhookReferralUpdatePayload {
+  type: 'referral_update';
+  hospitalCode: string;          // who is sending this update (matches API key)
+  referralId: string;            // original referral ID
+  fromHospitalCode: string;      // sending hospital HCODE (compound key)
+  status: string;                // ACCEPTED | IN_TRANSIT | ARRIVED | REJECTED
+  reason?: string;               // reason for status change
+  rejectionReason?: string;      // reason for rejection (REJECTED only)
+  transportMode?: string;        // ambulance, self, etc. (IN_TRANSIT only)
+  arrivedAt?: string;            // arrival datetime ISO 8601 (ARRIVED only)
+  action?: 'update' | 'delete';  // default: 'update'
+}
+
+export type WebhookReferralPayload = WebhookReferralCreatePayload | WebhookReferralUpdatePayload;
 
 export interface WebhookReferralResult {
   referralId: string;
@@ -253,6 +279,7 @@ export function validatePayload(body: unknown): {
     if (!p.hn || typeof p.hn !== 'string') errors.push(`patients[${i}].hn is required (string)`);
     if (!p.an || typeof p.an !== 'string') errors.push(`patients[${i}].an is required (string)`);
     if (!p.name || typeof p.name !== 'string') errors.push(`patients[${i}].name is required (string)`);
+    if (!p.cid || typeof p.cid !== 'string') errors.push(`patients[${i}].cid is required (string) — เลขบัตรประชาชน 13 หลัก`);
     if (p.age == null || typeof p.age !== 'number') errors.push(`patients[${i}].age is required (number)`);
     if (!p.admit_date || typeof p.admit_date !== 'string') errors.push(`patients[${i}].admit_date is required (ISO 8601 string)`);
   }
@@ -439,9 +466,13 @@ export async function processAncWebhook(
   let deleted = 0;
 
   for (const patient of payload.patients) {
+    // Compute CID hash for lookup
+    const patientCidHash = createHash('sha256').update(patient.cid).digest('hex');
+
     // Handle delete action — soft delete by setting care_stage to CANCELLED
     if (patient.action === 'delete') {
-      const existing = await getJourneyByHn(db, patient.hn, hospitalId);
+      const existing = await getActiveJourneyByCid(db, patientCidHash)
+        ?? (patient.hn ? await getJourneyByHn(db, patient.hn, hospitalId) : null);
       if (existing) {
         // Delete related records first
         await db.execute(`DELETE FROM cached_anc_visits WHERE journey_id = ?`, [existing.id]);
@@ -463,20 +494,56 @@ export async function processAncWebhook(
     }
 
     const encryptedName = encrypt(patient.name, encryptionKey);
-    const encryptedCid = patient.cid ? encrypt(patient.cid, encryptionKey) : null;
-    const cidHash = patient.cid
-      ? createHash('sha256').update(patient.cid).digest('hex')
-      : null;
+    const encryptedCid = encrypt(patient.cid, encryptionKey);
+    const cidHash = patientCidHash;
 
-    const existing = await getJourneyByHn(db, patient.hn, hospitalId);
+    // Primary lookup by CID (cross-hospital), fallback to HN+hospital (skip if HN is null)
+    const patientHn = patient.hn;
+    const existing = await getActiveJourneyByCid(db, cidHash)
+      ?? (patientHn != null ? await getJourneyByHn(db, patientHn, hospitalId) : null);
 
-    if (existing) {
-      // Update journey with latest data
+    // Detect if incoming data is a NEW pregnancy vs update to existing
+    const isNewPregnancy = existing && (
+      (patient.pregNo > existing.gravida) ||
+      (patient.lmp && existing.lmp && patient.lmp !== existing.lmp)
+    );
+    const existingIsActive = existing && (existing.careStage === 'PREGNANCY' || existing.careStage === 'LABOR');
+
+    // Overlapping pregnancy warning: new pregnancy while old one not finished
+    if (isNewPregnancy && existingIsActive) {
+      const daysSinceUpdate = Math.floor(
+        (Date.now() - existing.updatedAt.getTime()) / (1000 * 60 * 60 * 24),
+      );
+      console.warn(
+        `[PREGNANCY_OVERLAP] CID hash ${cidHash.slice(0, 8)}... ` +
+        `ครรภ์ใหม่ (pregNo=${patient.pregNo}) ขณะที่ครรภ์เดิม (pregNo=${existing.gravida}, stage=${existing.careStage}) ` +
+        `ยังไม่สิ้นสุด | journey=${existing.id} | ` +
+        `อัพเดทล่าสุด ${daysSinceUpdate} วันที่แล้ว | hospital=${hcode}`,
+      );
+      sseManager.broadcast('patient-update', {
+        type: 'pregnancy_overlap_warning',
+        hcode,
+        cidHashPrefix: cidHash.slice(0, 8),
+        oldJourneyId: existing.id,
+        oldPregNo: existing.gravida,
+        oldCareStage: existing.careStage,
+        newPregNo: patient.pregNo,
+        daysSinceLastUpdate: daysSinceUpdate,
+      });
+    }
+
+    // Decide: update existing journey OR create new one
+    const shouldCreateNew = !existing || isNewPregnancy;
+
+    let journeyId: string;
+    if (!shouldCreateNew && existing) {
+      // Update existing journey with latest data (same pregnancy)
       const now = new Date().toISOString();
       await db.execute(
         `UPDATE maternal_journeys SET name = ?, cid = ?, cid_hash = ?, lmp = ?, edc = ?, anc_risk_level = ?, synced_at = ?, updated_at = ? WHERE id = ?`,
         [encryptedName, encryptedCid, cidHash, patient.lmp ?? existing.lmp, patient.edc ?? existing.edc, patient.riskLevel ?? existing.ancRiskLevel, now, now, existing.id],
       );
+      journeyId = existing.id;
 
       sseManager.broadcast('patient-update', {
         type: 'journey_update',
@@ -487,10 +554,11 @@ export async function processAncWebhook(
       });
       updated++;
     } else {
+      // Create new journey (first pregnancy, or new pregnancy after previous)
       const age = patient.birthday ? Math.floor((Date.now() - new Date(patient.birthday).getTime()) / (365.25 * 24 * 60 * 60 * 1000)) : 0;
       const journey = await createJourney(db, {
         hospitalId,
-        hn: patient.hn,
+        hn: patientHn ?? '',  // null for community ANC patients not in hospital patient table
         personAncId: null,
         name: encryptedName,
         cid: encryptedCid,
@@ -502,6 +570,7 @@ export async function processAncWebhook(
         edc: patient.edc ?? null,
         ancRiskLevel: (patient.riskLevel as AncRiskLevel) ?? AncRiskLevel.LOW,
       });
+      journeyId = journey.id;
 
       sseManager.broadcast('patient-update', {
         type: 'journey_update',
@@ -511,6 +580,37 @@ export async function processAncWebhook(
         ancRiskLevel: patient.riskLevel ?? undefined,
       });
       created++;
+    }
+
+    // Update patient location (province/district/sub-district) if provided
+    if (patient.changwatCode || patient.amphurCode || patient.tambonCode) {
+      const now3 = new Date().toISOString();
+      await db.execute(
+        `UPDATE maternal_journeys SET changwat_code = ?, amphur_code = ?, tambon_code = ?, updated_at = ? WHERE id = ?`,
+        [patient.changwatCode ?? null, patient.amphurCode ?? null, patient.tambonCode ?? null, now3, journeyId],
+      );
+    }
+
+    // Persist ANC visit records — replace strategy (delete old, insert new)
+    if (patient.visits?.length) {
+      await db.execute(`DELETE FROM cached_anc_visits WHERE journey_id = ?`, [journeyId]);
+      const visitNow = new Date().toISOString();
+      for (const visit of patient.visits) {
+        await db.execute(
+          `INSERT INTO cached_anc_visits
+           (id, journey_id, visit_date, visit_number, ga_weeks,
+            fundal_height_cm, weight_kg, bp_systolic, bp_diastolic,
+            fetal_hr, synced_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(), journeyId, visit.date, visit.visitNumber,
+            visit.gaWeeks ?? null,
+            visit.fundalHeightCm ?? null, visit.weightKg ?? null,
+            visit.bpSystolic ?? null, visit.bpDiastolic ?? null,
+            visit.fetalHr ?? null, visitNow, visitNow,
+          ],
+        );
+      }
     }
   }
 
@@ -529,85 +629,261 @@ export async function processAncWebhook(
 
 // ─── Referral webhook processing ───
 
-export async function processReferralWebhook(
+// Helper: resolve hospital HCODE → hospital ID
+async function resolveHospitalByHcode(
+  db: DatabaseAdapter,
+  hcode: string,
+): Promise<{ id: string; hcode: string } | null> {
+  const rows = await db.query<{ id: string; hcode: string }>(
+    'SELECT id, hcode FROM hospitals WHERE hcode = ?',
+    [hcode],
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+// CREATE referral — sent by sending hospital (รพ.ต้นทาง)
+export async function processReferralCreate(
   db: DatabaseAdapter,
   hospitalId: string,
-  payload: WebhookReferralPayload,
+  payload: WebhookReferralCreatePayload,
   sseManager: SseManager,
 ): Promise<WebhookReferralResult> {
-  const hospitalRows = await db.query<{ hcode: string }>(
-    'SELECT hcode FROM hospitals WHERE id = ?',
-    [hospitalId],
-  );
-  const hcode = hospitalRows[0]?.hcode ?? '';
+  const fromHospital = await resolveHospitalByHcode(db, payload.hospitalCode);
+  const fromHcode = fromHospital?.hcode ?? payload.hospitalCode;
 
-  // Compound key: hospital_id + refer_number (hospitalCode validated at route level)
-  const matchKey = { fromHospitalId: hospitalId, referNumber: payload.referralId };
-
-  // Handle delete action — remove referral record (human error correction)
+  // Handle delete — compound key: fromHospitalCode + referralId
   if (payload.action === 'delete') {
     await db.execute(
       `DELETE FROM cached_referrals WHERE from_hospital_id = ? AND refer_number = ?`,
-      [matchKey.fromHospitalId, matchKey.referNumber],
+      [hospitalId, payload.referralId],
     );
 
     sseManager.broadcast('patient-update', {
       type: 'referral_update',
-      fromHcode: hcode,
+      fromHcode,
       toHcode: '',
       referralId: payload.referralId,
       status: 'DELETED',
     });
 
-    return {
-      referralId: payload.referralId,
-      status: 'DELETED',
-    };
+    return { referralId: payload.referralId, status: 'DELETED' };
   }
 
-  // Look up the referral by compound key: hospital_id + refer_number
-  const existing = await db.query<{ id: string; to_hospital_id: string }>(
-    `SELECT id, to_hospital_id FROM cached_referrals WHERE from_hospital_id = ? AND refer_number = ?`,
-    [matchKey.fromHospitalId, matchKey.referNumber],
+  // Resolve destination hospital
+  const toHospital = await resolveHospitalByHcode(db, payload.toHospitalCode);
+  if (!toHospital) {
+    throw new Error(`ไม่พบโรงพยาบาลปลายทาง HCODE "${payload.toHospitalCode}"`);
+  }
+
+  // Encrypt patient data (PDPA)
+  const encryptionKey = getEncryptionKey();
+  const encryptedName = encrypt(payload.name, encryptionKey);
+  const encryptedCid = encrypt(payload.cid, encryptionKey);
+  const cidHash = createHash('sha256').update(payload.cid).digest('hex');
+
+  // Primary lookup by CID (cross-hospital), fallback to HN+hospital
+  const existingJourney = await getActiveJourneyByCid(db, cidHash)
+    ?? await getJourneyByHn(db, payload.hn, hospitalId);
+
+  // Also check if patient has active labor data (cached_patients)
+  const laborRecord = await db.query<{ id: string; journey_id: string | null; labor_status: string }>(
+    `SELECT id, journey_id, labor_status FROM cached_patients WHERE cid_hash = ? AND labor_status = 'ACTIVE' ORDER BY created_at DESC LIMIT 1`,
+    [cidHash],
+  );
+  const hasActiveLaborData = laborRecord.length > 0;
+
+  // Determine patient monitoring status for the referral
+  const hasActiveAncRecord = existingJourney != null;
+  const hasMonitoringData = hasActiveAncRecord || hasActiveLaborData;
+
+  let journeyId: string;
+  if (existingJourney) {
+    journeyId = existingJourney.id;
+    // Update patient data and current hospital
+    const now2 = new Date().toISOString();
+    await db.execute(
+      `UPDATE maternal_journeys SET name = ?, cid = ?, cid_hash = ?, current_hospital_id = ?, updated_at = ? WHERE id = ?`,
+      [encryptedName, encryptedCid, cidHash, hospitalId, now2, journeyId],
+    );
+  } else if (hasActiveLaborData && laborRecord[0].journey_id) {
+    // Patient has labor data with linked journey — use that journey
+    journeyId = laborRecord[0].journey_id;
+    const now2 = new Date().toISOString();
+    await db.execute(
+      `UPDATE maternal_journeys SET name = ?, cid = ?, cid_hash = ?, current_hospital_id = ?, updated_at = ? WHERE id = ?`,
+      [encryptedName, encryptedCid, cidHash, hospitalId, now2, journeyId],
+    );
+  } else {
+    // No monitoring data — create minimal journey but warn
+    const { randomUUID } = await import('crypto');
+    journeyId = randomUUID();
+    const now = new Date().toISOString();
+    await db.execute(
+      `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, cid, cid_hash, age, gravida, para, care_stage, registered_at, stage_changed_at, synced_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'PREGNANCY', ?, ?, ?, ?, ?)`,
+      [journeyId, hospitalId, hospitalId, payload.hn, encryptedName, encryptedCid, cidHash, now, now, now, now, now],
+    );
+  }
+
+  // Warn if patient has no active monitoring data in the system
+  if (!hasMonitoringData) {
+    console.warn(
+      `[REFERRAL_NO_MONITORING] referralId=${payload.referralId} CID hash ${cidHash.slice(0, 8)}... ` +
+      `ไม่พบข้อมูลฝากครรภ์หรือข้อมูลคลอดในระบบ | HN=${payload.hn} | from=${fromHcode} → to=${payload.toHospitalCode} | ` +
+      `สร้าง journey ใหม่อัตโนมัติ — ต้องตรวจสอบข้อมูลผู้ป่วย`,
+    );
+    sseManager.broadcast('patient-update', {
+      type: 'referral_no_monitoring_warning',
+      fromHcode,
+      toHcode: toHospital.hcode,
+      referralId: payload.referralId,
+      hn: payload.hn,
+      cidHashPrefix: cidHash.slice(0, 8),
+      journeyId,
+      message: 'ไม่พบข้อมูลฝากครรภ์/คลอดในระบบ กรุณาตรวจสอบข้อมูลผู้ป่วย',
+    });
+  }
+
+  // Update patient location if provided
+  if (payload.changwatCode || payload.amphurCode || payload.tambonCode) {
+    const nowLoc = new Date().toISOString();
+    await db.execute(
+      `UPDATE maternal_journeys SET changwat_code = ?, amphur_code = ?, tambon_code = ?, updated_at = ? WHERE id = ?`,
+      [payload.changwatCode ?? null, payload.amphurCode ?? null, payload.tambonCode ?? null, nowLoc, journeyId],
+    );
+  }
+
+  // Check if referral already exists (upsert by compound key)
+  const existing = await db.query<{ id: string }>(
+    `SELECT id FROM cached_referrals WHERE from_hospital_id = ? AND refer_number = ?`,
+    [hospitalId, payload.referralId],
   );
 
-  if (existing.length > 0) {
-    // Update existing referral status
-    const now = new Date().toISOString();
-    if (payload.status === 'ACCEPTED') {
-      await db.execute(
-        `UPDATE cached_referrals SET status = 'ACCEPTED', accepted_at = ?, updated_at = ? WHERE from_hospital_id = ? AND refer_number = ?`,
-        [now, now, matchKey.fromHospitalId, matchKey.referNumber],
-      );
-    } else if (payload.status === 'IN_TRANSIT') {
-      await db.execute(
-        `UPDATE cached_referrals SET status = 'IN_TRANSIT', departed_at = ?, transport_mode = ?, updated_at = ? WHERE from_hospital_id = ? AND refer_number = ?`,
-        [now, payload.transportMode ?? null, now, matchKey.fromHospitalId, matchKey.referNumber],
-      );
-    } else if (payload.status === 'ARRIVED') {
-      await db.execute(
-        `UPDATE cached_referrals SET status = 'ARRIVED', arrived_at = ?, updated_at = ? WHERE from_hospital_id = ? AND refer_number = ?`,
-        [payload.arrivedAt ?? now, now, matchKey.fromHospitalId, matchKey.referNumber],
-      );
-    }
+  const now = new Date().toISOString();
+  const urgency = payload.urgencyLevel ?? 'ROUTINE';
 
-    const toHcodeRows = await db.query<{ hcode: string }>(
-      'SELECT hcode FROM hospitals WHERE id = ?',
-      [existing[0].to_hospital_id],
+  if (existing.length > 0) {
+    // Update existing referral
+    await db.execute(
+      `UPDATE cached_referrals SET to_hospital_id = ?, reason = ?, diagnosis_code = ?, urgency_level = ?, updated_at = ? WHERE id = ?`,
+      [toHospital.id, payload.reason, payload.diagnosisCode ?? null, urgency, now, existing[0].id],
+    );
+  } else {
+    // Create new referral
+    const { randomUUID } = await import('crypto');
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO cached_referrals (id, journey_id, refer_number, from_hospital_id, to_hospital_id, status, reason, diagnosis_code, urgency_level, initiated_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'INITIATED', ?, ?, ?, ?, ?, ?)`,
+      [id, journeyId, payload.referralId, hospitalId, toHospital.id, payload.reason, payload.diagnosisCode ?? null, urgency, now, now, now],
+    );
+  }
+
+  sseManager.broadcast('patient-update', {
+    type: 'referral_update',
+    fromHcode,
+    toHcode: toHospital.hcode,
+    referralId: payload.referralId,
+    status: 'INITIATED',
+  });
+
+  return { referralId: payload.referralId, status: 'INITIATED' };
+}
+
+// UPDATE referral status — sent by receiving hospital (รพ.ปลายทาง)
+export async function processReferralUpdate(
+  db: DatabaseAdapter,
+  _hospitalId: string,
+  payload: WebhookReferralUpdatePayload,
+  sseManager: SseManager,
+): Promise<WebhookReferralResult> {
+  // Resolve the sending hospital (fromHospitalCode) for compound key lookup
+  const fromHospital = await resolveHospitalByHcode(db, payload.fromHospitalCode);
+  if (!fromHospital) {
+    throw new Error(`ไม่พบโรงพยาบาลต้นทาง HCODE "${payload.fromHospitalCode}"`);
+  }
+
+  const fromHcode = fromHospital.hcode;
+
+  // Handle delete — compound key: fromHospitalCode + referralId
+  if (payload.action === 'delete') {
+    const delRows = await db.query<{ to_hospital_id: string }>(
+      `SELECT to_hospital_id FROM cached_referrals WHERE from_hospital_id = ? AND refer_number = ?`,
+      [fromHospital.id, payload.referralId],
+    );
+    const toHcode = delRows.length > 0
+      ? (await db.query<{ hcode: string }>('SELECT hcode FROM hospitals WHERE id = ?', [delRows[0].to_hospital_id]))[0]?.hcode ?? ''
+      : '';
+
+    await db.execute(
+      `DELETE FROM cached_referrals WHERE from_hospital_id = ? AND refer_number = ?`,
+      [fromHospital.id, payload.referralId],
     );
 
     sseManager.broadcast('patient-update', {
       type: 'referral_update',
-      fromHcode: hcode,
-      toHcode: toHcodeRows[0]?.hcode ?? '',
+      fromHcode,
+      toHcode,
       referralId: payload.referralId,
-      status: payload.status,
+      status: 'DELETED',
     });
+
+    return { referralId: payload.referralId, status: 'DELETED' };
   }
 
-  return {
+  // Look up referral by compound key: from_hospital_id + refer_number
+  const existing = await db.query<{ id: string; to_hospital_id: string; journey_id: string }>(
+    `SELECT id, to_hospital_id, journey_id FROM cached_referrals WHERE from_hospital_id = ? AND refer_number = ?`,
+    [fromHospital.id, payload.referralId],
+  );
+
+  if (existing.length === 0) {
+    throw new Error(`ไม่พบใบส่งต่อ referralId "${payload.referralId}" จาก HCODE "${payload.fromHospitalCode}"`);
+  }
+
+  const referralRow = existing[0];
+  const now = new Date().toISOString();
+
+  if (payload.status === 'ACCEPTED') {
+    await db.execute(
+      `UPDATE cached_referrals SET status = 'ACCEPTED', accepted_at = ?, updated_at = ? WHERE id = ?`,
+      [now, now, referralRow.id],
+    );
+  } else if (payload.status === 'REJECTED') {
+    await db.execute(
+      `UPDATE cached_referrals SET status = 'REJECTED', rejected_at = ?, rejection_reason = ?, updated_at = ? WHERE id = ?`,
+      [now, payload.rejectionReason ?? payload.reason ?? null, now, referralRow.id],
+    );
+  } else if (payload.status === 'IN_TRANSIT') {
+    await db.execute(
+      `UPDATE cached_referrals SET status = 'IN_TRANSIT', departed_at = ?, transport_mode = ?, updated_at = ? WHERE id = ?`,
+      [now, payload.transportMode ?? null, now, referralRow.id],
+    );
+  } else if (payload.status === 'ARRIVED') {
+    await db.execute(
+      `UPDATE cached_referrals SET status = 'ARRIVED', arrived_at = ?, updated_at = ? WHERE id = ?`,
+      [payload.arrivedAt ?? now, now, referralRow.id],
+    );
+    // Update journey's current hospital to the receiving hospital
+    await db.execute(
+      `UPDATE maternal_journeys SET current_hospital_id = ?, updated_at = ? WHERE id = ?`,
+      [referralRow.to_hospital_id, now, referralRow.journey_id],
+    );
+  }
+
+  const toHcodeRows = await db.query<{ hcode: string }>(
+    'SELECT hcode FROM hospitals WHERE id = ?',
+    [referralRow.to_hospital_id],
+  );
+
+  sseManager.broadcast('patient-update', {
+    type: 'referral_update',
+    fromHcode,
+    toHcode: toHcodeRows[0]?.hcode ?? '',
     referralId: payload.referralId,
     status: payload.status,
-  };
+  });
+
+  return { referralId: payload.referralId, status: payload.status };
 }
 

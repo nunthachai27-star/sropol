@@ -293,3 +293,16 @@ export const REFEROUT_PREGNANCY: SqlQueryTemplate = {
       WHERE ro.refer_date >= ?
       ORDER BY ro.refer_date DESC`,
 };
+
+// Patient address (province/district/sub-district) for GIS mapping
+// Reads from patient table's chwpart/amppart/tmbpart (2-digit Thai admin codes)
+export const PATIENT_ADDRESS: SqlQueryTemplate = {
+  postgresql: `
+      SELECT p.hn, p.chwpart, p.amppart, p.tmbpart
+      FROM patient p
+      WHERE p.hn = ANY($1::varchar[])`,
+  mysql: `
+      SELECT p.hn, p.chwpart, p.amppart, p.tmbpart
+      FROM patient p
+      WHERE p.hn IN (?)`,
+};

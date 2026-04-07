@@ -37,8 +37,8 @@ describe('Referral Workflow Service', () => {
     );
     // Seed a journey
     await db.execute(
-      `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
-       VALUES ('${journeyId}', '${fromHospId}', '${fromHospId}', '12345', 'Test Patient', 30, 1, 0, 'PREGNANCY', 'HR3', 0, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
+      `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, cid, cid_hash, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
+       VALUES ('${journeyId}', '${fromHospId}', '${fromHospId}', '12345', 'Test Patient', 'enc_cid', 'cidhash_test', 30, 1, 0, 'PREGNANCY', 'HR3', 0, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
     );
   });
 

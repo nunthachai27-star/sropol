@@ -5,10 +5,10 @@ import type { DatabaseAdapter } from '@/db/adapter';
 import type { HosxpIptRow, HosxpPregnancyRow, HosxpPatientRow } from '@/types/hosxp';
 import { encrypt } from '@/lib/encryption';
 import { calculateAge } from '@/lib/utils';
-import { createJourney, getJourneyByHn, transitionToLabor, transitionToDelivered } from '@/services/journey';
+import { createJourney, getActiveJourneyByCid, getJourneyByHn, transitionToLabor, transitionToDelivered } from '@/services/journey';
 import { upsertNewborn } from '@/services/newborn';
 import { evaluateAncRisk } from '@/services/anc-risk';
-import type { HosxpPersonAncRow, HosxpAncServiceRow, HosxpAncRiskRow, HosxpAncClassifyingRow, HosxpLabourInfantRow } from '@/types/hosxp';
+import type { HosxpPersonAncRow, HosxpAncServiceRow, HosxpAncRiskRow, HosxpAncClassifyingRow, HosxpLabourInfantRow, HosxpPatientAddressRow } from '@/types/hosxp';
 import type { AncRiskInput } from '@/config/anc-risk-rules';
 import { HOSXP_RISK_TO_LAB_FLAGS } from '@/config/anc-risk-rules';
 import { AncRiskLevel } from '@/types/domain';
@@ -712,7 +712,15 @@ export async function syncAncData(
   ancRisks: HosxpAncRiskRow[],
   ancClassifying: HosxpAncClassifyingRow[],
   encryptionKey: string,
+  patientAddresses?: HosxpPatientAddressRow[],
 ): Promise<number> {
+  // Build address lookup by HN
+  const addressMap = new Map<string, HosxpPatientAddressRow>();
+  if (patientAddresses) {
+    for (const addr of patientAddresses) {
+      addressMap.set(addr.hn, addr);
+    }
+  }
   let count = 0;
 
   for (const anc of ancPatients) {
@@ -724,16 +732,38 @@ export async function syncAncData(
     const encryptedCid = anc.cid ? encrypt(anc.cid, encryptionKey) : null;
     const age = calculateAge(anc.birthday);
 
-    // Find or create journey
-    let journey = await getJourneyByHn(db, anc.hn, hospitalId);
-    if (!journey) {
+    // Find or create journey — primary lookup by CID (cross-hospital), fallback to HN
+    let journey = (cidHash ? await getActiveJourneyByCid(db, cidHash) : null)
+      ?? await getJourneyByHn(db, anc.hn, hospitalId);
+
+    // Detect new pregnancy vs update to existing
+    const isNewPregnancy = journey && (
+      (anc.preg_no > journey.gravida) ||
+      (anc.lmp && journey.lmp && anc.lmp !== journey.lmp)
+    );
+    const existingIsActive = journey && (journey.careStage === 'PREGNANCY' || journey.careStage === 'LABOR');
+
+    if (isNewPregnancy && existingIsActive && journey) {
+      const daysSinceUpdate = Math.floor(
+        (Date.now() - journey.updatedAt.getTime()) / (1000 * 60 * 60 * 24),
+      );
+      console.warn(
+        `[PREGNANCY_OVERLAP] HN=${anc.hn} ` +
+        `ครรภ์ใหม่ (pregNo=${anc.preg_no}) ขณะที่ครรภ์เดิม (pregNo=${journey.gravida}, stage=${journey.careStage}) ` +
+        `ยังไม่สิ้นสุด | journey=${journey.id} | อัพเดทล่าสุด ${daysSinceUpdate} วันที่แล้ว`,
+      );
+    }
+
+    const shouldCreateNew = !journey || isNewPregnancy;
+
+    if (shouldCreateNew) {
       journey = await createJourney(db, {
         hospitalId,
         hn: anc.hn,
         personAncId: anc.person_anc_id,
         name: encryptedName,
-        cid: encryptedCid,
-        cidHash,
+        cid: encryptedCid ?? '',
+        cidHash: cidHash ?? '',
         age,
         gravida: anc.preg_no,
         para: 0,
@@ -742,18 +772,31 @@ export async function syncAncData(
         ancRiskLevel: AncRiskLevel.LOW,
       });
     } else {
-      // Update existing journey with latest data
+      // Update existing journey with latest data (same pregnancy)
       const now = new Date().toISOString();
       await db.execute(
         `UPDATE maternal_journeys SET name = ?, cid = ?, cid_hash = ?, age = ?, lmp = ?, edc = ?, person_anc_id = ?, synced_at = ?, updated_at = ? WHERE id = ?`,
-        [encryptedName, encryptedCid, cidHash, age, anc.lmp, anc.edc, anc.person_anc_id, now, now, journey.id],
+        [encryptedName, encryptedCid, cidHash, age, anc.lmp, anc.edc, anc.person_anc_id, now, now, journey!.id],
+      );
+    }
+
+    // At this point journey is guaranteed non-null (created or updated above)
+    const currentJourney = journey!;
+
+    // Update patient location (province/district/sub-district) from HOSxP address data
+    const addr = addressMap.get(anc.hn);
+    if (addr && (addr.chwpart || addr.amppart || addr.tmbpart)) {
+      const now2 = new Date().toISOString();
+      await db.execute(
+        `UPDATE maternal_journeys SET changwat_code = ?, amphur_code = ?, tambon_code = ?, updated_at = ? WHERE id = ?`,
+        [addr.chwpart ?? null, addr.amppart ?? null, addr.tmbpart ?? null, now2, currentJourney.id],
       );
     }
 
     // Sync ANC visits
     const visits = ancServices.filter((s) => s.person_anc_id === anc.person_anc_id);
     for (const visit of visits) {
-      await upsertAncVisit(db, journey.id, visit);
+      await upsertAncVisit(db, currentJourney.id, visit);
     }
 
     // Update visit count on journey
@@ -763,7 +806,7 @@ export async function syncAncData(
       : null;
     await db.execute(
       `UPDATE maternal_journeys SET anc_visit_count = ?, last_anc_date = ?, updated_at = ? WHERE id = ?`,
-      [visits.length, lastVisit?.service_date ?? null, now, journey.id],
+      [visits.length, lastVisit?.service_date ?? null, now, currentJourney.id],
     );
 
     // Evaluate ANC risk
@@ -818,12 +861,12 @@ export async function syncAncData(
     const riskResult = evaluateAncRisk(riskInput);
 
     // Save risk assessment
-    await upsertAncRisk(db, journey.id, riskResult, riskInput);
+    await upsertAncRisk(db, currentJourney.id, riskResult, riskInput);
 
     // Update journey risk level
     await db.execute(
       `UPDATE maternal_journeys SET anc_risk_level = ?, updated_at = ? WHERE id = ?`,
-      [riskResult.level, now, journey.id],
+      [riskResult.level, now, currentJourney.id],
     );
 
     count++;
@@ -895,8 +938,12 @@ export async function linkJourneyToLabor(
   hospitalId: string,
   patientHn: string,
   cachedPatientId: string,
+  cidHash?: string | null,
+  encryptedCid?: string | null,
 ): Promise<string> {
-  let journey = await getJourneyByHn(db, patientHn, hospitalId);
+  // Primary lookup by CID (cross-hospital), fallback to HN
+  let journey = (cidHash ? await getActiveJourneyByCid(db, cidHash) : null)
+    ?? await getJourneyByHn(db, patientHn, hospitalId);
 
   if (journey) {
     // Link and transition
@@ -916,8 +963,8 @@ export async function linkJourneyToLabor(
     hn: patientHn,
     personAncId: null,
     name: '',
-    cid: null,
-    cidHash: null,
+    cid: encryptedCid ?? '',
+    cidHash: cidHash ?? '',
     age: 0,
     gravida: 0,
     para: 0,

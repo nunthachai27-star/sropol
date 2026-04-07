@@ -1,0 +1,8 @@
+{
+  "type": "referral_update",
+  "hospitalCode": "11304",
+  "referralId": "00000014",
+  "fromHospitalCode": "10679",
+  "status": "ACCEPTED",
+  "reason": "รับส่งต่อ — เตียงแผนกสูติกรรมว่าง"
+}

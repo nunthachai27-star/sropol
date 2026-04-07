@@ -7,9 +7,14 @@ import {
   validatePayload,
   processWebhookPayload,
   processAncWebhook,
-  processReferralWebhook,
+  processReferralCreate,
+  processReferralUpdate,
 } from '@/services/webhook';
-import type { WebhookAncPayload, WebhookReferralPayload } from '@/services/webhook';
+import type {
+  WebhookAncPayload,
+  WebhookReferralCreatePayload,
+  WebhookReferralUpdatePayload,
+} from '@/services/webhook';
 import { SseManager } from '@/lib/sse';
 
 export async function POST(request: NextRequest) {
@@ -81,26 +86,75 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    if (payloadType === 'referral_update') {
-      const referralPayload = body as WebhookReferralPayload;
+    // CREATE referral — sent by sending hospital (รพ.ต้นทาง)
+    if (payloadType === 'referral') {
+      const referralPayload = body as WebhookReferralCreatePayload;
       if (!referralPayload.referralId || typeof referralPayload.referralId !== 'string') {
         return NextResponse.json(
           { error: '"referralId" is required (string)' },
           { status: 400 },
         );
       }
-      if (!referralPayload.status || typeof referralPayload.status !== 'string') {
+      if (!referralPayload.hn || typeof referralPayload.hn !== 'string') {
         return NextResponse.json(
-          { error: '"status" is required (string)' },
+          { error: '"hn" is required (string) — patient HN at sending hospital' },
           { status: 400 },
         );
       }
-      const result = await processReferralWebhook(
-        db,
-        keyInfo.hospitalId,
-        referralPayload,
-        sseManager,
-      );
+      if (!referralPayload.cid || typeof referralPayload.cid !== 'string') {
+        return NextResponse.json(
+          { error: '"cid" is required (string) — เลขบัตรประชาชน 13 หลัก' },
+          { status: 400 },
+        );
+      }
+      if (!referralPayload.name || typeof referralPayload.name !== 'string') {
+        return NextResponse.json(
+          { error: '"name" is required (string) — ชื่อ-นามสกุลผู้ป่วย' },
+          { status: 400 },
+        );
+      }
+      if (!referralPayload.toHospitalCode || typeof referralPayload.toHospitalCode !== 'string') {
+        return NextResponse.json(
+          { error: '"toHospitalCode" is required (string) — HCODE รพ.ปลายทาง' },
+          { status: 400 },
+        );
+      }
+      if (referralPayload.action !== 'delete' && (!referralPayload.reason || typeof referralPayload.reason !== 'string')) {
+        return NextResponse.json(
+          { error: '"reason" is required (string) — เหตุผลการส่งต่อ' },
+          { status: 400 },
+        );
+      }
+      const result = await processReferralCreate(db, keyInfo.hospitalId, referralPayload, sseManager);
+      return NextResponse.json({
+        success: true,
+        ...result,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // UPDATE referral status — sent by receiving hospital (รพ.ปลายทาง)
+    if (payloadType === 'referral_update') {
+      const referralPayload = body as WebhookReferralUpdatePayload;
+      if (!referralPayload.referralId || typeof referralPayload.referralId !== 'string') {
+        return NextResponse.json(
+          { error: '"referralId" is required (string)' },
+          { status: 400 },
+        );
+      }
+      if (!referralPayload.fromHospitalCode || typeof referralPayload.fromHospitalCode !== 'string') {
+        return NextResponse.json(
+          { error: '"fromHospitalCode" is required (string) — HCODE รพ.ต้นทาง' },
+          { status: 400 },
+        );
+      }
+      if (referralPayload.action !== 'delete' && (!referralPayload.status || typeof referralPayload.status !== 'string')) {
+        return NextResponse.json(
+          { error: '"status" is required (string) — ACCEPTED | IN_TRANSIT | ARRIVED | REJECTED' },
+          { status: 400 },
+        );
+      }
+      const result = await processReferralUpdate(db, keyInfo.hospitalId, referralPayload, sseManager);
       return NextResponse.json({
         success: true,
         ...result,

@@ -96,6 +96,7 @@ describe('Webhook Pipeline Integration', () => {
           },
           {
             hn: 'WH-002', an: 'WAN-002', name: 'นาง ปกติ ดี',
+      cid: '1100500010001',
             age: 24, gravida: 2, ga_weeks: 38, anc_count: 8,
             admit_date: '2026-03-08T10:00:00+07:00',
             height_cm: 162, weight_kg: 60, weight_diff_kg: 10,
@@ -178,6 +179,7 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         patients: [{
           hn: 'WH-UPD', an: 'WAN-UPD', name: 'นาง อัพเดท ข้อมูล',
+      cid: '1100500010002',
           age: 30, gravida: 2, ga_weeks: 38, admit_date: '2026-03-08T08:00:00+07:00',
           labor_status: 'ACTIVE',
         }],
@@ -199,6 +201,7 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         patients: [{
           hn: 'WH-UPD', an: 'WAN-UPD', name: 'นาง อัพเดท ข้อมูล',
+      cid: '1100500010003',
           age: 30, gravida: 2, ga_weeks: 39, admit_date: '2026-03-08T08:00:00+07:00',
           height_cm: 155, weight_diff_kg: 14,
           labor_status: 'ACTIVE',
@@ -251,11 +254,12 @@ describe('Webhook Pipeline Integration', () => {
       expect(stored[0].cid_hash!.length).toBe(64);
     });
 
-    it('patient without CID has null cid and cid_hash', async () => {
+    it('CID is always stored encrypted with SHA-256 hash', async () => {
       const payload: WebhookPayload = {
         hospitalCode: '99901',
         patients: [{
-          hn: 'WH-NOCID', an: 'WAN-NOCID', name: 'นาง ไม่มี บัตร',
+          hn: 'WH-CID', an: 'WAN-CID', name: 'นาง มี บัตร',
+          cid: '1100500010004',
           age: 22, admit_date: '2026-03-08T08:00:00+07:00',
         }],
       };
@@ -264,10 +268,13 @@ describe('Webhook Pipeline Integration', () => {
 
       const stored = await db.query<{ cid: string | null; cid_hash: string | null }>(
         'SELECT cid, cid_hash FROM cached_patients WHERE an = ?',
-        ['WAN-NOCID'],
+        ['WAN-CID'],
       );
-      expect(stored[0].cid).toBeNull();
-      expect(stored[0].cid_hash).toBeNull();
+      // CID is encrypted (not plain text) and hash is stored
+      expect(stored[0].cid).not.toBeNull();
+      expect(stored[0].cid).not.toBe('1100500010004'); // encrypted, not plain
+      expect(stored[0].cid_hash).not.toBeNull();
+      expect(stored[0].cid_hash).toHaveLength(64); // SHA-256 hex
     });
   });
 
@@ -278,6 +285,7 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         patients: [{
           hn: 'WH-HR', an: 'WAN-HR', name: 'นาง เสี่ยง สูง',
+      cid: '1100500010005',
           age: 35, gravida: 1, ga_weeks: 42, anc_count: 2,
           admit_date: '2026-03-08T08:00:00+07:00',
           height_cm: 147, weight_diff_kg: 22, fundal_height_cm: 38,
@@ -306,6 +314,7 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         patients: [{
           hn: 'WH-PARTIAL', an: 'WAN-PARTIAL', name: 'นาง ข้อมูล บางส่วน',
+      cid: '1100500010006',
           age: 28, gravida: 2, ga_weeks: 38,
           admit_date: '2026-03-08T08:00:00+07:00',
           // No height, weight, fundal, US, HCT, ANC
@@ -330,6 +339,7 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         patients: [{
           hn: 'WH-ALERT', an: 'WAN-ALERT', name: 'นาง แจ้งเตือน',
+      cid: '1100500010007',
           age: 32, gravida: 1, ga_weeks: 42, anc_count: 1,
           admit_date: '2026-03-08T08:00:00+07:00',
           height_cm: 145, weight_diff_kg: 25, fundal_height_cm: 40,
@@ -466,6 +476,7 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         patients: [{
           hn: 'WH-MIX', an: 'WAN-MIX', name: 'นาง Webhook Patient',
+      cid: '1100500010008',
           age: 30, gravida: 1, ga_weeks: 41, anc_count: 2,
           admit_date: '2026-03-08T10:00:00+07:00',
           height_cm: 148, us_weight_g: 4000, hematocrit_pct: 28,
@@ -496,6 +507,7 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         patients: [{
           hn: 'WH-DEL', an: 'WAN-DEL', name: 'นาง คลอด แล้ว',
+      cid: '1100500010009',
           age: 26, gravida: 2, ga_weeks: 39,
           admit_date: '2026-03-06T08:00:00+07:00', labor_status: 'ACTIVE',
         }],
@@ -516,6 +528,7 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         patients: [{
           hn: 'WH-DEL', an: 'WAN-DEL', name: 'นาง คลอด แล้ว',
+      cid: '1100500010010',
           age: 26, gravida: 2, ga_weeks: 39,
           admit_date: '2026-03-06T08:00:00+07:00', labor_status: 'DELIVERED',
         }],
@@ -543,9 +556,12 @@ describe('Webhook Pipeline Integration', () => {
       const admitPayload: WebhookPayload = {
         hospitalCode: '99901',
         patients: [
-          { hn: 'WH-FS1', an: 'WAN-FS1', name: 'Patient A', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
-          { hn: 'WH-FS2', an: 'WAN-FS2', name: 'Patient B', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
-          { hn: 'WH-FS3', an: 'WAN-FS3', name: 'Patient C', age: 30, admit_date: '2026-03-06T10:00:00+07:00' },
+          { hn: 'WH-FS1', an: 'WAN-FS1', name: 'Patient A',
+      cid: '1100500010011', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
+          { hn: 'WH-FS2', an: 'WAN-FS2', name: 'Patient B',
+      cid: '1100500010012', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
+          { hn: 'WH-FS3', an: 'WAN-FS3', name: 'Patient C',
+      cid: '1100500010013', age: 30, admit_date: '2026-03-06T10:00:00+07:00' },
         ],
       };
       await processWebhookPayload(db, webhookHospitalId, admitPayload, asSse(sseManager));
@@ -564,7 +580,8 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         mode: 'full_snapshot',
         patients: [
-          { hn: 'WH-FS2', an: 'WAN-FS2', name: 'Patient B', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
+          { hn: 'WH-FS2', an: 'WAN-FS2', name: 'Patient B',
+      cid: '1100500010014', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
         ],
       };
       const result = await processWebhookPayload(db, webhookHospitalId, snapshotPayload, asSse(sseManager));
@@ -608,8 +625,10 @@ describe('Webhook Pipeline Integration', () => {
       const admitPayload: WebhookPayload = {
         hospitalCode: '99901',
         patients: [
-          { hn: 'WH-FN1', an: 'WAN-FN1', name: 'Patient X', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
-          { hn: 'WH-FN2', an: 'WAN-FN2', name: 'Patient Y', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
+          { hn: 'WH-FN1', an: 'WAN-FN1', name: 'Patient X',
+      cid: '1100500010015', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
+          { hn: 'WH-FN2', an: 'WAN-FN2', name: 'Patient Y',
+      cid: '1100500010016', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
         ],
       };
       await processWebhookPayload(db, webhookHospitalId, admitPayload, asSse(sseManager));
@@ -621,8 +640,10 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         mode: 'full_snapshot',
         patients: [
-          { hn: 'WH-FN1', an: 'WAN-FN1', name: 'Patient X', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
-          { hn: 'WH-FN2', an: 'WAN-FN2', name: 'Patient Y', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
+          { hn: 'WH-FN1', an: 'WAN-FN1', name: 'Patient X',
+      cid: '1100500010017', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
+          { hn: 'WH-FN2', an: 'WAN-FN2', name: 'Patient Y',
+      cid: '1100500010018', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
         ],
       };
       const result = await processWebhookPayload(db, webhookHospitalId, snapshotPayload, asSse(sseManager));
@@ -640,9 +661,12 @@ describe('Webhook Pipeline Integration', () => {
       const admitPayload: WebhookPayload = {
         hospitalCode: '99901',
         patients: [
-          { hn: 'WH-IN1', an: 'WAN-IN1', name: 'Keep Active A', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
-          { hn: 'WH-IN2', an: 'WAN-IN2', name: 'Keep Active B', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
-          { hn: 'WH-IN3', an: 'WAN-IN3', name: 'Keep Active C', age: 30, admit_date: '2026-03-06T10:00:00+07:00' },
+          { hn: 'WH-IN1', an: 'WAN-IN1', name: 'Keep Active A',
+      cid: '1100500010019', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
+          { hn: 'WH-IN2', an: 'WAN-IN2', name: 'Keep Active B',
+      cid: '1100500010020', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
+          { hn: 'WH-IN3', an: 'WAN-IN3', name: 'Keep Active C',
+      cid: '1100500010021', age: 30, admit_date: '2026-03-06T10:00:00+07:00' },
         ],
       };
       await processWebhookPayload(db, webhookHospitalId, admitPayload, asSse(sseManager));
@@ -654,7 +678,8 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         mode: 'incremental',
         patients: [
-          { hn: 'WH-IN2', an: 'WAN-IN2', name: 'Keep Active B', age: 28, ga_weeks: 39, admit_date: '2026-03-06T09:00:00+07:00' },
+          { hn: 'WH-IN2', an: 'WAN-IN2', name: 'Keep Active B',
+      cid: '1100500010022', age: 28, ga_weeks: 39, admit_date: '2026-03-06T09:00:00+07:00' },
         ],
       };
       const result = await processWebhookPayload(db, webhookHospitalId, updatePayload, asSse(sseManager));

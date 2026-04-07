@@ -1,0 +1,12 @@
+{
+  "type": "referral",
+  "hospitalCode": "10679",
+  "referralId": "00000014",
+  "hn": "000001589",
+  "cid": "0809764095723",
+  "name": "นางกรนภา บัญญวัต",
+  "toHospitalCode": "11304",
+  "reason": "Referral",
+  "diagnosisCode": "S330",
+  "urgencyLevel": "ROUTINE"
+}

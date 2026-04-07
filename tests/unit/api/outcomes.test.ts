@@ -18,8 +18,8 @@ describe('Outcomes API', () => {
        VALUES ('${hospitalId}', '10670', 'รพ.ขอนแก่น', 'A_S', 1, 'ONLINE', datetime('now'), datetime('now'))`,
     );
     await db.execute(
-      `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
-       VALUES ('${journeyId}', '${hospitalId}', '${hospitalId}', '12345', 'Test', 28, 1, 0, 'DELIVERED', 'LOW', 5, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
+      `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, cid, cid_hash, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
+       VALUES ('${journeyId}', '${hospitalId}', '${hospitalId}', '12345', 'Test', 'enc_cid', 'cidhash_out', 28, 1, 0, 'DELIVERED', 'LOW', 5, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
     );
   });
 

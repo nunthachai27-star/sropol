@@ -9,8 +9,8 @@ export interface CreateJourneyInput {
   hn: string;
   personAncId: number | null;
   name: string;
-  cid: string | null;
-  cidHash: string | null;
+  cid: string;
+  cidHash: string;
   age: number;
   gravida: number;
   para: number;
@@ -51,6 +51,9 @@ export async function createJourney(
     ancVisitCount: 0,
     lastAncDate: null,
     gaWeeks: null,
+    changwatCode: null,
+    amphurCode: null,
+    tambonCode: null,
     registeredAt: new Date(now),
     stageChangedAt: new Date(now),
     syncedAt: new Date(now),
@@ -59,6 +62,24 @@ export async function createJourney(
   };
 }
 
+// Primary lookup: find the most recent journey by CID hash (cross-hospital)
+// CID is the true patient identifier — same person, same CID, any hospital
+// Returns the latest journey regardless of stage — one CID can have multiple
+// pregnancies, so we always return the most recent one. The caller decides
+// whether to create a new journey (e.g., when pregNo/lmp indicate a new pregnancy).
+export async function getActiveJourneyByCid(
+  db: DatabaseAdapter,
+  cidHash: string,
+): Promise<MaternalJourney | null> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT * FROM maternal_journeys WHERE cid_hash = ? ORDER BY created_at DESC LIMIT 1`,
+    [cidHash],
+  );
+  if (rows.length === 0) return null;
+  return mapRowToJourney(rows[0]);
+}
+
+// Fallback lookup: find by HN + hospital (for legacy/HOSxP data without CID)
 export async function getJourneyByHn(
   db: DatabaseAdapter,
   hn: string,
@@ -136,8 +157,8 @@ function mapRowToJourney(row: Record<string, unknown>): MaternalJourney {
     hn: row.hn as string,
     personAncId: row.person_anc_id as number | null,
     name: row.name as string,
-    cid: row.cid as string | null,
-    cidHash: row.cid_hash as string | null,
+    cid: (row.cid as string) ?? '',
+    cidHash: (row.cid_hash as string) ?? '',
     age: row.age as number,
     gravida: row.gravida as number,
     para: row.para as number,
@@ -148,6 +169,9 @@ function mapRowToJourney(row: Record<string, unknown>): MaternalJourney {
     ancVisitCount: row.anc_visit_count as number,
     lastAncDate: row.last_anc_date as string | null,
     gaWeeks: row.ga_weeks as number | null,
+    changwatCode: row.changwat_code as string | null,
+    amphurCode: row.amphur_code as string | null,
+    tambonCode: row.tambon_code as string | null,
     registeredAt: new Date(row.registered_at as string),
     stageChangedAt: new Date(row.stage_changed_at as string),
     syncedAt: new Date(row.synced_at as string),

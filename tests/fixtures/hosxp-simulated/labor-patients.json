@@ -1,0 +1,20 @@
+{
+  "hospitalCode": "10679",
+  "mode": "incremental",
+  "patients": [
+    {
+      "hn": "006800004",
+      "an": "690000004",
+      "name": "นางจูเนียร์ 3 ทดสอบครรภ์ 3",
+      "cid": "0999991049501",
+      "age": 30,
+      "gravida": 1,
+      "ga_weeks": 40,
+      "anc_count": null,
+      "admit_date": "2026-03-25T15:02:13+07:00",
+      "height_cm": 168,
+      "weight_kg": 87.0,
+      "labor_status": "ACTIVE"
+    }
+  ]
+}

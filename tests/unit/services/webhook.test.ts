@@ -88,7 +88,7 @@ describe('Webhook Service', () => {
 
     it('rejects patients array exceeding 100 items', () => {
       const patients = Array.from({ length: 101 }, (_, i) => ({
-        hn: `HN${i}`, an: `AN${i}`, name: 'Test', age: 25,
+        hn: `HN${i}`, an: `AN${i}`, name: 'Test', cid: '1100500090001', age: 25,
         admit_date: '2026-03-08T10:00:00+07:00',
       }));
       const result = validatePayload({ patients });
@@ -98,7 +98,7 @@ describe('Webhook Service', () => {
 
     it('accepts exactly 100 patients', () => {
       const patients = Array.from({ length: 100 }, (_, i) => ({
-        hn: `HN${i}`, an: `AN${i}`, name: 'Test', age: 25,
+        hn: `HN${i}`, an: `AN${i}`, name: 'Test', cid: '1100500090002', age: 25,
         admit_date: '2026-03-08T10:00:00+07:00',
       }));
       expect(validatePayload({ patients }).valid).toBe(true);
@@ -106,7 +106,7 @@ describe('Webhook Service', () => {
 
     it('rejects patient missing required hn', () => {
       const result = validatePayload({
-        patients: [{ an: 'AN1', name: 'Test', age: 25, admit_date: '2026-03-08T10:00:00' }],
+        patients: [{ an: 'AN1', name: 'Test', cid: '1100500090003', age: 25, admit_date: '2026-03-08T10:00:00' }],
       });
       expect(result.valid).toBe(false);
       expect(result.error).toContain('hn is required');
@@ -114,7 +114,7 @@ describe('Webhook Service', () => {
 
     it('rejects patient missing required an', () => {
       const result = validatePayload({
-        patients: [{ hn: 'HN1', name: 'Test', age: 25, admit_date: '2026-03-08T10:00:00' }],
+        patients: [{ hn: 'HN1', name: 'Test', cid: '1100500090004', age: 25, admit_date: '2026-03-08T10:00:00' }],
       });
       expect(result.valid).toBe(false);
       expect(result.error).toContain('an is required');
@@ -130,7 +130,7 @@ describe('Webhook Service', () => {
 
     it('rejects patient missing required age', () => {
       const result = validatePayload({
-        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', admit_date: '2026-03-08T10:00:00' }],
+        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', cid: '1100500090005', admit_date: '2026-03-08T10:00:00' }],
       });
       expect(result.valid).toBe(false);
       expect(result.error).toContain('age is required');
@@ -138,7 +138,7 @@ describe('Webhook Service', () => {
 
     it('rejects patient with non-number age', () => {
       const result = validatePayload({
-        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', age: '25', admit_date: '2026-03-08T10:00:00' }],
+        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', cid: '1100500090006', age: '25', admit_date: '2026-03-08T10:00:00' }],
       });
       expect(result.valid).toBe(false);
       expect(result.error).toContain('age is required');
@@ -146,7 +146,7 @@ describe('Webhook Service', () => {
 
     it('rejects patient missing required admit_date', () => {
       const result = validatePayload({
-        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', age: 25 }],
+        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', cid: '1100500090007', age: 25 }],
       });
       expect(result.valid).toBe(false);
       expect(result.error).toContain('admit_date is required');
@@ -160,6 +160,7 @@ describe('Webhook Service', () => {
       expect(result.error).toContain('hn is required');
       expect(result.error).toContain('an is required');
       expect(result.error).toContain('name is required');
+      expect(result.error).toContain('cid is required');
       expect(result.error).toContain('age is required');
       expect(result.error).toContain('admit_date is required');
     });
@@ -167,7 +168,7 @@ describe('Webhook Service', () => {
     it('accepts valid minimal patient', () => {
       const result = validatePayload({
         patients: [{
-          hn: 'HN001', an: 'AN001', name: 'ทดสอบ ระบบ', age: 25,
+          hn: 'HN001', an: 'AN001', name: 'ทดสอบ ระบบ', cid: '1100500090008', age: 25,
           admit_date: '2026-03-08T10:00:00+07:00',
         }],
       });
@@ -195,9 +196,9 @@ describe('Webhook Service', () => {
     it('accepts multiple patients in single payload', () => {
       const result = validatePayload({
         patients: [
-          { hn: 'HN001', an: 'AN001', name: 'Patient 1', age: 25, admit_date: '2026-03-08T10:00:00' },
-          { hn: 'HN002', an: 'AN002', name: 'Patient 2', age: 30, admit_date: '2026-03-08T11:00:00' },
-          { hn: 'HN003', an: 'AN003', name: 'Patient 3', age: 22, admit_date: '2026-03-08T12:00:00' },
+          { hn: 'HN001', an: 'AN001', name: 'Patient 1', cid: '1100500090010', age: 25, admit_date: '2026-03-08T10:00:00' },
+          { hn: 'HN002', an: 'AN002', name: 'Patient 2', cid: '1100500090011', age: 30, admit_date: '2026-03-08T11:00:00' },
+          { hn: 'HN003', an: 'AN003', name: 'Patient 3', cid: '1100500090012', age: 22, admit_date: '2026-03-08T12:00:00' },
         ],
       });
       expect(result.valid).toBe(true);
@@ -207,7 +208,7 @@ describe('Webhook Service', () => {
     it('validates each patient independently — one bad does not skip others', () => {
       const result = validatePayload({
         patients: [
-          { hn: 'HN001', an: 'AN001', name: 'Good', age: 25, admit_date: '2026-03-08T10:00:00' },
+          { hn: 'HN001', an: 'AN001', name: 'Good', cid: '1100500090013', age: 25, admit_date: '2026-03-08T10:00:00' },
           { hn: 'HN002' }, // missing fields
         ],
       });
@@ -218,7 +219,7 @@ describe('Webhook Service', () => {
     it('accepts mode=incremental', () => {
       const result = validatePayload({
         mode: 'incremental',
-        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', age: 25, admit_date: '2026-03-08T10:00:00' }],
+        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', cid: '1100500090014', age: 25, admit_date: '2026-03-08T10:00:00' }],
       });
       expect(result.valid).toBe(true);
       expect(result.payload!.mode).toBe('incremental');
@@ -227,7 +228,7 @@ describe('Webhook Service', () => {
     it('accepts mode=full_snapshot', () => {
       const result = validatePayload({
         mode: 'full_snapshot',
-        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', age: 25, admit_date: '2026-03-08T10:00:00' }],
+        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', cid: '1100500090015', age: 25, admit_date: '2026-03-08T10:00:00' }],
       });
       expect(result.valid).toBe(true);
       expect(result.payload!.mode).toBe('full_snapshot');
@@ -235,7 +236,7 @@ describe('Webhook Service', () => {
 
     it('accepts payload without mode (defaults to incremental)', () => {
       const result = validatePayload({
-        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', age: 25, admit_date: '2026-03-08T10:00:00' }],
+        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', cid: '1100500090016', age: 25, admit_date: '2026-03-08T10:00:00' }],
       });
       expect(result.valid).toBe(true);
       expect(result.payload!.mode).toBeUndefined();
@@ -244,7 +245,7 @@ describe('Webhook Service', () => {
     it('rejects invalid mode value', () => {
       const result = validatePayload({
         mode: 'bulk',
-        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', age: 25, admit_date: '2026-03-08T10:00:00' }],
+        patients: [{ hn: 'HN1', an: 'AN1', name: 'Test', cid: '1100500090017', age: 25, admit_date: '2026-03-08T10:00:00' }],
       });
       expect(result.valid).toBe(false);
       expect(result.error).toContain('"mode"');

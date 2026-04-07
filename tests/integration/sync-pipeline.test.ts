@@ -181,21 +181,21 @@ describe('Sync Pipeline Integration', () => {
       {
         hn: 'HN-A01', an: 'AN-A01',
         name: encrypt('นาง เดิม หนึ่ง', TEST_ENCRYPTION_KEY),
-        cid: null, cidHash: null,
+        cid: 'enc_test_001', cidHash: 'testhash00000000000000000000000000000000000000000000000000000001',
         age: 25, gravida: 2, gaWeeks: 38, ancCount: 5,
         admitDate: '2026-03-01T08:00:00', laborStatus: 'ACTIVE', syncedAt: now,
       },
       {
         hn: 'HN-A02', an: 'AN-A02',
         name: encrypt('นาง เดิม สอง', TEST_ENCRYPTION_KEY),
-        cid: null, cidHash: null,
+        cid: 'enc_test_002', cidHash: 'testhash00000000000000000000000000000000000000000000000000000002',
         age: 30, gravida: 3, gaWeeks: 39, ancCount: 7,
         admitDate: '2026-03-02T10:00:00', laborStatus: 'ACTIVE', syncedAt: now,
       },
       {
         hn: 'HN-A03', an: 'AN-A03',
         name: encrypt('นาง เดิม สาม', TEST_ENCRYPTION_KEY),
-        cid: null, cidHash: null,
+        cid: 'enc_test_003', cidHash: 'testhash00000000000000000000000000000000000000000000000000000003',
         age: 28, gravida: 1, gaWeeks: 40, ancCount: 4,
         admitDate: '2026-03-03T12:00:00', laborStatus: 'ACTIVE', syncedAt: now,
       },
@@ -320,7 +320,7 @@ describe('Sync Pipeline Integration', () => {
     const patient: SyncPatientData = {
       hn: 'HN-IDEM', an: 'AN-IDEM',
       name: encrypt('นาง ซ้ำ ข้อมูล', TEST_ENCRYPTION_KEY),
-      cid: null, cidHash: null,
+      cid: 'enc_test_004', cidHash: 'testhash00000000000000000000000000000000000000000000000000000004',
       age: 27, gravida: 2, gaWeeks: 38, ancCount: 5,
       admitDate: '2026-03-06T08:00:00', laborStatus: 'ACTIVE', syncedAt: now,
     };
@@ -400,14 +400,14 @@ describe('Sync Pipeline Integration', () => {
         {
           hn: `HN-${h.hcode}-01`, an: `AN-${h.hcode}-01`,
           name: encrypt(`Patient 1 at ${h.hcode}`, TEST_ENCRYPTION_KEY),
-          cid: null, cidHash: null,
+          cid: 'enc_test_005', cidHash: 'testhash00000000000000000000000000000000000000000000000000000005',
           age: 25, gravida: 2, gaWeeks: 38, ancCount: 5,
           admitDate: '2026-03-08T08:00:00', laborStatus: 'ACTIVE', syncedAt: now,
         },
         {
           hn: `HN-${h.hcode}-02`, an: `AN-${h.hcode}-02`,
           name: encrypt(`Patient 2 at ${h.hcode}`, TEST_ENCRYPTION_KEY),
-          cid: null, cidHash: null,
+          cid: 'enc_test_006', cidHash: 'testhash00000000000000000000000000000000000000000000000000000006',
           age: 30, gravida: 1, gaWeeks: 41, ancCount: 3,
           admitDate: '2026-03-08T10:00:00', laborStatus: 'ACTIVE', syncedAt: now,
         },
