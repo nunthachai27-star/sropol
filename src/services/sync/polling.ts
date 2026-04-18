@@ -33,7 +33,10 @@ const syncStates: Map<string, SyncState> = new Map();
 const SYNC_COOLDOWN_MS = 10_000;
 const SYNC_TIMEOUT_MS = 60_000; // Force-release lock if sync runs longer than this
 
-function getSyncState(hospitalId: string): SyncState {
+// Exported so tests can verify the auto-release timeout behavior directly.
+// Production callers use this through requestImmediateSync(); tests need it
+// to set up "stuck lock" scenarios without actually executing a real sync.
+export function getSyncState(hospitalId: string): SyncState {
   let state = syncStates.get(hospitalId);
   if (!state) {
     state = { inProgress: false, syncStartedAt: 0, lastSyncAt: 0, lastJwtRefreshAt: 0 };
@@ -45,6 +48,12 @@ function getSyncState(hospitalId: string): SyncState {
     state.inProgress = false;
   }
   return state;
+}
+
+// Test-only: clear the module-level sync state map between tests so they
+// don't pollute each other. Underscore-prefixed to discourage prod use.
+export function _resetSyncStatesForTesting(): void {
+  syncStates.clear();
 }
 
 export interface ImmediateSyncResult {

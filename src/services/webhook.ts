@@ -280,9 +280,20 @@ export function validatePayload(body: unknown): {
     if (!p.hn || typeof p.hn !== 'string') errors.push(`patients[${i}].hn is required (string)`);
     if (!p.an || typeof p.an !== 'string') errors.push(`patients[${i}].an is required (string)`);
     if (!p.name || typeof p.name !== 'string') errors.push(`patients[${i}].name is required (string)`);
-    if (!p.cid || typeof p.cid !== 'string') errors.push(`patients[${i}].cid is required (string) — เลขบัตรประชาชน 13 หลัก`);
+    if (!p.cid || typeof p.cid !== 'string') {
+      errors.push(`patients[${i}].cid is required (string) — เลขบัตรประชาชน 13 หลัก`);
+    } else if (!/^\d{13}$/.test(p.cid)) {
+      // Strict 13-digit check — required for cross-hospital cidHash matching.
+      // A 12- or 14-char CID silently breaks transfer detection in production.
+      errors.push(`patients[${i}].cid must be exactly 13 digits (got "${p.cid}")`);
+    }
     if (p.age == null || typeof p.age !== 'number') errors.push(`patients[${i}].age is required (number)`);
-    if (!p.admit_date || typeof p.admit_date !== 'string') errors.push(`patients[${i}].admit_date is required (ISO 8601 string)`);
+    if (!p.admit_date || typeof p.admit_date !== 'string') {
+      errors.push(`patients[${i}].admit_date is required (ISO 8601 string)`);
+    } else if (Number.isNaN(new Date(p.admit_date).getTime())) {
+      // Reject "not-a-date" or "2026-13-45" before they reach the DB layer.
+      errors.push(`patients[${i}].admit_date must be a valid ISO 8601 string (got "${p.admit_date}")`);
+    }
   }
 
   if (errors.length > 0) {

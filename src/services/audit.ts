@@ -1,6 +1,7 @@
 // T088: Audit service — append-only PDPA access logging
 import { v4 as uuidv4 } from 'uuid';
 import type { DatabaseAdapter } from '@/db/adapter';
+import { logger } from '@/lib/logger';
 
 export interface AuditLogEntry {
   userId: string;
@@ -37,4 +38,32 @@ export async function logAccess(
       now,
     ],
   );
+}
+
+/**
+ * Fire-and-forget audit log: never throws, never blocks the request.
+ *
+ * Audit failures are an *operational* problem (DB issue, schema mismatch),
+ * not an authorization problem — the user has already been authenticated
+ * and the action they're requesting is unrelated to the audit DB. Failing
+ * the request would punish the user for an internal bug.
+ *
+ * Instead we emit logger.warn so the failure is visible in observability
+ * without affecting the user experience. PDPA compliance gaps that result
+ * are tracked through the warn-level metric.
+ */
+export async function tryLogAccess(
+  db: DatabaseAdapter,
+  entry: AuditLogEntry,
+): Promise<void> {
+  try {
+    await logAccess(db, entry);
+  } catch (error) {
+    logger.warn('audit_log_failed', {
+      action: entry.action,
+      resourceType: entry.resourceType,
+      resourceId: entry.resourceId,
+      error,
+    });
+  }
 }

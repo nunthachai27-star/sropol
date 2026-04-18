@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { decrypt, getEncryptionKey } from '@/lib/encryption';
 import { auth } from '@/lib/auth';
-import { logAccess } from '@/services/audit';
+import { tryLogAccess } from '@/services/audit';
 import { ensureInit } from '@/lib/ensure-init';
 import { parsePatientId } from '@/lib/utils';
 import { logger } from '@/lib/logger';
@@ -27,12 +27,12 @@ export async function GET(
     // T091: Audit logging
     const session = await auth();
     if (session?.user) {
-      await logAccess(db, {
+      await tryLogAccess(db, {
         userId: session.user.id,
         action: 'VIEW_PATIENT',
         resourceType: 'PATIENT',
         resourceId: an,
-      }).catch((error) => logger.warn('audit_log_failed', { action: 'VIEW_PATIENT', resourceId: an, error }));
+      });
     }
 
     // Query patient with hospital info

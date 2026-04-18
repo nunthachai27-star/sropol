@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { getProvinceDashboard, getStageKPIs, getDashboardAlerts } from '@/services/dashboard';
 import { auth } from '@/lib/auth';
-import { logAccess } from '@/services/audit';
+import { tryLogAccess } from '@/services/audit';
 import { ensureInit } from '@/lib/ensure-init';
 import { logger } from '@/lib/logger';
 
@@ -15,11 +15,11 @@ export async function GET() {
     // T091: Audit logging
     const session = await auth();
     if (session?.user) {
-      await logAccess(db, {
+      await tryLogAccess(db, {
         userId: session.user.id,
         action: 'VIEW_DASHBOARD',
         resourceType: 'DASHBOARD',
-      }).catch((error) => logger.warn('audit_log_failed', { action: 'VIEW_DASHBOARD', error }));
+      });
     }
 
     const [result, stageKPIs, alerts] = await Promise.all([

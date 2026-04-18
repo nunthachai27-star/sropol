@@ -152,6 +152,61 @@ describe('Webhook Service', () => {
       expect(result.error).toContain('admit_date is required');
     });
 
+    it('rejects CID with fewer than 13 digits', () => {
+      const result = validatePayload({
+        patients: [{
+          hn: 'HN1', an: 'AN1', name: 'Test', cid: '123456789012', age: 25,
+          admit_date: '2026-03-08T10:00:00+07:00',
+        }],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('cid must be exactly 13 digits');
+    });
+
+    it('rejects CID with more than 13 digits', () => {
+      const result = validatePayload({
+        patients: [{
+          hn: 'HN1', an: 'AN1', name: 'Test', cid: '12345678901234', age: 25,
+          admit_date: '2026-03-08T10:00:00+07:00',
+        }],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('cid must be exactly 13 digits');
+    });
+
+    it('rejects CID containing non-digit characters', () => {
+      const result = validatePayload({
+        patients: [{
+          hn: 'HN1', an: 'AN1', name: 'Test', cid: '110050009000A', age: 25,
+          admit_date: '2026-03-08T10:00:00+07:00',
+        }],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('cid must be exactly 13 digits');
+    });
+
+    it('rejects invalid ISO 8601 admit_date', () => {
+      const result = validatePayload({
+        patients: [{
+          hn: 'HN1', an: 'AN1', name: 'Test', cid: '1100500090099', age: 25,
+          admit_date: 'not-a-date',
+        }],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('admit_date must be a valid ISO 8601');
+    });
+
+    it('rejects admit_date with garbage text but ISO-like prefix', () => {
+      const result = validatePayload({
+        patients: [{
+          hn: 'HN1', an: 'AN1', name: 'Test', cid: '1100500090099', age: 25,
+          admit_date: '2026-13-45',  // invalid month and day
+        }],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('admit_date must be a valid ISO 8601');
+    });
+
     it('reports multiple validation errors at once', () => {
       const result = validatePayload({
         patients: [{ foo: 'bar' }],

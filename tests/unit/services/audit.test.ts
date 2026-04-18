@@ -1,9 +1,10 @@
 // T084: Audit service tests — TDD: write tests FIRST
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SqliteAdapter } from '@/db/sqlite-adapter';
 import { SchemaSync } from '@/db/schema-sync';
 import { ALL_TABLES } from '@/db/tables/index';
-import { logAccess } from '@/services/audit';
+import { logAccess, tryLogAccess } from '@/services/audit';
+import type { DatabaseAdapter } from '@/db/adapter';
 
 describe('Audit Service', () => {
   let db: SqliteAdapter;
@@ -80,5 +81,92 @@ describe('Audit Service', () => {
         resourceType: 'PATIENT',
       }),
     ).rejects.toThrow();
+  });
+
+  describe('tryLogAccess (fire-and-forget wrapper)', () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      // Spy on console.warn (used by logger.warn under the hood) so we can
+      // assert that audit failures are surfaced via structured logging.
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    it('writes the audit row on the happy path', async () => {
+      await tryLogAccess(db, {
+        userId: 'user-1',
+        action: 'VIEW_PATIENT',
+        resourceType: 'PATIENT',
+        resourceId: 'AN999',
+      });
+
+      const logs = await db.query<{ resource_id: string }>(
+        'SELECT resource_id FROM audit_logs WHERE resource_id = ?',
+        ['AN999'],
+      );
+      expect(logs.length).toBe(1);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does NOT throw when the underlying INSERT fails', async () => {
+      // Simulate a DB outage by stubbing execute to reject. Using a fake
+      // adapter rather than mocking the real SqliteAdapter keeps the test
+      // independent of better-sqlite3 internals.
+      const failingDb = {
+        execute: vi.fn().mockRejectedValue(new Error('database is locked')),
+        query: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      // Should resolve without throwing — the request must continue.
+      await expect(
+        tryLogAccess(failingDb, {
+          userId: 'user-1',
+          action: 'VIEW_DASHBOARD',
+          resourceType: 'DASHBOARD',
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('emits logger.warn with audit_log_failed event when INSERT fails', async () => {
+      const failingDb = {
+        execute: vi.fn().mockRejectedValue(new Error('database is locked')),
+        query: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      await tryLogAccess(failingDb, {
+        userId: 'user-1',
+        action: 'VIEW_PATIENT',
+        resourceType: 'PATIENT',
+        resourceId: 'AN-fail',
+      });
+
+      expect(warnSpy).toHaveBeenCalledOnce();
+      const logged = JSON.parse(warnSpy.mock.calls[0][0] as string);
+      expect(logged.level).toBe('warn');
+      expect(logged.event).toBe('audit_log_failed');
+      expect(logged.action).toBe('VIEW_PATIENT');
+      expect(logged.resourceType).toBe('PATIENT');
+      expect(logged.resourceId).toBe('AN-fail');
+      expect(logged.error.message).toBe('database is locked');
+    });
+
+    it('emits logger.warn when validation fails (missing userId)', async () => {
+      // Validation errors thrown by logAccess should also be caught and
+      // logged — they indicate a bug in the caller, not the user's fault.
+      await tryLogAccess(db, {
+        userId: '',
+        action: 'VIEW_PATIENT',
+        resourceType: 'PATIENT',
+      });
+
+      expect(warnSpy).toHaveBeenCalledOnce();
+      const logged = JSON.parse(warnSpy.mock.calls[0][0] as string);
+      expect(logged.event).toBe('audit_log_failed');
+      expect(logged.error.message).toContain('Missing required audit log fields');
+    });
   });
 });
