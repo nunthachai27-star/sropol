@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel older runs of the same branch when a new push lands.
+# Saves CI minutes and prevents stale "passing" reports on forced pushes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Tests use SQLite in-memory; no real database connection needed.
+      # ENCRYPTION_KEY is generated per-test in tests/integration/* setup,
+      # but defining one here lets any code path that reads process.env work.
+      ENCRYPTION_KEY: ci_test_encryption_key_64_hex_chars_____________________________padding
+      USE_SQLITE: 'true'
+      NODE_ENV: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit + integration tests
+        # E2E tests need real HOSxP credentials and live network access —
+        # they run manually or on a future staging-deploy workflow.
+        run: npx vitest run --exclude="tests/e2e/**"
+
+      - name: Build (Next.js production)
+        run: npm run build
+
+      - name: Security audit (advisory — does not fail the run)
+        # Reports HIGH/CRITICAL CVEs in production deps but doesn't block,
+        # so a transitive dep getting an advisory doesn't lock everyone out
+        # of merging. Treat audit failures as a follow-up task instead.
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true

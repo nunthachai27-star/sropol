@@ -20,7 +20,7 @@ function useLiveClock(): string {
         minute: '2-digit',
         second: '2-digit',
       });
-    setTime(fmt());
+    queueMicrotask(() => setTime(fmt()));
     const id = setInterval(() => setTime(fmt()), 1_000);
     return () => clearInterval(id);
   }, []);
@@ -40,7 +40,7 @@ function useLiveDate(): string {
         month: 'long',
         day: 'numeric',
       });
-    setDate(fmt());
+    queueMicrotask(() => setDate(fmt()));
     const id = setInterval(() => setDate(fmt()), 60_000);
     return () => clearInterval(id);
   }, []);

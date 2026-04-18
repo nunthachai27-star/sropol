@@ -5,14 +5,16 @@ import { logger } from '@/lib/logger';
 
 let instance: DatabaseAdapter | null = null;
 
-export function useSqlite(): boolean {
+// Named without the `use` prefix on purpose — eslint react-hooks rules
+// would otherwise flag every caller as misusing a React Hook.
+export function isSqliteEnabled(): boolean {
   return process.env.NODE_ENV === 'test' || process.env.USE_SQLITE === 'true';
 }
 
 export async function getDatabase(): Promise<DatabaseAdapter> {
   if (instance) return instance;
 
-  if (useSqlite()) {
+  if (isSqliteEnabled()) {
     const { SqliteAdapter } = await import('./sqlite-adapter');
     const path = process.env.NODE_ENV === 'test' ? ':memory:' : (process.env.SQLITE_PATH ?? 'dev.sqlite');
     instance = new SqliteAdapter(path);

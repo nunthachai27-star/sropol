@@ -1,5 +1,5 @@
 // T059: Startup sequence — DB init, schema sync, seed, start polling
-import { getDatabase, closeDatabase, useSqlite } from '@/db/connection';
+import { getDatabase, closeDatabase, isSqliteEnabled } from '@/db/connection';
 import { SchemaSync } from '@/db/schema-sync';
 import { ALL_TABLES } from '@/db/tables/index';
 import { SeedOrchestrator } from '@/db/seeds/index';
@@ -18,7 +18,7 @@ export async function initializeApp(): Promise<void> {
 
     // 1. Connect to database
     const db = await getDatabase();
-    const driver = useSqlite() ? 'sqlite' : 'postgresql';
+    const driver = isSqliteEnabled() ? 'sqlite' : 'postgresql';
     logger.info('database_connected', { driver });
 
     // 2. Sync schema
@@ -31,7 +31,7 @@ export async function initializeApp(): Promise<void> {
     logger.info('seeders_completed', {});
 
     // 4. Seed demo data in dev mode with SQLite (opt-in via SEED_DEMO_DATA=true)
-    if (useSqlite() && process.env.NODE_ENV !== 'test' && process.env.SEED_DEMO_DATA === 'true') {
+    if (isSqliteEnabled() && process.env.NODE_ENV !== 'test' && process.env.SEED_DEMO_DATA === 'true') {
       const { seedDemoData } = await import('@/db/seeds/demo-seeder');
       await seedDemoData(db);
     }

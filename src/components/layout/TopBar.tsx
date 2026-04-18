@@ -22,7 +22,10 @@ function useBangkokClock(): string {
   const [time, setTime] = useState('--:--:--');
 
   useEffect(() => {
-    setTime(formatBangkokTime());
+    // Defer the initial update to avoid a synchronous setState inside
+    // the effect body (react-hooks/set-state-in-effect). Subsequent
+    // updates run inside the interval callback and are unaffected.
+    queueMicrotask(() => setTime(formatBangkokTime()));
     const interval = setInterval(() => {
       setTime(formatBangkokTime());
     }, 1_000);
