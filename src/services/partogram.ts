@@ -551,8 +551,21 @@ function analyzeUrine(obs: PartographObservationDto[]): CdssAlertDto[] {
   }
   return out;
 }
-function analyzeTimeGaps(_obs: PartographObservationDto[]): CdssAlertDto[] {
-  return [];
+// Rule 32: observation gap >4 h while in active phase (dilation >= 4 cm).
+// Pascal: PartographCDSSUnit.pas:472–485.
+function analyzeTimeGaps(obs: PartographObservationDto[]): CdssAlertDto[] {
+  const out: CdssAlertDto[] = [];
+  for (let i = 1; i < obs.length; i++) {
+    const gapH = hoursBetween(obs[i].observeDatetime, obs[i - 1].observeDatetime);
+    const d = obs[i].cervicalDilationCm;
+    if (gapH > 4 && d !== null && d >= 4) {
+      out.push({
+        severity: 'WARN', section: 'TIME', obsIndex: i,
+        message: `เว้นการสังเกต ${fmt1(gapH)} ชม. (ระยะ active)`,
+      });
+    }
+  }
+  return out;
 }
 
 export function analyzePartograph(
