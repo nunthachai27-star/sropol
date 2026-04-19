@@ -381,8 +381,69 @@ function analyzeCervix(obs: PartographObservationDto[]): CdssAlertDto[] {
 
   return out;
 }
-function analyzeContractions(_obs: PartographObservationDto[]): CdssAlertDto[] {
-  return [];
+// Rules 15–19: contractions.
+// Pascal: PartographCDSSUnit.pas:355–397.
+function analyzeContractions(obs: PartographObservationDto[]): CdssAlertDto[] {
+  const out: CdssAlertDto[] = [];
+  let tachyCount = 0;
+  let firstTachy = -1;
+  for (let i = 0; i < obs.length; i++) {
+    const n = obs[i].contractionPer10Min;
+    if (n !== null && n > 0) {
+      // Rule 15: tachysystole this row.
+      if (n > 5) {
+        out.push({
+          severity: 'ALERT', section: 'CONTRACTIONS', obsIndex: i,
+          message: `มดลูกหดตัวถี่: ${n} ครั้ง/10 นาที`,
+        });
+      } else if (n <= 2) {
+        // Rule 16: hypotonus.
+        out.push({
+          severity: 'ALERT', section: 'CONTRACTIONS', obsIndex: i,
+          message: `มดลูกหดตัวน้อย: ${n} ครั้ง/10 นาที`,
+        });
+      }
+
+      // Rule 17 prep: track sustained tachysystole window.
+      if (n > 5) {
+        if (firstTachy < 0) firstTachy = i;
+        tachyCount += 1;
+      } else {
+        tachyCount = 0;
+        firstTachy = -1;
+      }
+
+      // Rule 17: sustained tachysystole over >= 30 minutes is CRITICAL.
+      if (firstTachy >= 0 && tachyCount >= 2) {
+        const gapMin =
+          (Date.parse(obs[i].observeDatetime)
+            - Date.parse(obs[firstTachy].observeDatetime)) / 60000;
+        if (gapMin >= 30) {
+          out.push({
+            severity: 'CRITICAL', section: 'CONTRACTIONS', obsIndex: i,
+            message: 'มดลูกหดตัวถี่ต่อเนื่อง > 30 นาที',
+          });
+        }
+      }
+    }
+
+    // Rules 18 & 19: contraction duration. Pascal: ContrDurSec > 0 gate.
+    const s = obs[i].contractionDurationSec;
+    if (s !== null && s > 0) {
+      if (s > 60) {
+        out.push({
+          severity: 'ALERT', section: 'CONTRACTIONS', obsIndex: i,
+          message: `ระยะเวลาหดรัดตัว ${s} วินาที > 60 วินาที`,
+        });
+      } else if (s < 20) {
+        out.push({
+          severity: 'ALERT', section: 'CONTRACTIONS', obsIndex: i,
+          message: `ระยะเวลาหดรัดตัว ${s} วินาที < 20 วินาที`,
+        });
+      }
+    }
+  }
+  return out;
 }
 function analyzeMaternal(_obs: PartographObservationDto[]): CdssAlertDto[] {
   return [];
