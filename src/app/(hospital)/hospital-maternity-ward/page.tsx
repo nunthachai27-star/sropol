@@ -16,7 +16,16 @@ import {
   getBedMoveReasons,
   movePatientBed,
 } from '@/services/maternity-ward';
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import {
+  AlertCircle,
+  RefreshCw,
+  Bed,
+  UserCheck,
+  BedDouble,
+  Lock,
+  Activity,
+} from 'lucide-react';
 
 // Inline skeleton primitive — single-purpose, used only by this page so it
 // stays inline rather than getting promoted to a shared component (DRY: rule
@@ -63,6 +72,16 @@ export default function HospitalMaternityWardPage() {
     useMaternityWardState();
   const [selectedAn, setSelectedAn] = useState<string | null>(null);
   const [reasons, setReasons] = useState<string[]>([]);
+
+  // Live "now" tick — drives hours-in-labor + last-observation relative time
+  // so the grid stays honest between SWR revalidations. Updating every 60s is
+  // plenty for hour-granularity displays. Pulled up here (instead of into
+  // BedTile) so all tiles share a single render cadence.
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Lazy-load the reason list once a session is available. Failures fall back
   // to an empty list — the modal Confirm button stays disabled in that case.
@@ -140,7 +159,7 @@ export default function HospitalMaternityWardPage() {
 
   if (isLoading || !ward) {
     return (
-      <div className="mx-auto max-w-[1400px] p-6 lg:p-8">
+      <div className="mx-auto max-w-[1600px] p-6 lg:p-8">
         <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-2">
             <Skeleton className="h-7 w-48" />
@@ -154,11 +173,18 @@ export default function HospitalMaternityWardPage() {
     );
   }
 
-  const occupiedCount = occupancy.length;
+  // Filter occupancy to the currently selected ward only. The BMS query can
+  // return admissions for other wards when joins are loose; stats and the grid
+  // must reflect only what's actually displayed.
+  const bednoSet = new Set(beds.map((b) => b.bedno));
+  const wardOccupancy = occupancy.filter((o) => bednoSet.has(o.bedno));
+  const lockedCount = beds.filter((b) => b.bed_lock === 'Y').length;
+  const occupiedCount = wardOccupancy.length;
   const totalBeds = beds.length;
+  const freeCount = Math.max(0, totalBeds - occupiedCount - lockedCount);
   const wardName = wards.find((w) => w.ward === ward)?.name ?? `ward ${ward}`;
   const selectedOccupant = selectedAn
-    ? (occupancy.find((o) => o.an === selectedAn) ?? null)
+    ? (wardOccupancy.find((o) => o.an === selectedAn) ?? null)
     : null;
 
   const handleRefresh = () => {
@@ -196,26 +222,96 @@ export default function HospitalMaternityWardPage() {
     console.warn(`[bed-move] rejected: ${msg}`);
   };
 
+  // Severity roll-ups — keep the summary bar honest without re-running the
+  // per-tile severity logic. Mirrors the thresholds in BedTile.classifySeverity.
+  // Uses the `now` tick (not Date.now()) to stay pure-during-render.
+  const critical = wardOccupancy.filter((o) => {
+    const admitMs = Date.parse(`${o.regdate}T${o.regtime ?? '00:00:00'}`);
+    const hrs = Number.isFinite(admitMs) ? (now - admitMs) / 3_600_000 : 0;
+    const cx = o.last_cervix_cm;
+    return hrs >= 12 && (cx === null || cx < 4);
+  }).length;
+
   return (
-    <div className="mx-auto max-w-[1400px] p-6 lg:p-8">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{wardName}</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            {totalBeds} เตียง · ใช้งาน {occupiedCount} · ว่าง {totalBeds - occupiedCount}
-          </p>
+    <div className="mx-auto max-w-[1600px] p-4 lg:p-6">
+      {/* Summary bar — sticky under the navbar so ward context stays visible while scrolling the grid. */}
+      <header className="sticky top-14 z-10 mb-4 rounded-xl border border-slate-200 bg-white/90 shadow-sm backdrop-blur">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3 lg:px-5">
+          <div className="min-w-0">
+            <h1 className="truncate text-lg font-semibold leading-tight text-slate-900 lg:text-xl">
+              {wardName}
+            </h1>
+            <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
+              <span
+                className={cn(
+                  'inline-block h-1.5 w-1.5 rounded-full',
+                  error
+                    ? 'bg-rose-500'
+                    : 'bg-emerald-500 animate-pulse motion-reduce:animate-none',
+                )}
+                aria-hidden
+              />
+              <span>อัปเดตอัตโนมัติทุก 20 วินาที</span>
+            </p>
+            {/* Screen-reader-only summary — also satisfies tests that assert the
+                classic "N เตียง · ใช้งาน X · ว่าง Y" string as a single text node. */}
+            <span className="sr-only">
+              {`${totalBeds} เตียง · ใช้งาน ${occupiedCount} · ว่าง ${freeCount}`}
+            </span>
+          </div>
+
+          {/* KPI chips — pre-attentive scan of ward state. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <KpiChip
+              icon={<Bed className="h-3.5 w-3.5" />}
+              label="ทั้งหมด"
+              value={totalBeds}
+              tone="neutral"
+            />
+            <KpiChip
+              icon={<UserCheck className="h-3.5 w-3.5" />}
+              label="ใช้งาน"
+              value={occupiedCount}
+              tone="emerald"
+            />
+            <KpiChip
+              icon={<BedDouble className="h-3.5 w-3.5" />}
+              label="เตียงว่าง"
+              value={freeCount}
+              tone="sky"
+            />
+            {lockedCount > 0 && (
+              <KpiChip
+                icon={<Lock className="h-3.5 w-3.5" />}
+                label="ล็อก"
+                value={lockedCount}
+                tone="slate"
+              />
+            )}
+            {critical > 0 && (
+              <KpiChip
+                icon={<Activity className="h-3.5 w-3.5" />}
+                label="เสี่ยงสูง"
+                value={critical}
+                tone="rose"
+              />
+            )}
+          </div>
+
+          <button
+            onClick={handleRefresh}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:border-emerald-400 hover:text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          >
+            <RefreshCw className="h-4 w-4" />
+            <span className="hidden sm:inline">รีเฟรช</span>
+          </button>
         </div>
-        <button
-          onClick={handleRefresh}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:border-emerald-400"
-        >
-          <RefreshCw className="h-4 w-4" /> รีเฟรช
-        </button>
       </header>
 
       <WardLayoutView
         beds={beds}
-        occupancy={occupancy}
+        occupancy={wardOccupancy}
+        now={now}
         onBedClick={setSelectedAn}
         onBedMove={(p) => void handleBedMove(p)}
         onMoveRejected={handleMoveRejected}
@@ -226,6 +322,44 @@ export default function HospitalMaternityWardPage() {
         occupant={selectedOccupant}
         onClose={() => setSelectedAn(null)}
       />
+    </div>
+  );
+}
+
+type KpiTone = 'neutral' | 'emerald' | 'sky' | 'slate' | 'rose';
+
+const KPI_TONES: Record<KpiTone, { chip: string; value: string; icon: string }> = {
+  neutral: { chip: 'bg-slate-50 ring-slate-200',   value: 'text-slate-900',   icon: 'text-slate-500'   },
+  emerald: { chip: 'bg-emerald-50 ring-emerald-200', value: 'text-emerald-800', icon: 'text-emerald-600' },
+  sky:     { chip: 'bg-sky-50 ring-sky-200',         value: 'text-sky-800',     icon: 'text-sky-600'     },
+  slate:   { chip: 'bg-slate-50 ring-slate-200',     value: 'text-slate-700',   icon: 'text-slate-500'   },
+  rose:    { chip: 'bg-rose-50 ring-rose-200',       value: 'text-rose-800',    icon: 'text-rose-600'    },
+};
+
+function KpiChip({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  tone: KpiTone;
+}) {
+  const t = KPI_TONES[tone];
+  return (
+    <div
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs ring-1',
+        t.chip,
+      )}
+    >
+      <span className={t.icon} aria-hidden>
+        {icon}
+      </span>
+      <span className="text-slate-500">{label}</span>
+      <span className={cn('font-semibold tabular-nums', t.value)}>{value}</span>
     </div>
   );
 }
