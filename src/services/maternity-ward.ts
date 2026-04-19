@@ -2,7 +2,9 @@
 import { executeSql } from '@/lib/bms-browser-client';
 import {
   MATERNITY_WARDS,
+  PATIENT_LABOUR_BY_AN,
   PATIENT_PARTOGRAPH_BY_AN,
+  PATIENT_PREGNANCY_BY_AN,
   PATIENT_VITAL_SIGNS_BY_AN,
   WARD_BEDS_INVENTORY,
   WARD_BEDS_OCCUPANCY,
@@ -13,8 +15,10 @@ import type { ConnectionConfig } from '@/types/bms-browser';
 import type {
   BedOccupancy,
   BedSlot,
+  LabourRecord,
   MaternityWard,
   PartographRow,
+  PregnancyRecord,
   VitalSignRow,
 } from '@/types/maternity-ward';
 
@@ -69,4 +73,27 @@ export async function getPatientVitalSigns(
   const sql = getQuery(PATIENT_VITAL_SIGNS_BY_AN, DEFAULT_DIALECT);
   const r = await executeSql<VitalSignRow>(sql, config, { an });
   return r.data;
+}
+
+// Task 32: read the single ipt_labour summary row for an admission. Returns
+// null when no labour record exists yet (e.g. early admit, or the row was
+// deleted upstream).
+export async function getPatientLabour(
+  config: ConnectionConfig,
+  an: string,
+): Promise<LabourRecord | null> {
+  const sql = getQuery(PATIENT_LABOUR_BY_AN, DEFAULT_DIALECT);
+  const r = await executeSql<LabourRecord>(sql, config, { an });
+  return r.data[0] ?? null;
+}
+
+// Task 32: read the single ipt_pregnancy summary row for an admission.
+// Same null semantics as getPatientLabour.
+export async function getPatientPregnancy(
+  config: ConnectionConfig,
+  an: string,
+): Promise<PregnancyRecord | null> {
+  const sql = getQuery(PATIENT_PREGNANCY_BY_AN, DEFAULT_DIALECT);
+  const r = await executeSql<PregnancyRecord>(sql, config, { an });
+  return r.data[0] ?? null;
 }
