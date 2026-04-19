@@ -20,6 +20,7 @@ import { HighRiskAlert } from '@/components/shared/HighRiskAlert';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { VitalTrendCharts } from '@/components/charts/VitalTrendCharts';
 import { PartogramChart } from '@/components/charts/PartogramChart';
+import { AlertSummaryPanel } from '@/components/patient/AlertSummaryPanel';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog';
 import { ArrowLeft, Printer } from 'lucide-react';
@@ -186,11 +187,23 @@ export default function PatientDetailPage({
         </div>
       )}
 
-      {/* Section 6: Partogram Chart */}
+      {/* Section 6: Partogram CDSS Alerts + 4-panel Chart */}
       {partogram && (
-        <div className="rounded-xl bg-white p-5 shadow-sm">
-          <PartogramChart entries={partogram.entries} startTime={partogram.startTime} />
-        </div>
+        <>
+          {partogram.alerts.length > 0 && (
+            <AlertSummaryPanel
+              alerts={partogram.alerts}
+              observations={partogram.observations}
+            />
+          )}
+          <div className="rounded-xl bg-white p-5 shadow-sm">
+            <PartogramChart
+              observations={partogram.observations}
+              alerts={partogram.alerts}
+              startTime={partogram.startTime}
+            />
+          </div>
+        </>
       )}
 
       {/* Section 7: Contraction Table */}
