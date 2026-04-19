@@ -1,17 +1,21 @@
 // Hospital maternity-ward kiosk page (Task 25). Renders the room-grouped
 // WardLayoutView for the first ward returned by the BMS Session API, with a
 // header summary (ward name, total/occupied/free counts) and a manual refresh
-// button. Drawer wiring lands in Task 40 — for now bed clicks just log.
+// button. Task 40 wires the PatientDrawer: clicking a bed opens the drawer
+// with the matching occupant; closing resets selection.
 'use client';
+import { useState } from 'react';
 import { useBmsSession } from '@/hooks/useBmsSession';
 import { useMaternityWardState } from '@/hooks/useMaternityWardState';
 import { WardLayoutView } from '@/components/maternity/WardLayoutView';
+import { PatientDrawer } from '@/components/maternity/PatientDrawer';
 import { RefreshCw } from 'lucide-react';
 
 export default function HospitalMaternityWardPage() {
   const { isReady, error: sessionError } = useBmsSession();
   const { wards, ward, beds, occupancy, isLoading, error, mutateBeds, mutateOccupancy } =
     useMaternityWardState();
+  const [selectedAn, setSelectedAn] = useState<string | null>(null);
 
   if (sessionError) {
     return (
@@ -47,17 +51,13 @@ export default function HospitalMaternityWardPage() {
   const occupiedCount = occupancy.length;
   const totalBeds = beds.length;
   const wardName = wards.find((w) => w.ward === ward)?.name ?? `ward ${ward}`;
+  const selectedOccupant = selectedAn
+    ? (occupancy.find((o) => o.an === selectedAn) ?? null)
+    : null;
 
   const handleRefresh = () => {
     void mutateBeds();
     void mutateOccupancy();
-  };
-
-  const handleBedClick = (an: string) => {
-    // Drawer open handled in Task 40 — for now, log it.
-    if (process.env.NODE_ENV !== 'production') {
-      console.info('[maternity] bed clicked', an);
-    }
   };
 
   return (
@@ -77,7 +77,12 @@ export default function HospitalMaternityWardPage() {
         </button>
       </header>
 
-      <WardLayoutView beds={beds} occupancy={occupancy} onBedClick={handleBedClick} />
+      <WardLayoutView beds={beds} occupancy={occupancy} onBedClick={setSelectedAn} />
+      <PatientDrawer
+        open={selectedAn !== null}
+        occupant={selectedOccupant}
+        onClose={() => setSelectedAn(null)}
+      />
     </div>
   );
 }

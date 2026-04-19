@@ -9,7 +9,7 @@
 //      room sections, and refresh button render.
 //   3. When the ward query fails, the error UI surfaces.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import HospitalLayout from '@/app/(hospital)/layout';
 import HospitalMaternityWardPage from '@/app/(hospital)/hospital-maternity-ward/page';
 import { SWRConfig } from 'swr';
@@ -162,6 +162,66 @@ describe('Hospital maternity ward page (full render)', () => {
     expect(screen.getByText('LR1')).toBeInTheDocument();
     expect(screen.getByText('LR2')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /รีเฟรช/ })).toBeInTheDocument();
+  });
+
+  it('clicks bed → opens drawer with patient header + tabs', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        jwt: 'JWT',
+        bms_url: 'https://t.example/api',
+        user_info: { loginname: 'nurse1', fullname: 'Nurse One', hospcode: '10670' },
+      }),
+    });
+    mockListWards.mockResolvedValue([{ ward: '03', name: 'ห้องคลอด', real_bedcount: 4 }]);
+    mockListInventory.mockResolvedValue([
+      {
+        bedno: '01',
+        roomno: 'LR1',
+        bed_order: 1,
+        bed_lock: 'N',
+        bed_status_type_id: 1,
+        room_name: 'LR1',
+        room_display_number: 1,
+      },
+    ]);
+    mockListOccupancy.mockResolvedValue([
+      {
+        an: 'AN1',
+        hn: 'HN1',
+        regdate: '2026-04-19',
+        regtime: '10:00',
+        ward: '03',
+        bedno: '01',
+        roomno: 'LR1',
+        bedtype: null,
+        roomname: 'LR1',
+        pname: 'นาง',
+        fname: 'A',
+        lname: '',
+        birthday: '1996-04-19',
+        gravida: 2,
+        ga: 38,
+        incharge_doctor_name: 'ดร.X',
+        last_observation_at: null,
+        last_cervix_cm: 4,
+      },
+    ]);
+    window.history.replaceState({}, '', 'http://localhost/?bms-session-id=SID');
+
+    render(PAGE);
+    await waitFor(
+      () => expect(screen.getByRole('button', { name: /เตียง 01/i })).toBeInTheDocument(),
+      { timeout: 2000 },
+    );
+    fireEvent.click(screen.getByRole('button', { name: /เตียง 01/i }));
+
+    // Drawer should now be visible with the patient's AN in header + 10 tabs
+    await waitFor(() => expect(screen.getByText(/AN1/)).toBeInTheDocument(), {
+      timeout: 2000,
+    });
+    expect(screen.getByRole('tab', { name: 'Partograph' })).toBeInTheDocument();
   });
 
   it('shows error UI when ward query fails', async () => {
