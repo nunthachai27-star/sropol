@@ -197,8 +197,47 @@ function analyzeFhr(obs: PartographObservationDto[]): CdssAlertDto[] {
   }
   return out;
 }
-function analyzeLiquorMoulding(_obs: PartographObservationDto[]): CdssAlertDto[] {
-  return [];
+// Rules 5–9: amniotic fluid (LIQUOR section) + cranial moulding.
+// Pascal: PartographCDSSUnit.pas:228–255.
+function analyzeLiquorMoulding(obs: PartographObservationDto[]): CdssAlertDto[] {
+  const out: CdssAlertDto[] = [];
+  for (let i = 0; i < obs.length; i++) {
+    // Liquor: case-insensitive substring match on amnioticFluid.
+    const fluid = (obs[i].amnioticFluid ?? '').toLowerCase();
+    if (fluid.includes('thick')) {
+      out.push({
+        severity: 'CRITICAL', section: 'LIQUOR', obsIndex: i,
+        message: 'น้ำคร่ำขี้เทาข้น',
+      });
+    } else if (
+      fluid.includes('mec') || fluid.includes('moder') || fluid.includes('mild')
+    ) {
+      out.push({
+        severity: 'ALERT', section: 'LIQUOR', obsIndex: i,
+        message: 'น้ำคร่ำมีขี้เทา',
+      });
+    } else if (fluid.includes('blood')) {
+      out.push({
+        severity: 'ALERT', section: 'LIQUOR', obsIndex: i,
+        message: 'น้ำคร่ำปนเลือด',
+      });
+    }
+
+    // Moulding: raw substring (Pascal does not lowercase here).
+    const moulding = obs[i].moulding ?? '';
+    if (moulding.includes('+++')) {
+      out.push({
+        severity: 'CRITICAL', section: 'MOULDING', obsIndex: i,
+        message: 'กะโหลกเกยกันรุนแรง (+++)',
+      });
+    } else if (moulding.includes('++')) {
+      out.push({
+        severity: 'ALERT', section: 'MOULDING', obsIndex: i,
+        message: 'กะโหลกเกยกัน (++)',
+      });
+    }
+  }
+  return out;
 }
 function analyzeCervix(_obs: PartographObservationDto[]): CdssAlertDto[] {
   return [];
