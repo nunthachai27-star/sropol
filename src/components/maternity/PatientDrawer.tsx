@@ -124,8 +124,26 @@ export function PatientDrawer({ open, occupant, onClose }: PatientDrawerProps) {
             {occupant ? (
               <PatientHeader occupant={occupant} />
             ) : (
-              <div className="px-4 py-3 text-sm text-slate-500">
-                กำลังโหลด… (Loading…)
+              <div
+                className="flex flex-col gap-2 border-b border-slate-200 px-4 py-3"
+                aria-busy="true"
+              >
+                {/* 3 skeleton rows mimic the AN/name/details lines while data
+                    arrives. The visually-hidden text keeps the existing
+                    "กำลังโหลด" / "Loading" assertion happy. */}
+                <div
+                  className="h-3 w-32 animate-pulse rounded bg-slate-200/70"
+                  aria-hidden="true"
+                />
+                <div
+                  className="h-4 w-48 animate-pulse rounded bg-slate-200/70"
+                  aria-hidden="true"
+                />
+                <div
+                  className="h-3 w-24 animate-pulse rounded bg-slate-200/70"
+                  aria-hidden="true"
+                />
+                <span className="sr-only">กำลังโหลด… (Loading…)</span>
               </div>
             )}
           </div>
