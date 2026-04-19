@@ -131,6 +131,55 @@ export interface WebhookReferralResult {
   status: string;
 }
 
+// ─── Partograph webhook payload ───
+//
+// Carries one or more partograph observations (rows on the WHO partogram chart)
+// from a non-HOSxP sending system. Validation is deliberately lenient on
+// clinical fields — out-of-range or unknown values are passed through to the
+// CDSS so it can flag them rather than rejected at the boundary.
+
+export interface WebhookPartographObservation {
+  an: string;
+  externalObservationId: string;
+  observeDatetime: string;
+  hourNo?: number | null;
+  fetalHeartRate?: number | null;
+  amnioticFluid?: string | null;
+  amnioticTypeId?: number | null;
+  moulding?: string | null;
+  cervicalDilationCm?: number | null;
+  descentOfHead?: string | null;
+  contractionPer10Min?: number | null;
+  contractionDurationSec?: number | null;
+  contractionStrength?: 'mild' | 'moderate' | 'strong' | null;
+  oxytocinUml?: number | null;
+  oxytocinDropsMin?: number | null;
+  drugsIvFluids?: string | null;
+  pulse?: number | null;
+  bpSystolic?: number | null;
+  bpDiastolic?: number | null;
+  temperature?: number | null;
+  urineVolumeMl?: number | null;
+  urineProtein?: string | null;
+  urineGlucose?: string | null;
+  urineAcetone?: string | null;
+  note?: string | null;
+  entryStaff?: string | null;
+  entryDatetime?: string | null;
+  action?: 'upsert' | 'delete';
+}
+
+export interface WebhookPartographPayload {
+  type: 'partograph';
+  hospitalCode: string;
+  observations: WebhookPartographObservation[];
+}
+
+export interface WebhookPartographResult {
+  observationsAccepted: number;
+  observationsSkipped: { an: string; externalObservationId: string; reason: string }[];
+}
+
 // ─── API Key management ───
 
 export function generateApiKey(): string {
@@ -904,3 +953,55 @@ export async function processReferralUpdate(
   return { referralId: payload.referralId, status: payload.status };
 }
 
+// ─── Partograph webhook validation + processing ───
+//
+// Mirrors validatePayload() / processWebhookPayload() patterns. Validation is
+// shape-only — clinical out-of-range values (e.g. fetalHeartRate=12) are
+// passed through so the CDSS can flag them as alerts instead of being
+// silently dropped at the boundary.
+export function validatePartographPayload(body: unknown): {
+  valid: boolean;
+  error?: string;
+  payload?: WebhookPartographPayload;
+} {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { valid: false, error: 'Request body must be a JSON object' };
+  }
+  const obj = body as Record<string, unknown>;
+  if (!Array.isArray(obj.observations)) {
+    return { valid: false, error: '"observations" must be an array' };
+  }
+  if (obj.observations.length === 0) {
+    return { valid: false, error: '"observations" must not be empty' };
+  }
+  if (obj.observations.length > 200) {
+    return { valid: false, error: '"observations" must not exceed 200 items per request' };
+  }
+
+  const errors: string[] = [];
+  for (let i = 0; i < obj.observations.length; i++) {
+    const o = obj.observations[i] as Record<string, unknown>;
+    if (!o.an || typeof o.an !== 'string') {
+      errors.push(`observations[${i}].an is required (string)`);
+    }
+    if (!o.externalObservationId || typeof o.externalObservationId !== 'string') {
+      errors.push(`observations[${i}].externalObservationId is required (string ≤64)`);
+    } else if ((o.externalObservationId as string).length > 64) {
+      errors.push(`observations[${i}].externalObservationId must be ≤64 chars`);
+    }
+
+    if (o.action !== 'delete') {
+      if (!o.observeDatetime || typeof o.observeDatetime !== 'string') {
+        errors.push(`observations[${i}].observeDatetime is required (ISO 8601)`);
+      } else if (Number.isNaN(new Date(o.observeDatetime as string).getTime())) {
+        errors.push(`observations[${i}].observeDatetime must be a valid ISO 8601`);
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    return { valid: false, error: `Validation errors: ${errors.join('; ')}` };
+  }
+
+  return { valid: true, payload: obj as unknown as WebhookPartographPayload };
+}
