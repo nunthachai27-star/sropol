@@ -14,6 +14,7 @@ import { StageTab } from '@/components/maternity/tabs/StageTab';
 import { MedicationsTab } from '@/components/maternity/tabs/MedicationsTab';
 import { StageMedTab } from '@/components/maternity/tabs/StageMedTab';
 import { ComplicationsTab } from '@/components/maternity/tabs/ComplicationsTab';
+import { InfantTab } from '@/components/maternity/tabs/InfantTab';
 
 export interface PatientDrawerProps {
   open: boolean;
@@ -171,6 +172,8 @@ export function PatientDrawer({ open, occupant, onClose }: PatientDrawerProps) {
                       <StageMedTab an={occupant.an} />
                     ) : t.value === 'complications' ? (
                       <ComplicationsTab an={occupant.an} />
+                    ) : t.value === 'infant' ? (
+                      <InfantTab an={occupant.an} />
                     ) : (
                       <TabPlaceholder name={t.value} />
                     )}
