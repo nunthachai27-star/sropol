@@ -5,6 +5,8 @@ import {
   listWardBedsOccupancy,
   upsertPartograph,
   deletePartograph,
+  upsertVitalSign,
+  deleteVitalSign,
 } from '@/services/maternity-ward';
 import type { ConnectionConfig, UserInfo } from '@/types/bms-browser';
 
@@ -316,6 +318,119 @@ describe('deletePartograph', () => {
       resourceId: '42',
       hcode: '10670',
       staff: 'nurse1',
+    });
+  });
+});
+
+// ─── Task 42: vital signs CRUD ─────────────────────────────────────────────
+describe('upsertVitalSign', () => {
+  beforeEach(() => mockFetch.mockReset());
+  const userInfo: UserInfo = { loginname: 'nurse1', fullname: 'Nurse', hospcode: '10670' };
+
+  it('insert: mints serial then restInsert + audit', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok', Value: 55 }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok', insert_count: 1 }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+
+    const result = await upsertVitalSign(cfg, userInfo, 'AN1', { hr: 88, bps: 120 }, '10670');
+    expect(result.ipt_pregnancy_vital_sign_id).toBe(55);
+    expect(mockFetch.mock.calls[0][0]).toContain('/api/function?name=get_serialnumber');
+    expect(mockFetch.mock.calls[1][0]).toBe('https://t.example/api/api/rest/ipt_pregnancy_vital_sign');
+    const insertBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(insertBody).toMatchObject({
+      ipt_pregnancy_vital_sign_id: 55,
+      an: 'AN1',
+      hr: 88,
+      bps: 120,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    const auditBody = JSON.parse(mockFetch.mock.calls[2][1].body);
+    expect(auditBody).toMatchObject({
+      entity: 'ipt_pregnancy_vital_sign',
+      op: 'insert',
+      resourceId: '55',
+      hcode: '10670',
+      staff: 'nurse1',
+    });
+  });
+
+  it('update: skips serial mint, calls restUpdate + audit', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok', update_count: 1 }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+    await upsertVitalSign(
+      cfg,
+      userInfo,
+      'AN1',
+      { ipt_pregnancy_vital_sign_id: 9, hr: 90 },
+      '10670',
+    );
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      'https://t.example/api/api/rest/ipt_pregnancy_vital_sign/9',
+    );
+    expect(mockFetch.mock.calls[0][1].method).toBe('PUT');
+    const putBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(putBody).toEqual({ hr: 90 });
+    expect(putBody.ipt_pregnancy_vital_sign_id).toBeUndefined();
+  });
+
+  it('does not throw if audit POST fails', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok', update_count: 1 }),
+    });
+    mockFetch.mockRejectedValueOnce(new Error('audit endpoint down'));
+    await expect(
+      upsertVitalSign(cfg, userInfo, 'AN1', { ipt_pregnancy_vital_sign_id: 1, hr: 90 }, '10670'),
+    ).resolves.toBeDefined();
+  });
+});
+
+describe('deleteVitalSign', () => {
+  beforeEach(() => mockFetch.mockReset());
+  const userInfo: UserInfo = { loginname: 'nurse1', fullname: 'Nurse', hospcode: '10670' };
+
+  it('calls restDelete and fires audit', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok' }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+    await deleteVitalSign(cfg, userInfo, 21, '10670');
+    expect(mockFetch.mock.calls[0][0]).toContain('/api/rest/ipt_pregnancy_vital_sign/21');
+    expect(mockFetch.mock.calls[0][1].method).toBe('DELETE');
+    await new Promise((r) => setTimeout(r, 0));
+    const auditBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(auditBody).toMatchObject({
+      entity: 'ipt_pregnancy_vital_sign',
+      op: 'delete',
+      resourceId: '21',
+      hcode: '10670',
     });
   });
 });

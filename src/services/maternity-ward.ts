@@ -269,3 +269,66 @@ export async function deletePartograph(
     staff: userInfo.loginname,
   });
 }
+
+// ─── Task 42: vital signs CRUD ─────────────────────────────────────────────
+// LIMITATION: ipt_pregnancy_vital_sign has no native single-column PK in HOSxP.
+// We mint a surrogate via get_serialnumber('ipt_pregnancy_vital_sign_id') for
+// inserts; on update we trust the caller to pass back the surrogate observed at
+// read time. If the row was inserted by an external system without this column
+// populated, the update path will fail — future cleanup is to switch to a
+// composite (an, hr_time) UPSERT once BMS exposes one. Document this on the
+// row type as well so callers don't assume a stable historical PK.
+export async function upsertVitalSign(
+  config: ConnectionConfig,
+  userInfo: UserInfo,
+  an: string,
+  row: Partial<VitalSignRow>,
+  hcode: string,
+): Promise<VitalSignRow> {
+  const isNew = row.ipt_pregnancy_vital_sign_id === undefined;
+  if (isNew) {
+    const id = await mintSerial('ipt_pregnancy_vital_sign_id', config);
+    const payload = { ...row, ipt_pregnancy_vital_sign_id: id, an };
+    await restInsert('ipt_pregnancy_vital_sign', payload, config);
+    fireAudit({
+      entity: 'ipt_pregnancy_vital_sign',
+      op: 'insert',
+      resourceId: String(id),
+      hcode,
+      staff: userInfo.loginname,
+    });
+    return payload as VitalSignRow;
+  }
+  const { ipt_pregnancy_vital_sign_id, ...fields } = row;
+  await restUpdate(
+    'ipt_pregnancy_vital_sign',
+    String(ipt_pregnancy_vital_sign_id),
+    fields,
+    config,
+  );
+  fireAudit({
+    entity: 'ipt_pregnancy_vital_sign',
+    op: 'update',
+    resourceId: String(ipt_pregnancy_vital_sign_id),
+    hcode,
+    staff: userInfo.loginname,
+    fieldsTouched: Object.keys(fields),
+  });
+  return row as VitalSignRow;
+}
+
+export async function deleteVitalSign(
+  config: ConnectionConfig,
+  userInfo: UserInfo,
+  id: number,
+  hcode: string,
+): Promise<void> {
+  await restDelete('ipt_pregnancy_vital_sign', id, config);
+  fireAudit({
+    entity: 'ipt_pregnancy_vital_sign',
+    op: 'delete',
+    resourceId: String(id),
+    hcode,
+    staff: userInfo.loginname,
+  });
+}

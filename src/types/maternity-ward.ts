@@ -61,6 +61,12 @@ export interface PartographRow {
 }
 
 export interface VitalSignRow {
+  // Task 42: ipt_pregnancy_vital_sign has no native single-column PK in HOSxP.
+  // For CRUD we mint a synthetic surrogate via get_serialnumber(...). Older
+  // historical rows fetched via getPatientVitalSigns may not carry it; in that
+  // case the CRUD UI keys on array index and edits flow through the upsert
+  // service which mints a fresh PK. See upsertVitalSign for details.
+  ipt_pregnancy_vital_sign_id?: number;
   an: string;
   hr: number | null;
   bps: number | null;
