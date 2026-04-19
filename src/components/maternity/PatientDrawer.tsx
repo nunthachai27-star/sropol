@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { cn, calculateAge } from '@/lib/utils';
 import type { BedOccupancy } from '@/types/maternity-ward';
 import { PartographTab } from '@/components/maternity/tabs/PartographTab';
+import { VitalsTab } from '@/components/maternity/tabs/VitalsTab';
 
 export interface PatientDrawerProps {
   open: boolean;
@@ -153,6 +154,8 @@ export function PatientDrawer({ open, occupant, onClose }: PatientDrawerProps) {
                   <TabsContent key={t.value} value={t.value}>
                     {t.value === 'partograph' ? (
                       <PartographTab an={occupant.an} />
+                    ) : t.value === 'vitals' ? (
+                      <VitalsTab an={occupant.an} />
                     ) : (
                       <TabPlaceholder name={t.value} />
                     )}

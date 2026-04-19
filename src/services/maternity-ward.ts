@@ -3,6 +3,7 @@ import { executeSql } from '@/lib/bms-browser-client';
 import {
   MATERNITY_WARDS,
   PATIENT_PARTOGRAPH_BY_AN,
+  PATIENT_VITAL_SIGNS_BY_AN,
   WARD_BEDS_INVENTORY,
   WARD_BEDS_OCCUPANCY,
   getQuery,
@@ -14,6 +15,7 @@ import type {
   BedSlot,
   MaternityWard,
   PartographRow,
+  VitalSignRow,
 } from '@/types/maternity-ward';
 
 // HOSxP tunnels behind BMS Session API are typically MySQL.
@@ -54,5 +56,17 @@ export async function getPatientPartograph(
 ): Promise<PartographRow[]> {
   const sql = getQuery(PATIENT_PARTOGRAPH_BY_AN, DEFAULT_DIALECT);
   const r = await executeSql<PartographRow>(sql, config, { an });
+  return r.data;
+}
+
+// Task 31: read all pregnancy vital-sign rows for a single admission. Note
+// the underlying ipt_pregnancy_vital_sign has no single-column PK, so callers
+// must use index-as-key for read-only rendering.
+export async function getPatientVitalSigns(
+  config: ConnectionConfig,
+  an: string,
+): Promise<VitalSignRow[]> {
+  const sql = getQuery(PATIENT_VITAL_SIGNS_BY_AN, DEFAULT_DIALECT);
+  const r = await executeSql<VitalSignRow>(sql, config, { an });
   return r.data;
 }

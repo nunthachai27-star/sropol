@@ -1,7 +1,15 @@
 /* @vitest-environment jsdom */
-// Task 29: PatientDrawer shell tests — TDD: write tests FIRST
+// Task 29: PatientDrawer shell tests — TDD: write tests FIRST.
+// Task 31: VitalsTab swap means clicking the "Vital Signs" tab now mounts a
+// real component that calls useBmsSession(); mock the hook to return null
+// config so the tab falls through to its no-config branch.
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+
+vi.mock('@/hooks/useBmsSession', () => ({
+  useBmsSession: () => ({ config: null }),
+}));
+
 import { PatientDrawer } from '@/components/maternity/PatientDrawer';
 import type { BedOccupancy } from '@/types/maternity-ward';
 
@@ -64,7 +72,9 @@ describe('PatientDrawer', () => {
   it('switches active tab on click', () => {
     render(<PatientDrawer open occupant={occupant} onClose={() => {}} />);
     fireEvent.click(screen.getByRole('tab', { name: 'Vital Signs' }));
-    expect(screen.getByText(/Tab: vitals|vitals/i)).toBeInTheDocument();
+    // VitalsTab (Task 31) renders its no-config branch when useBmsSession()
+    // returns a null config — see the vi.mock at the top of this file.
+    expect(screen.getByText(/ไม่พร้อมใช้งาน/)).toBeInTheDocument();
   });
 
   it('calls onClose when X clicked', () => {
