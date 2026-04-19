@@ -3,8 +3,10 @@ import {
   retrieveBmsSession,
   extractConnectionConfig,
   extractUserInfo,
+  executeSql,
   APP_IDENTIFIER,
 } from '@/lib/bms-browser-client';
+import type { ConnectionConfig } from '@/types/bms-browser';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -66,5 +68,79 @@ describe('extractUserInfo', () => {
   it('returns user_info subfield', () => {
     const r = { user_info: { loginname: 'n1', fullname: 'Nurse', hospcode: '10670' } };
     expect(extractUserInfo(r as never)).toMatchObject({ loginname: 'n1', hospcode: '10670' });
+  });
+});
+
+const cfg: ConnectionConfig = {
+  apiUrl: 'https://t.example/api',
+  bearerToken: 'BEARER',
+  appIdentifier: 'KK-LRMS.Web',
+};
+
+describe('executeSql', () => {
+  beforeEach(() => mockFetch.mockReset());
+
+  it('POSTs sql to /api/sql with bearer + app identifier', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      clone: function () { return this; },
+      json: async () => ({ data: [{ x: 1 }], MessageCode: 200, Message: 'ok' }),
+    });
+    const r = await executeSql('SELECT 1', cfg);
+    expect(r.data).toEqual([{ x: 1 }]);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://t.example/api/api/sql',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer BEARER',
+          'Content-Type': 'application/json',
+        }),
+      }),
+    );
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body).toEqual({ sql: 'SELECT 1', app: 'KK-LRMS.Web' });
+  });
+
+  it('passes params when provided', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200,
+      clone: function () { return this; },
+      json: async () => ({ data: [], MessageCode: 200, Message: 'ok' }),
+    });
+    await executeSql('SELECT * FROM x WHERE id = :id', cfg, { id: 42 });
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.params).toEqual({ id: 42 });
+  });
+
+  it('throws Thai retry message on HTTP 429', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false, status: 429, statusText: 'Too Many Requests',
+      headers: { get: (h: string) => h === 'Retry-After' ? '5' : null },
+      json: async () => ({ message: 'rate limit' }),
+      clone: function () { return this; },
+    });
+    await expect(executeSql('SELECT 1', cfg)).rejects.toThrow(/มีการร้องขอบ่อยเกินไป/);
+  });
+
+  it('throws unauthorized on HTTP 501 + MessageCode 401', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false, status: 501, statusText: 'Not Implemented',
+      clone: function () {
+        return { json: async () => ({ MessageCode: 401, Message: 'unauthorized' }) };
+      },
+      text: async () => '{"MessageCode":401}',
+    });
+    await expect(executeSql('SELECT 1', cfg)).rejects.toThrow(/Session unauthorized/);
+  });
+
+  it('throws "Database error" on body MessageCode != 200 with HTTP 200', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200,
+      clone: function () { return this; },
+      json: async () => ({ data: [], MessageCode: 409, Message: 'syntax error' }),
+    });
+    await expect(executeSql('SELECT bad', cfg)).rejects.toThrow(/Database error/);
   });
 });
