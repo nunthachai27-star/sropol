@@ -445,8 +445,81 @@ function analyzeContractions(obs: PartographObservationDto[]): CdssAlertDto[] {
   }
   return out;
 }
-function analyzeMaternal(_obs: PartographObservationDto[]): CdssAlertDto[] {
-  return [];
+// Rules 20–28: maternal observations (pulse, BP, temperature).
+// Pascal: PartographCDSSUnit.pas:399–451.
+function analyzeMaternal(obs: PartographObservationDto[]): CdssAlertDto[] {
+  const out: CdssAlertDto[] = [];
+  for (let i = 0; i < obs.length; i++) {
+    // Pulse — Pascal gates on Pulse > 0.
+    const p = obs[i].pulse;
+    if (p !== null && p > 0) {
+      if (p > 140) {
+        out.push({
+          severity: 'CRITICAL', section: 'PULSE', obsIndex: i,
+          message: `ชีพจร ${p} ครั้ง/นาที (เร็วผิดปกติรุนแรง)`,
+        });
+      } else if (p < 60 || p >= 120) {
+        out.push({
+          severity: 'ALERT', section: 'PULSE', obsIndex: i,
+          message: `ชีพจร ${p} ครั้ง/นาที (นอกช่วง 60-120)`,
+        });
+      }
+    }
+
+    // Systolic BP — Pascal gates on BPSys > 0.
+    const sbp = obs[i].bpSystolic;
+    if (sbp !== null && sbp > 0) {
+      if (sbp >= 160) {
+        out.push({
+          severity: 'CRITICAL', section: 'BP', obsIndex: i,
+          message: `ความดันตัวบนสูงรุนแรง ${sbp}`,
+        });
+      } else if (sbp >= 140) {
+        out.push({
+          severity: 'ALERT', section: 'BP', obsIndex: i,
+          message: `ความดันตัวบนสูง ${sbp}`,
+        });
+      } else if (sbp < 80) {
+        out.push({
+          severity: 'ALERT', section: 'BP', obsIndex: i,
+          message: `ความดันตัวบนต่ำ ${sbp}`,
+        });
+      }
+    }
+
+    // Diastolic BP — Pascal gates on BPDia > 0.
+    const dbp = obs[i].bpDiastolic;
+    if (dbp !== null && dbp > 0) {
+      if (dbp >= 110) {
+        out.push({
+          severity: 'CRITICAL', section: 'BP', obsIndex: i,
+          message: `ความดันตัวล่างสูงรุนแรง ${dbp}`,
+        });
+      } else if (dbp >= 90) {
+        out.push({
+          severity: 'ALERT', section: 'BP', obsIndex: i,
+          message: `ความดันตัวล่างสูง ${dbp}`,
+        });
+      }
+    }
+
+    // Temperature — Pascal gates on Temp > 0.
+    const t = obs[i].temperature;
+    if (t !== null && t > 0) {
+      if (t >= 38.5) {
+        out.push({
+          severity: 'CRITICAL', section: 'TEMP', obsIndex: i,
+          message: `ไข้สูง ${fmt1(t)} °C`,
+        });
+      } else if (t >= 37.5 || t < 35) {
+        out.push({
+          severity: 'ALERT', section: 'TEMP', obsIndex: i,
+          message: `อุณหภูมิ ${fmt1(t)} °C ผิดปกติ`,
+        });
+      }
+    }
+  }
+  return out;
 }
 function analyzeUrine(_obs: PartographObservationDto[]): CdssAlertDto[] {
   return [];
