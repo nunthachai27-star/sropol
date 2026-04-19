@@ -14,6 +14,8 @@ import {
   deleteLabourMedication,
   upsertStageMedication,
   deleteStageMedication,
+  upsertComplication,
+  deleteComplication,
 } from '@/services/maternity-ward';
 import type { ConnectionConfig, UserInfo } from '@/types/bms-browser';
 
@@ -805,6 +807,121 @@ describe('deleteStageMedication', () => {
       entity: 'labour_stage_medication',
       op: 'delete',
       resourceId: '71',
+    });
+  });
+});
+
+// ─── Task 47: ipt_labour_complication CRUD (keyed by ipt_labour_id) ────────
+describe('upsertComplication', () => {
+  beforeEach(() => mockFetch.mockReset());
+  const userInfo: UserInfo = { loginname: 'nurse1', fullname: 'Nurse', hospcode: '10670' };
+
+  it('insert: mints serial then restInsert with ipt_labour_id + audit', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok', Value: 88 }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok', insert_count: 1 }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+
+    const r = await upsertComplication(
+      cfg,
+      userInfo,
+      99,
+      { labour_complication_id: 5, complication_note: 'PPH' },
+      '10670',
+    );
+    expect(r.ipt_labour_complication_id).toBe(88);
+    expect(mockFetch.mock.calls[0][0]).toContain('/api/function?name=get_serialnumber');
+    expect(mockFetch.mock.calls[1][0]).toBe(
+      'https://t.example/api/api/rest/ipt_labour_complication',
+    );
+    const body = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(body).toMatchObject({
+      ipt_labour_complication_id: 88,
+      ipt_labour_id: 99,
+      labour_complication_id: 5,
+    });
+  });
+
+  it('update: skips serial mint, calls restUpdate + audit', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok', update_count: 1 }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+    await upsertComplication(
+      cfg,
+      userInfo,
+      99,
+      { ipt_labour_complication_id: 4, complication_note: 'updated' },
+      '10670',
+    );
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      'https://t.example/api/api/rest/ipt_labour_complication/4',
+    );
+    expect(mockFetch.mock.calls[0][1].method).toBe('PUT');
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body).toEqual({ complication_note: 'updated' });
+  });
+
+  it('does not throw if audit fails', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok', update_count: 1 }),
+    });
+    mockFetch.mockRejectedValueOnce(new Error('audit endpoint down'));
+    await expect(
+      upsertComplication(
+        cfg,
+        userInfo,
+        99,
+        { ipt_labour_complication_id: 1, complication_note: 'x' },
+        '10670',
+      ),
+    ).resolves.toBeDefined();
+  });
+});
+
+describe('deleteComplication', () => {
+  beforeEach(() => mockFetch.mockReset());
+  const userInfo: UserInfo = { loginname: 'nurse1', fullname: 'Nurse', hospcode: '10670' };
+
+  it('calls restDelete and fires audit', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok' }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+    await deleteComplication(cfg, userInfo, 88, '10670');
+    expect(mockFetch.mock.calls[0][0]).toContain('/api/rest/ipt_labour_complication/88');
+    expect(mockFetch.mock.calls[0][1].method).toBe('DELETE');
+    await new Promise((r) => setTimeout(r, 0));
+    const body = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(body).toMatchObject({
+      entity: 'ipt_labour_complication',
+      op: 'delete',
+      resourceId: '88',
     });
   });
 });

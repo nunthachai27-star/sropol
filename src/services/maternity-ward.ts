@@ -507,3 +507,62 @@ export async function deleteStageMedication(
     staff: userInfo.loginname,
   });
 }
+
+// ─── Task 47: ipt_labour_complication CRUD ──────────────────────────────────
+// Note: this CRUD is keyed by ipt_labour_id, not by an, because the underlying
+// table FKs on ipt_labour_id. Callers (the ComplicationsTab) must first resolve
+// the labour record via getPatientLabour(an) and pass through ipt_labour_id.
+export async function upsertComplication(
+  config: ConnectionConfig,
+  userInfo: UserInfo,
+  iptLabourId: number,
+  row: Partial<ComplicationRow>,
+  hcode: string,
+): Promise<ComplicationRow> {
+  const isNew = row.ipt_labour_complication_id === undefined;
+  if (isNew) {
+    const id = await mintSerial('ipt_labour_complication_id', config);
+    const payload = { ...row, ipt_labour_complication_id: id, ipt_labour_id: iptLabourId };
+    await restInsert('ipt_labour_complication', payload, config);
+    fireAudit({
+      entity: 'ipt_labour_complication',
+      op: 'insert',
+      resourceId: String(id),
+      hcode,
+      staff: userInfo.loginname,
+    });
+    return payload as ComplicationRow;
+  }
+  const { ipt_labour_complication_id, ...fields } = row;
+  await restUpdate(
+    'ipt_labour_complication',
+    String(ipt_labour_complication_id),
+    fields,
+    config,
+  );
+  fireAudit({
+    entity: 'ipt_labour_complication',
+    op: 'update',
+    resourceId: String(ipt_labour_complication_id),
+    hcode,
+    staff: userInfo.loginname,
+    fieldsTouched: Object.keys(fields),
+  });
+  return row as ComplicationRow;
+}
+
+export async function deleteComplication(
+  config: ConnectionConfig,
+  userInfo: UserInfo,
+  id: number,
+  hcode: string,
+): Promise<void> {
+  await restDelete('ipt_labour_complication', id, config);
+  fireAudit({
+    entity: 'ipt_labour_complication',
+    op: 'delete',
+    resourceId: String(id),
+    hcode,
+    staff: userInfo.loginname,
+  });
+}
