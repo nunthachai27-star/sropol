@@ -144,6 +144,15 @@ describe('executeSql', () => {
     });
     await expect(executeSql('SELECT bad', cfg)).rejects.toThrow(/Database error/);
   });
+
+  it('preserves verbatim Database error Message even with magic substrings', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200,
+      clone: function () { return this; },
+      json: async () => ({ data: [], MessageCode: 500, Message: 'Session unauthorized — fake' }),
+    });
+    await expect(executeSql('SELECT 1', cfg)).rejects.toThrow(/Session unauthorized — fake/);
+  });
 });
 
 describe('callFunction', () => {
@@ -202,5 +211,13 @@ describe('callFunction', () => {
       json: async () => ({ MessageCode: 500, Message: 'internal failure' }),
     });
     await expect(callFunction('x', cfg)).rejects.toThrow('internal failure');
+  });
+
+  it('preserves Message verbatim even when it contains magic substrings', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => ({ MessageCode: 500, Message: 'Session unauthorized — fake' }),
+    });
+    await expect(callFunction('x', cfg)).rejects.toThrow('Session unauthorized — fake');
   });
 });

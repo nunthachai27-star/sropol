@@ -12,6 +12,34 @@ export const APP_IDENTIFIER = 'KK-LRMS.Web';
 export const SESSION_TIMEOUT_MS = 30_000;
 export const QUERY_TIMEOUT_MS = 60_000;
 
+/**
+ * Private tagged error used to mark thrown errors that originated inside the
+ * BMS client and must be re-thrown verbatim by the outer try/catch (rather
+ * than being wrapped in the generic "Unable to connect" fallback).
+ *
+ * NOT exported: callers continue to receive plain `Error` instances (since
+ * `BmsClientError extends Error`) with the same `.message` text as before —
+ * this is purely an internal control-flow tag that replaces the previous
+ * fragile `error.message.startsWith(...)` allowlist + sentinel-string trick.
+ */
+class BmsClientError extends Error {
+  readonly kind:
+    | 'session_unauthorized'
+    | 'function_api_returned'
+    | 'function_call_timed_out'
+    | 'sql_api_returned'
+    | 'database_error'
+    | 'query_timed_out'
+    | 'rate_limited'
+    | 'body_error';
+
+  constructor(kind: BmsClientError['kind'], message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'BmsClientError';
+    this.kind = kind;
+  }
+}
+
 export async function retrieveBmsSession(sessionId: string): Promise<BmsSessionResponse> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SESSION_TIMEOUT_MS);
@@ -98,7 +126,8 @@ export async function executeSql<T = Record<string, unknown>>(
         : retryAfter
           ? ` กรุณารอ ${retryAfter} วินาทีแล้วลองใหม่`
           : '';
-      throw new Error(
+      throw new BmsClientError(
+        'rate_limited',
         `มีการร้องขอบ่อยเกินไป (HTTP 429).${suffix} กรุณารอสักครู่แล้วลองใหม่อีกครั้ง`,
       );
     }
@@ -122,34 +151,38 @@ export async function executeSql<T = Record<string, unknown>>(
         'Message=' + JSON.stringify(parsed.Message ?? null),
       );
       if (parsed.MessageCode === 401) {
-        throw new Error('Session unauthorized. Please reconnect with a valid session ID.');
+        throw new BmsClientError(
+          'session_unauthorized',
+          'Session unauthorized. Please reconnect with a valid session ID.',
+        );
       }
       const detail = parsed.Message || `MessageCode ${parsed.MessageCode}`;
-      throw new Error(`Database error: ${detail}`);
+      throw new BmsClientError('database_error', `Database error: ${detail}`);
     }
 
     if (response.status === 501) {
       console.warn('[bms-browser-client] /api/sql HTTP 501 without parseable MessageCode');
-      throw new Error('Session unauthorized. Please reconnect with a valid session ID.');
+      throw new BmsClientError(
+        'session_unauthorized',
+        'Session unauthorized. Please reconnect with a valid session ID.',
+      );
     }
     if (!response.ok) {
-      throw new Error(`SQL API returned HTTP ${response.status}: ${response.statusText}`);
+      throw new BmsClientError(
+        'sql_api_returned',
+        `SQL API returned HTTP ${response.status}: ${response.statusText}`,
+      );
     }
     return parsed ?? ((await response.json()) as SqlApiResponse<T>);
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('Query timed out after 60 seconds. Try a simpler query.', { cause: error });
+      throw new BmsClientError(
+        'query_timed_out',
+        'Query timed out after 60 seconds. Try a simpler query.',
+        { cause: error },
+      );
     }
-    if (
-      error instanceof Error &&
-      (error.message.startsWith('Session unauthorized') ||
-        error.message.startsWith('Database error') ||
-        error.message.startsWith('SQL API returned') ||
-        error.message.startsWith('Query timed out') ||
-        error.message.startsWith('มีการร้องขอบ่อยเกินไป'))
-    ) {
-      throw error;
-    }
+    if (error instanceof BmsClientError) throw error;
     throw new Error('Unable to connect to the BMS API. Please check your connection.', {
       cause: error,
     });
@@ -165,9 +198,6 @@ export async function callFunction<T = BmsFunctionResponse>(
 ): Promise<T> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), QUERY_TIMEOUT_MS);
-
-  // Sentinel marker for body-level errors so the catch allowlist passes them through.
-  const BODY_ERROR_MARKER = '__BMS_FUNCTION_BODY_ERROR__:';
 
   try {
     const response = await fetch(
@@ -198,44 +228,44 @@ export async function callFunction<T = BmsFunctionResponse>(
       } catch {
         // ignore JSON parse errors
       }
-      throw new Error(
+      throw new BmsClientError(
+        'rate_limited',
         `มีการร้องขอบ่อยเกินไป (HTTP 429).${retryInfo} กรุณารอสักครู่แล้วลองใหม่อีกครั้ง`,
       );
     }
 
     if (response.status === 501) {
-      throw new Error('Session unauthorized. Please reconnect with a valid session ID.');
+      throw new BmsClientError(
+        'session_unauthorized',
+        'Session unauthorized. Please reconnect with a valid session ID.',
+      );
     }
 
     if (!response.ok) {
-      throw new Error(`Function API returned HTTP ${response.status}: ${response.statusText}`);
+      throw new BmsClientError(
+        'function_api_returned',
+        `Function API returned HTTP ${response.status}: ${response.statusText}`,
+      );
     }
 
     const result = (await response.json()) as BmsFunctionResponse;
     // Some BMS functions return 200 HTTP but error in body (e.g. MessageCode 500).
-    // Tag the message so the catch-block allowlist re-throws it verbatim.
+    // The body Message is preserved verbatim — even if it happens to contain
+    // substrings like "Session unauthorized" — because the catch block uses
+    // `instanceof BmsClientError` to identify pass-through errors instead of
+    // matching on `.message` text.
     if (result.MessageCode && result.MessageCode >= 400 && result.Message) {
-      throw new Error(`${BODY_ERROR_MARKER}${result.Message}`);
+      throw new BmsClientError('body_error', result.Message);
     }
     return result as T;
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('Function call timed out after 60 seconds.', { cause: error });
+      throw new BmsClientError('function_call_timed_out', 'Function call timed out after 60 seconds.', {
+        cause: error,
+      });
     }
 
-    if (error instanceof Error && error.message.startsWith(BODY_ERROR_MARKER)) {
-      throw new Error(error.message.slice(BODY_ERROR_MARKER.length));
-    }
-
-    if (
-      error instanceof Error &&
-      (error.message.startsWith('Session unauthorized') ||
-        error.message.startsWith('Function API returned') ||
-        error.message.startsWith('Function call timed out') ||
-        error.message.startsWith('มีการร้องขอบ่อยเกินไป'))
-    ) {
-      throw error;
-    }
+    if (error instanceof BmsClientError) throw error;
 
     throw new Error('Unable to connect to the BMS API. Please check your connection.', {
       cause: error,
