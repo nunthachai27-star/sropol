@@ -12,12 +12,14 @@
 import {
   DndContext,
   type DragEndEvent,
+  KeyboardSensor,
   PointerSensor,
   useDraggable,
   useDroppable,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { useState } from 'react';
 
 import { BedTile } from './BedTile';
@@ -174,8 +176,13 @@ export function WardLayoutView({
 
   // Pointer sensor with a small distance threshold so a click on the BedTile
   // button still opens the drawer (instead of being interpreted as a drag).
+  // Keyboard sensor (Task 56): Tab to focus a draggable, Space/Enter to pick
+  // up, arrow keys to navigate to a target, Space/Enter again to drop. The
+  // sortableKeyboardCoordinates getter from @dnd-kit/sortable does the
+  // coordinate math for arrow-key motion across the room-grouped grid.
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const handleDragEnd = (event: DragEndEvent) => {
