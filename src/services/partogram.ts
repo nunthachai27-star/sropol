@@ -521,8 +521,35 @@ function analyzeMaternal(obs: PartographObservationDto[]): CdssAlertDto[] {
   }
   return out;
 }
-function analyzeUrine(_obs: PartographObservationDto[]): CdssAlertDto[] {
-  return [];
+// Rules 29–31: urinalysis. Pascal `Pos('++', X) > 0` matches the literal
+// substring "++" — a single "+" never matches; "+++" matches via substring.
+// Pascal: PartographCDSSUnit.pas:453–470.
+function analyzeUrine(obs: PartographObservationDto[]): CdssAlertDto[] {
+  const out: CdssAlertDto[] = [];
+  for (let i = 0; i < obs.length; i++) {
+    const protein = obs[i].urineProtein ?? '';
+    const acetone = obs[i].urineAcetone ?? '';
+    const glucose = obs[i].urineGlucose ?? '';
+    if (protein.includes('++')) {
+      out.push({
+        severity: 'ALERT', section: 'URINE', obsIndex: i,
+        message: 'โปรตีนในปัสสาวะสูง - ระวัง pre-eclampsia',
+      });
+    }
+    if (acetone.includes('++')) {
+      out.push({
+        severity: 'ALERT', section: 'URINE', obsIndex: i,
+        message: 'คีโตนในปัสสาวะ - อาจมีภาวะขาดน้ำ',
+      });
+    }
+    if (glucose.includes('++')) {
+      out.push({
+        severity: 'ALERT', section: 'URINE', obsIndex: i,
+        message: 'กลูโคสในปัสสาวะ - ควรตรวจเบาหวาน',
+      });
+    }
+  }
+  return out;
 }
 function analyzeTimeGaps(_obs: PartographObservationDto[]): CdssAlertDto[] {
   return [];
