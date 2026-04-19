@@ -7,6 +7,8 @@ import {
   deletePartograph,
   upsertVitalSign,
   deleteVitalSign,
+  upsertPregnancy,
+  upsertLabour,
 } from '@/services/maternity-ward';
 import type { ConnectionConfig, UserInfo } from '@/types/bms-browser';
 
@@ -431,6 +433,90 @@ describe('deleteVitalSign', () => {
       op: 'delete',
       resourceId: '21',
       hcode: '10670',
+    });
+  });
+});
+
+// ─── Task 43: pregnancy + labour upsert (composite write) ──────────────────
+describe('upsertPregnancy', () => {
+  beforeEach(() => mockFetch.mockReset());
+  const userInfo: UserInfo = { loginname: 'nurse1', fullname: 'Nurse', hospcode: '10670' };
+
+  it('calls restUpdate keyed by an + audit (1:1 record per AN)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok', update_count: 1 }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+
+    await upsertPregnancy(
+      cfg,
+      userInfo,
+      'AN1',
+      { preg_number: 3, ga: 39, anc_complete: 'Y' },
+      '10670',
+    );
+    expect(mockFetch.mock.calls[0][0]).toBe('https://t.example/api/api/rest/ipt_pregnancy/AN1');
+    expect(mockFetch.mock.calls[0][1].method).toBe('PUT');
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body).toEqual({ preg_number: 3, ga: 39, anc_complete: 'Y' });
+    await new Promise((r) => setTimeout(r, 0));
+    const auditBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(auditBody).toMatchObject({
+      entity: 'ipt_pregnancy',
+      op: 'update',
+      resourceId: 'AN1',
+      hcode: '10670',
+      staff: 'nurse1',
+      fieldsTouched: ['preg_number', 'ga', 'anc_complete'],
+    });
+  });
+
+  it('does not throw if audit fails', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok', update_count: 1 }),
+    });
+    mockFetch.mockRejectedValueOnce(new Error('audit endpoint down'));
+    await expect(
+      upsertPregnancy(cfg, userInfo, 'AN1', { preg_number: 3 }, '10670'),
+    ).resolves.not.toThrow();
+  });
+});
+
+describe('upsertLabour', () => {
+  beforeEach(() => mockFetch.mockReset());
+  const userInfo: UserInfo = { loginname: 'nurse1', fullname: 'Nurse', hospcode: '10670' };
+
+  it('calls restUpdate keyed by an + audit (1:1 record per AN)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ MessageCode: 200, Message: 'ok', update_count: 1 }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+
+    await upsertLabour(cfg, userInfo, 'AN1', { g: 3, ga: 39, anc_count: 8 }, '10670');
+    expect(mockFetch.mock.calls[0][0]).toBe('https://t.example/api/api/rest/ipt_labour/AN1');
+    expect(mockFetch.mock.calls[0][1].method).toBe('PUT');
+    await new Promise((r) => setTimeout(r, 0));
+    const auditBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(auditBody).toMatchObject({
+      entity: 'ipt_labour',
+      op: 'update',
+      resourceId: 'AN1',
+      hcode: '10670',
+      fieldsTouched: ['g', 'ga', 'anc_count'],
     });
   });
 });

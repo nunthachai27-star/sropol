@@ -332,3 +332,44 @@ export async function deleteVitalSign(
     staff: userInfo.loginname,
   });
 }
+
+// ─── Task 43: pregnancy + labour upsert (1:1 records keyed by AN) ──────────
+// Both ipt_pregnancy and ipt_labour are 1:1 with the admission, so the AN itself
+// acts as the resource identifier on the BMS REST endpoint. No serial mint
+// because we never insert a brand-new pregnancy record from this UI — HOSxP
+// creates that row at admit time. We only ever update.
+export async function upsertPregnancy(
+  config: ConnectionConfig,
+  userInfo: UserInfo,
+  an: string,
+  fields: Partial<PregnancyRecord>,
+  hcode: string,
+): Promise<void> {
+  await restUpdate('ipt_pregnancy', an, fields as Record<string, unknown>, config);
+  fireAudit({
+    entity: 'ipt_pregnancy',
+    op: 'update',
+    resourceId: an,
+    hcode,
+    staff: userInfo.loginname,
+    fieldsTouched: Object.keys(fields),
+  });
+}
+
+export async function upsertLabour(
+  config: ConnectionConfig,
+  userInfo: UserInfo,
+  an: string,
+  fields: Partial<LabourRecord>,
+  hcode: string,
+): Promise<void> {
+  await restUpdate('ipt_labour', an, fields as Record<string, unknown>, config);
+  fireAudit({
+    entity: 'ipt_labour',
+    op: 'update',
+    resourceId: an,
+    hcode,
+    staff: userInfo.loginname,
+    fieldsTouched: Object.keys(fields),
+  });
+}
