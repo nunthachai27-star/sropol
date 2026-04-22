@@ -8,7 +8,10 @@
 
 import { logger } from './logger';
 
-const DEFAULT_BASE_URL = 'https://vllm-qwen.bmscloud.in.th/v1';
+// Default points at the on-prem vLLM on the lab LAN. Override via
+// LLM_BASE_URL when deploying off-network (e.g. back to the public
+// vllm-qwen.bmscloud.in.th endpoint for cloud demos).
+const DEFAULT_BASE_URL = 'http://192.168.50.207:24000/v1';
 const DEFAULT_MODEL = 'gemma4';
 // 3-minute ceiling for heavy prompts (shift plans, full clinical records
 // under JSON schema). vLLM under 26-parallel sim load can take 30-90s per

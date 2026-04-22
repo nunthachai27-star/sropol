@@ -8,15 +8,16 @@
 
 import { useState } from 'react';
 import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
-import { KeyRound, Database, Globe, Building2 } from 'lucide-react';
+import { KeyRound, Database, Globe, Building2, FlaskConical } from 'lucide-react';
 import { BmsConfigTab } from '@/components/admin/BmsConfigTab';
 import { WebhookKeysTab } from '@/components/admin/WebhookKeysTab';
 import { ActiveProvinceTab } from '@/components/admin/ActiveProvinceTab';
 import { HospitalsTab } from '@/components/admin/HospitalsTab';
 import { AdminMapPane } from '@/components/admin/AdminMapPane';
+import { SimulationTab } from '@/components/admin/SimulationTab';
 import { cn } from '@/lib/utils';
 
-type TabKey = 'province' | 'hospitals' | 'bms-config' | 'webhook-keys';
+type TabKey = 'province' | 'hospitals' | 'bms-config' | 'webhook-keys' | 'simulation';
 
 export default function AdminPage() {
   useSetBreadcrumbs([
@@ -58,7 +59,7 @@ export default function AdminPage() {
           </h1>
         </div>
         <p className="font-mono text-[11px] text-[var(--ink-navy-muted)]">
-          จังหวัดหลัก · ทะเบียนโรงพยาบาล · BMS Tunnel · Webhook API Keys
+          จังหวัดหลัก · ทะเบียนโรงพยาบาล · BMS Tunnel · Webhook API Keys · Simulation
         </p>
       </div>
 
@@ -77,6 +78,7 @@ export default function AdminPage() {
               { k: 'hospitals' as const, label: 'โรงพยาบาล', icon: Building2 },
               { k: 'bms-config' as const, label: 'BMS Tunnel', icon: Database },
               { k: 'webhook-keys' as const, label: 'Webhook API Keys', icon: KeyRound },
+              { k: 'simulation' as const, label: 'จำลองข้อมูล', icon: FlaskConical },
             ]
           ).map((t, i) => {
             const active = activeTab === t.k;
@@ -123,8 +125,10 @@ export default function AdminPage() {
             />
           ) : activeTab === 'bms-config' ? (
             <BmsConfigTab />
-          ) : (
+          ) : activeTab === 'webhook-keys' ? (
             <WebhookKeysTab />
+          ) : (
+            <SimulationTab />
           )}
         </div>
         <div className="px-5 pt-4 pb-6">

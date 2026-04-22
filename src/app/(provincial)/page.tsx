@@ -21,7 +21,9 @@ import { StageKPICards } from '@/components/dashboard/StageKPICards';
 import { ShiftSummary } from '@/components/dashboard/ShiftSummary';
 import { SectionLabel } from '@/components/dashboard/shared';
 import { KioskHeader } from '@/components/dashboard/KioskHeader';
-import { SimulationControl } from '@/components/dashboard/SimulationControl';
+// SimulationControl was moved to /admin (Simulation tab) on 2026-04-22 so
+// the dashboard header stays compact for clinical users. Still dev/admin-
+// gated by the server-side simulationGuard.
 import { HospitalDetailDialog } from '@/components/dashboard/HospitalDetailDialog';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { ConnectionStatus as ConnectionStatusEnum } from '@/types/domain';
@@ -265,7 +267,6 @@ export default function DashboardPage() {
                 <RefreshCw className={cn('h-3 w-3', syncing && 'animate-spin')} />
                 ดึงข้อมูล
               </button>
-              {process.env.NODE_ENV !== 'production' && <SimulationControl />}
               <button
                 onClick={toggleKiosk}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2.5 py-1.5 font-mono text-[11px] font-semibold tracking-[0.06em] text-white transition-colors"
