@@ -341,21 +341,147 @@ type SectionProps = {
   title: string;
   /** Tailwind grid-cols classes for the inner field grid. */
   cols?: string;
+  /** Quick-pick chip row to render between the heading and the fields. */
+  chips?: React.ReactNode;
   children: React.ReactNode;
 };
 // Tight two-line section: a small header strip plus a dense field grid.
-// Fieldset/legend were removed because they added a heavy border + vertical
-// padding that made the dialog feel huge.
-function Section({ title, cols = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4', children }: SectionProps) {
+function Section({ title, cols = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4', chips, children }: SectionProps) {
   return (
     <section className="rounded-md border border-slate-200 bg-white">
       <h4 className="border-b border-slate-100 bg-slate-50/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
         {title}
       </h4>
+      {chips && <div className="px-3 pt-2">{chips}</div>}
       <div className={cn('grid gap-x-3 gap-y-2 p-3', cols)}>{children}</div>
     </section>
   );
 }
+
+// Same shape as Section but uses native <details> so the section can collapse
+// while keeping its children in the DOM (so getByLabelText still finds them).
+// `defaultOpen` should be `true` if any child field has a value — the parent
+// computes that and passes it in so editing existing rows opens what's filled.
+function CollapsibleSection({
+  title,
+  cols = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4',
+  defaultOpen = false,
+  badge,
+  chips,
+  children,
+}: SectionProps & { defaultOpen?: boolean; badge?: string }) {
+  return (
+    <details
+      open={defaultOpen}
+      className="group rounded-md border border-slate-200 bg-white"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between border-b border-slate-100 bg-slate-50/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:bg-slate-100/60">
+        <span className="flex items-center gap-2">
+          <span
+            aria-hidden
+            className="inline-block transition-transform group-open:rotate-90"
+          >
+            ▸
+          </span>
+          {title}
+          {badge && (
+            <span className="text-[10px] font-normal normal-case tracking-normal text-slate-400">
+              · {badge}
+            </span>
+          )}
+        </span>
+        <span className="text-[10px] font-normal text-slate-400 group-open:hidden">
+          คลิกเพื่อขยาย
+        </span>
+      </summary>
+      {chips && <div className="px-3 pt-2">{chips}</div>}
+      <div className={cn('grid gap-x-3 gap-y-2 p-3', cols)}>{children}</div>
+    </details>
+  );
+}
+
+// Quick-pick chips — one tap to set a value. Appears above the corresponding
+// numeric/select input so the most-frequent values are reachable without
+// typing. Selected state is derived from the current draft string.
+function ChipRow({
+  options,
+  selected,
+  onPick,
+  ariaLabel,
+}: {
+  options: ReadonlyArray<{ value: string; label: string }>;
+  selected: string;
+  onPick: (v: string) => void;
+  ariaLabel?: string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1" role="group" aria-label={ariaLabel}>
+      {options.map((o) => {
+        const isSelected = selected === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onPick(o.value)}
+            className={cn(
+              'rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors tabular-nums',
+              isSelected
+                ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-400 hover:bg-emerald-50/40',
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Quick-pick chip catalogues for partograph fields. Values mirror the most
+// commonly entered measurements per Thai LR practice + WHO partograph
+// guidelines. Order is most-common → least.
+const FHR_CHIPS = [
+  { value: '130', label: '130' },
+  { value: '140', label: '140' },
+  { value: '145', label: '145' },
+  { value: '150', label: '150' },
+  { value: '155', label: '155' },
+];
+const CX_CHIPS = [
+  { value: '0', label: '0' },
+  { value: '2', label: '2' },
+  { value: '4', label: '4' },
+  { value: '6', label: '6' },
+  { value: '8', label: '8' },
+  { value: '10', label: '10' },
+];
+const STRENGTH_CHIPS = [
+  { value: 'Mild', label: 'Mild' },
+  { value: 'Moderate', label: 'Moderate' },
+  { value: 'Strong', label: 'Strong' },
+];
+const DESCENT_CHIPS = [
+  { value: '5/5', label: '5/5' },
+  { value: '4/5', label: '4/5' },
+  { value: '3/5', label: '3/5' },
+  { value: '2/5', label: '2/5' },
+  { value: '1/5', label: '1/5' },
+  { value: '0/5', label: '0/5' },
+];
+const AMNIOTIC_CHIPS = [
+  { value: 'Clear', label: 'Clear' },
+  { value: 'Meconium (light)', label: 'Mec L' },
+  { value: 'Meconium (thick)', label: 'Mec T' },
+  { value: 'Blood', label: 'Blood' },
+  { value: 'Absent', label: 'Absent' },
+];
+const MOULDING_CHIPS = [
+  { value: '0', label: '0' },
+  { value: '+', label: '+' },
+  { value: '++', label: '++' },
+  { value: '+++', label: '+++' },
+];
 
 interface FieldProps {
   name: AnyEditableField;
@@ -638,10 +764,24 @@ export function PartographEntryDialog({
             />
           </section>
 
-          {/* Two-column band: fetal + progress fit together since both are
-              small and related by the "baby side" grouping. */}
+          {/* ── Priority sections (always visible, ordered by entry frequency
+                in active labour: fetal → progress → contractions → maternal
+                vitals). Each top section has tap-friendly chip rows above the
+                relevant input so common values are reachable without typing. */}
+
           <div className="grid gap-2 lg:grid-cols-2">
-            <Section title="ทารกในครรภ์" cols="grid-cols-3">
+            <Section
+              title="ทารกในครรภ์"
+              cols="grid-cols-3"
+              chips={
+                <ChipRow
+                  ariaLabel="FHR quick picks"
+                  options={FHR_CHIPS}
+                  selected={draft.fetal_heart_rate}
+                  onPick={(v) => set('fetal_heart_rate', v)}
+                />
+              }
+            >
               <Field
                 name="fetal_heart_rate"
                 label="FHR"
@@ -654,28 +794,57 @@ export function PartographEntryDialog({
               <Field name="moulding" label="Moulding" value={draft.moulding} options={MOULDING_OPTIONS} onChange={(v) => set('moulding', v)} />
             </Section>
 
-            <Section title="ความก้าวหน้าของการคลอด" cols="grid-cols-2">
+            <Section
+              title="ความก้าวหน้าของการคลอด"
+              cols="grid-cols-2"
+              chips={
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="w-16 shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-500">Cx</span>
+                    <ChipRow
+                      ariaLabel="Cervical dilation quick picks"
+                      options={CX_CHIPS}
+                      selected={draft.cervical_dilation_cm}
+                      onPick={(v) => set('cervical_dilation_cm', v)}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-16 shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-500">Descent</span>
+                    <ChipRow
+                      ariaLabel="Descent of head quick picks"
+                      options={DESCENT_CHIPS}
+                      selected={draft.descent_of_head}
+                      onPick={(v) => set('descent_of_head', v)}
+                    />
+                  </div>
+                </div>
+              }
+            >
               <Field name="cervical_dilation_cm" label="ปากมดลูก (ซม)" hint="0–10" type="float" value={draft.cervical_dilation_cm} onChange={(v) => set('cervical_dilation_cm', v)} />
               <Field name="descent_of_head" label="Descent" value={draft.descent_of_head} options={DESCENT_OPTIONS} onChange={(v) => set('descent_of_head', v)} />
             </Section>
           </div>
 
-          {/* Contractions + drugs — similarly paired. */}
-          <div className="grid gap-2 lg:grid-cols-2">
-            <Section title="การหดรัดตัวของมดลูก" cols="grid-cols-3">
-              <Field name="contraction_per_10min" label="ครั้ง/10นาที" value={draft.contraction_per_10min} onChange={(v) => set('contraction_per_10min', v)} />
-              <Field name="contraction_duration_sec" label="ระยะเวลา (วิ)" value={draft.contraction_duration_sec} onChange={(v) => set('contraction_duration_sec', v)} />
-              <Field name="contraction_strength" label="ความแรง" value={draft.contraction_strength} options={CONTRACTION_STRENGTH_OPTIONS} onChange={(v) => set('contraction_strength', v)} />
-            </Section>
+          <Section
+            title="การหดรัดตัวของมดลูก"
+            cols="grid-cols-3"
+            chips={
+              <ChipRow
+                ariaLabel="Contraction strength quick picks"
+                options={STRENGTH_CHIPS}
+                selected={draft.contraction_strength}
+                onPick={(v) => set('contraction_strength', v)}
+              />
+            }
+          >
+            <Field name="contraction_per_10min" label="ครั้ง/10นาที" value={draft.contraction_per_10min} onChange={(v) => set('contraction_per_10min', v)} />
+            <Field name="contraction_duration_sec" label="ระยะเวลา (วิ)" value={draft.contraction_duration_sec} onChange={(v) => set('contraction_duration_sec', v)} />
+            <Field name="contraction_strength" label="ความแรง" value={draft.contraction_strength} options={CONTRACTION_STRENGTH_OPTIONS} onChange={(v) => set('contraction_strength', v)} />
+          </Section>
 
-            <Section title="ยาและสารน้ำ" cols="grid-cols-3">
-              <Field name="oxytocin_uml" label="Oxy U/mL" type="float" value={draft.oxytocin_uml} onChange={(v) => set('oxytocin_uml', v)} />
-              <Field name="oxytocin_drops_min" label="Oxy หยด/นาที" value={draft.oxytocin_drops_min} onChange={(v) => set('oxytocin_drops_min', v)} />
-              <Field name="drugs_iv_fluids" label="IV / ยา" type="text" value={draft.drugs_iv_fluids} onChange={(v) => set('drugs_iv_fluids', v)} />
-            </Section>
-          </div>
-
-          {/* Maternal vitals — single 4-col row, primary abnormal surface. */}
+          {/* Maternal vitals — moved up before drugs because pulse/BP are
+              checked every 30 min during active labour vs. drugs adjusted only
+              when augmenting. */}
           <Section title="สัญญาณชีพมารดา" cols="grid-cols-2 sm:grid-cols-4">
             <Field
               name="pulse"
@@ -712,17 +881,49 @@ export function PartographEntryDialog({
             />
           </Section>
 
-          {/* Urine — single 4-col row. */}
-          <Section title="ปัสสาวะ" cols="grid-cols-2 sm:grid-cols-4">
+          {/* ── Below-fold sections (default-collapsed unless the row being
+                edited has data in them). Adjust on demand: drugs only when
+                augmenting, urine only at void, note only when needed. */}
+
+          <CollapsibleSection
+            title="ยาและสารน้ำ"
+            cols="grid-cols-3"
+            defaultOpen={
+              draft.oxytocin_uml !== '' ||
+              draft.oxytocin_drops_min !== '' ||
+              draft.drugs_iv_fluids !== ''
+            }
+            badge="เมื่อมีการให้ยา/สารน้ำ"
+          >
+            <Field name="oxytocin_uml" label="Oxy U/mL" type="float" value={draft.oxytocin_uml} onChange={(v) => set('oxytocin_uml', v)} />
+            <Field name="oxytocin_drops_min" label="Oxy หยด/นาที" value={draft.oxytocin_drops_min} onChange={(v) => set('oxytocin_drops_min', v)} />
+            <Field name="drugs_iv_fluids" label="IV / ยา" type="text" value={draft.drugs_iv_fluids} onChange={(v) => set('drugs_iv_fluids', v)} />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            title="ปัสสาวะ"
+            cols="grid-cols-2 sm:grid-cols-4"
+            defaultOpen={
+              draft.urine_volume_ml !== '' ||
+              draft.urine_protein !== '' ||
+              draft.urine_acetone !== '' ||
+              draft.urine_glucose !== ''
+            }
+            badge="ทุกการ void"
+          >
             <Field name="urine_volume_ml" label="ปริมาตร (ml)" value={draft.urine_volume_ml} onChange={(v) => set('urine_volume_ml', v)} />
             <Field name="urine_protein" label="Protein" value={draft.urine_protein} options={URINE_DIPSTICK_OPTIONS} onChange={(v) => set('urine_protein', v)} />
             <Field name="urine_acetone" label="Acetone" value={draft.urine_acetone} options={URINE_DIPSTICK_OPTIONS} onChange={(v) => set('urine_acetone', v)} />
             <Field name="urine_glucose" label="Glucose" value={draft.urine_glucose} options={URINE_DIPSTICK_OPTIONS} onChange={(v) => set('urine_glucose', v)} />
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="บันทึกเพิ่มเติม" cols="grid-cols-1">
+          <CollapsibleSection
+            title="บันทึกเพิ่มเติม"
+            cols="grid-cols-1"
+            defaultOpen={draft.note !== ''}
+          >
             <Field name="note" label="Note" type="textarea" value={draft.note} onChange={(v) => set('note', v)} colSpan="full" />
-          </Section>
+          </CollapsibleSection>
 
           {error && (
             <div

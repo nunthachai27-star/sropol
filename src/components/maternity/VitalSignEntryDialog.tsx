@@ -238,24 +238,119 @@ function hasClinicalValue(p: Partial<NurseNoteRow>): boolean {
 
 // ─── UI primitives ─────────────────────────────────────────────────────────
 
+interface SectionShellProps {
+  title: string;
+  cols?: string;
+  /** Quick-pick chip row rendered between the heading and the fields. */
+  chips?: React.ReactNode;
+  children: React.ReactNode;
+}
+
 function Section({
   title,
   cols = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4',
+  chips,
   children,
-}: {
-  title: string;
-  cols?: string;
-  children: React.ReactNode;
-}) {
+}: SectionShellProps) {
   return (
     <section className="rounded-md border border-slate-200 bg-white">
       <h4 className="border-b border-slate-100 bg-slate-50/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
         {title}
       </h4>
+      {chips && <div className="px-3 pt-2">{chips}</div>}
       <div className={cn('grid gap-x-3 gap-y-2 p-3', cols)}>{children}</div>
     </section>
   );
 }
+
+// Native <details>-based collapsible. Children stay in DOM when collapsed so
+// getByLabelText still finds every input — important because the test suite
+// asserts every nurse-note column is queryable from the dialog.
+function CollapsibleSection({
+  title,
+  cols = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4',
+  defaultOpen = false,
+  badge,
+  chips,
+  children,
+}: SectionShellProps & { defaultOpen?: boolean; badge?: string }) {
+  return (
+    <details
+      open={defaultOpen}
+      className="group rounded-md border border-slate-200 bg-white"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between border-b border-slate-100 bg-slate-50/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:bg-slate-100/60">
+        <span className="flex items-center gap-2">
+          <span aria-hidden className="inline-block transition-transform group-open:rotate-90">
+            ▸
+          </span>
+          {title}
+          {badge && (
+            <span className="text-[10px] font-normal normal-case tracking-normal text-slate-400">
+              · {badge}
+            </span>
+          )}
+        </span>
+        <span className="text-[10px] font-normal text-slate-400 group-open:hidden">
+          คลิกเพื่อขยาย
+        </span>
+      </summary>
+      {chips && <div className="px-3 pt-2">{chips}</div>}
+      <div className={cn('grid gap-x-3 gap-y-2 p-3', cols)}>{children}</div>
+    </details>
+  );
+}
+
+function ChipRow({
+  options,
+  selected,
+  onPick,
+  ariaLabel,
+}: {
+  options: ReadonlyArray<{ value: string; label: string }>;
+  selected: string;
+  onPick: (v: string) => void;
+  ariaLabel?: string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1" role="group" aria-label={ariaLabel}>
+      {options.map((o) => {
+        const isSelected = selected === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onPick(o.value)}
+            className={cn(
+              'rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors tabular-nums',
+              isSelected
+                ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-400 hover:bg-emerald-50/40',
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const PAIN_CHIPS = [
+  { value: '0', label: '0' },
+  { value: '2', label: '2' },
+  { value: '4', label: '4' },
+  { value: '6', label: '6' },
+  { value: '8', label: '8' },
+  { value: '10', label: '10' },
+];
+const TEMP_CHIPS = [
+  { value: '36.5', label: '36.5' },
+  { value: '37.0', label: '37.0' },
+  { value: '37.5', label: '37.5' },
+  { value: '38.0', label: '38.0' },
+  { value: '38.5', label: '38.5' },
+];
 
 interface FieldProps {
   name: AnyField;
@@ -416,12 +511,31 @@ export function VitalSignEntryDialog({
           }}
           className="flex flex-col gap-2"
         >
+          {/* ── Tier 1: always-visible essentials.
+                Date/time → core vitals → free-text note. These three sections
+                cover ~95% of every-shift entry. */}
+
           <Section title="วันที่และเวลา" cols="grid-cols-2 sm:grid-cols-4">
             <Field name="note_date" label="วันที่" type="date" value={draft.note_date} onChange={(v) => set('note_date', v)} />
             <Field name="note_time" label="เวลา" type="time" value={draft.note_time} onChange={(v) => set('note_time', v)} />
           </Section>
 
-          <Section title="สัญญาณชีพหลัก" cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
+          <Section
+            title="สัญญาณชีพหลัก"
+            cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"
+            chips={
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-12 shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-500">Temp</span>
+                  <ChipRow ariaLabel="Temperature quick picks" options={TEMP_CHIPS} selected={draft.temperature} onPick={(v) => set('temperature', v)} />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-12 shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-500">Pain</span>
+                  <ChipRow ariaLabel="Pain score quick picks" options={PAIN_CHIPS} selected={draft.pain_score} onPick={(v) => set('pain_score', v)} />
+                </div>
+              </div>
+            }
+          >
             <Field name="temperature" label="Temp" hint="°C · <38" type="float" value={draft.temperature} onChange={(v) => set('temperature', v)} abnormal={abn.temperature} />
             <Field name="pulse" label="Pulse" hint="60–100" value={draft.pulse} onChange={(v) => set('pulse', v)} abnormal={abn.pulse} />
             <Field name="heart_rate" label="HR" hint="60–100" value={draft.heart_rate} onChange={(v) => set('heart_rate', v)} />
@@ -433,47 +547,103 @@ export function VitalSignEntryDialog({
             <Field name="pain_score" label="Pain" hint="0–10" value={draft.pain_score} onChange={(v) => set('pain_score', v)} />
           </Section>
 
-          <Section title="ร่างกาย" cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+          {/* ── Tier 2: contextual sections — auto-open when the row being
+                edited has data; default-collapsed when adding a fresh entry
+                so the dialog isn't a wall of empty inputs. */}
+
+          <CollapsibleSection
+            title="ร่างกาย"
+            cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"
+            defaultOpen={
+              !!draft.weight || !!draft.weight_loss || !!draft.height ||
+              !!draft.bmi || !!draft.bsa || !!draft.waist
+            }
+            badge="แรกรับ / สัปดาห์ละครั้ง"
+          >
             <Field name="weight" label="น้ำหนัก" hint="kg" type="float" value={draft.weight} onChange={(v) => set('weight', v)} />
             <Field name="weight_loss" label="น้ำหนักลด" hint="kg" type="float" value={draft.weight_loss} onChange={(v) => set('weight_loss', v)} />
             <Field name="height" label="ส่วนสูง" hint="cm" type="float" value={draft.height} onChange={(v) => set('height', v)} />
             <Field name="bmi" label="BMI" type="float" value={draft.bmi} onChange={(v) => set('bmi', v)} />
             <Field name="bsa" label="BSA" hint="m²" type="float" value={draft.bsa} onChange={(v) => set('bsa', v)} />
             <Field name="waist" label="รอบเอว" hint="cm" type="float" value={draft.waist} onChange={(v) => set('waist', v)} />
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="การตรวจร่างกาย" cols="grid-cols-1 sm:grid-cols-2">
+          <CollapsibleSection
+            title="การตรวจร่างกาย"
+            cols="grid-cols-1 sm:grid-cols-2"
+            defaultOpen={
+              !!draft.lung_text || !!draft.heart_text ||
+              !!draft.abdomen_text || !!draft.fetal_heart_text
+            }
+            badge="ตามรอบประเมิน"
+          >
             <Field name="lung_text" label="Lung" type="text" value={draft.lung_text} onChange={(v) => set('lung_text', v)} />
             <Field name="heart_text" label="Heart" type="text" value={draft.heart_text} onChange={(v) => set('heart_text', v)} />
             <Field name="abdomen_text" label="Abdomen" type="text" value={draft.abdomen_text} onChange={(v) => set('abdomen_text', v)} />
             <Field name="fetal_heart_text" label="Fetal heart sound" type="text" value={draft.fetal_heart_text} onChange={(v) => set('fetal_heart_text', v)} />
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="PV" cols="grid-cols-2 sm:grid-cols-3">
+          <CollapsibleSection
+            title="PV"
+            cols="grid-cols-2 sm:grid-cols-3"
+            defaultOpen={!!draft.cervical_open_size || !!draft.eff || !!draft.station}
+            badge="ผู้ป่วยอยู่ในระยะคลอด"
+          >
             <Field name="cervical_open_size" label="ปากมดลูก" hint="ซม · 0–10" type="float" value={draft.cervical_open_size} onChange={(v) => set('cervical_open_size', v)} />
             <Field name="eff" label="Eff" hint="%" type="float" value={draft.eff} onChange={(v) => set('eff', v)} />
             <Field name="station" label="Station" value={draft.station} options={STATION_OPTIONS} onChange={(v) => set('station', v)} />
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="IBP · CVP · ICP" cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+          {/* ── Tier 3: specialty / ICU sections. Default-collapsed; opened
+                only when their data is present (typically post-op or HCU
+                patients). Kept in DOM for getByLabelText accessibility. */}
+
+          <CollapsibleSection
+            title="IBP · CVP · ICP"
+            cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"
+            defaultOpen={
+              !!draft.ibps || !!draft.ibpd || !!draft.imap ||
+              !!draft.cvp || !!draft.icp || !!draft.pvc
+            }
+            badge="ICU / post-op"
+          >
             <Field name="ibps" label="IBP Sys" value={draft.ibps} onChange={(v) => set('ibps', v)} />
             <Field name="ibpd" label="IBP Dia" value={draft.ibpd} onChange={(v) => set('ibpd', v)} />
             <Field name="imap" label="IMAP" type="float" value={draft.imap} onChange={(v) => set('imap', v)} />
             <Field name="cvp" label="CVP" type="float" value={draft.cvp} onChange={(v) => set('cvp', v)} />
             <Field name="icp" label="ICP" value={draft.icp} onChange={(v) => set('icp', v)} />
             <Field name="pvc" label="PVC" value={draft.pvc} onChange={(v) => set('pvc', v)} />
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="EtCO₂ · Scores · ออกซิเจน" cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+          <CollapsibleSection
+            title="EtCO₂ · Scores · ออกซิเจน"
+            cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"
+            defaultOpen={
+              !!draft.etco2 || !!draft.sedation_score || !!draft.news2_score ||
+              !!draft.sos_score || !!draft.has_hypercapnic_rf || !!draft.has_oxygen_ventilator
+            }
+            badge="ผู้ป่วยใส่เครื่อง / Early Warning"
+          >
             <Field name="etco2" label="EtCO₂" value={draft.etco2} onChange={(v) => set('etco2', v)} />
             <Field name="sedation_score" label="Sedation" value={draft.sedation_score} onChange={(v) => set('sedation_score', v)} />
             <Field name="news2_score" label="NEWS2" value={draft.news2_score} onChange={(v) => set('news2_score', v)} />
             <Field name="sos_score" label="SOS" value={draft.sos_score} onChange={(v) => set('sos_score', v)} />
             <Field name="has_hypercapnic_rf" label="Hypercapnic RF" value={draft.has_hypercapnic_rf} options={YN_OPTIONS} onChange={(v) => set('has_hypercapnic_rf', v)} />
             <Field name="has_oxygen_ventilator" label="O₂/Vent" value={draft.has_oxygen_ventilator} options={YN_OPTIONS} onChange={(v) => set('has_oxygen_ventilator', v)} />
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="น้ำเข้า" cols="grid-cols-2 sm:grid-cols-4">
+          <CollapsibleSection
+            title="น้ำเข้า"
+            cols="grid-cols-2 sm:grid-cols-4"
+            defaultOpen={
+              !!draft.fluid_intake_oral || !!draft.fluid_intake_parenteral ||
+              !!draft.fluid_intake_1 || !!draft.fluid_intake_1_int ||
+              !!draft.fluid_intake_2 || !!draft.fluid_intake_2_int ||
+              !!draft.fluid_intake_3 || !!draft.fluid_intake_3_int ||
+              !!draft.fluid_intake_4 || !!draft.fluid_intake_4_int
+            }
+            badge="I/O charting"
+          >
             <Field name="fluid_intake_oral" label="Oral" hint="ml" type="float" value={draft.fluid_intake_oral} onChange={(v) => set('fluid_intake_oral', v)} />
             <Field name="fluid_intake_parenteral" label="Parenteral" hint="ml" type="float" value={draft.fluid_intake_parenteral} onChange={(v) => set('fluid_intake_parenteral', v)} />
             <Field name="fluid_intake_1" label="Fluid 1" type="text" value={draft.fluid_intake_1} onChange={(v) => set('fluid_intake_1', v)} />
@@ -484,18 +654,36 @@ export function VitalSignEntryDialog({
             <Field name="fluid_intake_3_int" label="Qty 3" hint="ml" type="float" value={draft.fluid_intake_3_int} onChange={(v) => set('fluid_intake_3_int', v)} />
             <Field name="fluid_intake_4" label="Fluid 4" type="text" value={draft.fluid_intake_4} onChange={(v) => set('fluid_intake_4', v)} />
             <Field name="fluid_intake_4_int" label="Qty 4" hint="ml" type="float" value={draft.fluid_intake_4_int} onChange={(v) => set('fluid_intake_4_int', v)} />
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="ยา/ยาน้ำ" cols="grid-cols-2 sm:grid-cols-4">
+          <CollapsibleSection
+            title="ยา/ยาน้ำ"
+            cols="grid-cols-2 sm:grid-cols-4"
+            defaultOpen={
+              !!draft.fluid_intake_medication1 || !!draft.fluid_intake_medication1_int ||
+              !!draft.fluid_intake_medication2 || !!draft.fluid_intake_medication2_int ||
+              !!draft.fluid_intake_medication3 || !!draft.fluid_intake_medication3_int
+            }
+          >
             <Field name="fluid_intake_medication1" label="Medication 1" type="text" value={draft.fluid_intake_medication1} onChange={(v) => set('fluid_intake_medication1', v)} />
             <Field name="fluid_intake_medication1_int" label="Qty 1" hint="ml" type="float" value={draft.fluid_intake_medication1_int} onChange={(v) => set('fluid_intake_medication1_int', v)} />
             <Field name="fluid_intake_medication2" label="Medication 2" type="text" value={draft.fluid_intake_medication2} onChange={(v) => set('fluid_intake_medication2', v)} />
             <Field name="fluid_intake_medication2_int" label="Qty 2" hint="ml" type="float" value={draft.fluid_intake_medication2_int} onChange={(v) => set('fluid_intake_medication2_int', v)} />
             <Field name="fluid_intake_medication3" label="Medication 3" type="text" value={draft.fluid_intake_medication3} onChange={(v) => set('fluid_intake_medication3', v)} />
             <Field name="fluid_intake_medication3_int" label="Qty 3" hint="ml" type="float" value={draft.fluid_intake_medication3_int} onChange={(v) => set('fluid_intake_medication3_int', v)} />
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="น้ำออก" cols="grid-cols-2 sm:grid-cols-4">
+          <CollapsibleSection
+            title="น้ำออก"
+            cols="grid-cols-2 sm:grid-cols-4"
+            defaultOpen={
+              !!draft.fluid_output_urine || !!draft.fluid_output_emesis ||
+              !!draft.fluid_output_drainage || !!draft.fluid_output_drainage_2 ||
+              !!draft.fluid_output_drainage_3 || !!draft.fluid_output_drainage_4 ||
+              !!draft.fluid_output_aspiration || !!draft.fluid_blood_loss
+            }
+            badge="I/O charting"
+          >
             <Field name="fluid_output_urine" label="Urine" hint="ml" type="float" value={draft.fluid_output_urine} onChange={(v) => set('fluid_output_urine', v)} />
             <Field name="fluid_output_emesis" label="Emesis" hint="ml" type="float" value={draft.fluid_output_emesis} onChange={(v) => set('fluid_output_emesis', v)} />
             <Field name="fluid_output_drainage" label="Drainage 1" hint="ml" type="float" value={draft.fluid_output_drainage} onChange={(v) => set('fluid_output_drainage', v)} />
@@ -504,20 +692,33 @@ export function VitalSignEntryDialog({
             <Field name="fluid_output_drainage_4" label="Drainage 4" hint="ml" type="float" value={draft.fluid_output_drainage_4} onChange={(v) => set('fluid_output_drainage_4', v)} />
             <Field name="fluid_output_aspiration" label="Aspiration" hint="ml" type="float" value={draft.fluid_output_aspiration} onChange={(v) => set('fluid_output_aspiration', v)} />
             <Field name="fluid_blood_loss" label="Blood loss" hint="ml" type="float" value={draft.fluid_blood_loss} onChange={(v) => set('fluid_blood_loss', v)} />
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="อุจจาระ · ปัสสาวะ" cols="grid-cols-2 sm:grid-cols-4">
+          <CollapsibleSection
+            title="อุจจาระ · ปัสสาวะ"
+            cols="grid-cols-2 sm:grid-cols-4"
+            defaultOpen={
+              !!draft.urine_qty || !!draft.urine_qty_unit ||
+              !!draft.stools_qty || !!draft.stools_qty_unit
+            }
+          >
             <Field name="urine_qty" label="Urine" type="float" value={draft.urine_qty} onChange={(v) => set('urine_qty', v)} />
             <Field name="urine_qty_unit" label="Urine unit" value={draft.urine_qty_unit} options={URINE_UNIT_OPTIONS} onChange={(v) => set('urine_qty_unit', v)} />
             <Field name="stools_qty" label="Stools" type="float" value={draft.stools_qty} onChange={(v) => set('stools_qty', v)} />
             <Field name="stools_qty_unit" label="Stools unit" value={draft.stools_qty_unit} options={STOOL_UNIT_OPTIONS} onChange={(v) => set('stools_qty_unit', v)} />
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="อาหารและยา" cols="grid-cols-1 sm:grid-cols-2">
+          <CollapsibleSection
+            title="อาหารและยา"
+            cols="grid-cols-1 sm:grid-cols-2"
+            defaultOpen={!!draft.ipd_nurse_note_diet_text || !!draft.medication_text}
+          >
             <Field name="ipd_nurse_note_diet_text" label="Diet" type="text" value={draft.ipd_nurse_note_diet_text} onChange={(v) => set('ipd_nurse_note_diet_text', v)} />
             <Field name="medication_text" label="Medication" type="text" value={draft.medication_text} onChange={(v) => set('medication_text', v)} />
-          </Section>
+          </CollapsibleSection>
 
+          {/* บันทึกเพิ่มเติม stays always-visible — note + bottom_note are
+              the highest-traffic free-text fields and need no friction. */}
           <Section title="บันทึกเพิ่มเติม" cols="grid-cols-1">
             <Field name="note" label="Note" type="textarea" value={draft.note} onChange={(v) => set('note', v)} colSpan="full" />
             <Field name="bottom_note_text" label="Bottom note" type="textarea" value={draft.bottom_note_text} onChange={(v) => set('bottom_note_text', v)} colSpan="full" />
