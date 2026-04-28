@@ -399,7 +399,7 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
+          gridTemplateColumns: '1fr 1fr auto',
           gap: 10,
           padding: '6px 14px',
           fontFamily: FONT_MONO,
@@ -418,6 +418,64 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
         <div>
           <span style={{ letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 700, marginRight: 6 }}>HN</span>
           <span style={{ color: C.ink, fontWeight: 700 }}>{occupant.hn}</span>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {/* Allergy flag — red filled when ≥1 opd_allergy row, green outlined NKDA otherwise.
+              null allergy_count (query failed) is treated like NKDA visually but distinct in tooling. */}
+          {(occupant.allergy_count ?? 0) > 0 ? (
+            <span
+              style={{
+                fontFamily: FONT_MONO,
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.16em',
+                padding: '2px 6px',
+                textTransform: 'uppercase',
+                borderRadius: 1,
+                color: 'white',
+                background: C.crit,
+                border: `1px solid ${C.crit}`,
+              }}
+              title={`${occupant.allergy_count} known allergy record${occupant.allergy_count === 1 ? '' : 's'} on file`}
+            >
+              Allergy
+            </span>
+          ) : (
+            <span
+              style={{
+                fontFamily: FONT_MONO,
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.16em',
+                padding: '2px 6px',
+                textTransform: 'uppercase',
+                borderRadius: 1,
+                color: C.ok,
+                border: `1px solid ${C.ok}`,
+              }}
+              title="No known drug allergies on file"
+            >
+              NKDA
+            </span>
+          )}
+          {/* Blood group — outlined pill, only when on file. */}
+          {occupant.blood_grp && (
+            <span
+              style={{
+                fontFamily: FONT_MONO,
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.16em',
+                padding: '2px 6px',
+                textTransform: 'uppercase',
+                borderRadius: 1,
+                color: C.crit,
+                border: `1px solid ${C.crit}`,
+              }}
+            >
+              {occupant.blood_grp}
+            </span>
+          )}
         </div>
       </div>
 

@@ -48,6 +48,9 @@ export interface BedOccupancy {
  * partograph rows, and the bed tile must render gracefully with `—` placeholders.
  */
 export interface BedOccupancyFull extends BedOccupancy {
+  // Identifier flags (rendered as outlined pills in the bed-tile identity row)
+  blood_grp: string | null;        // A / B / AB / O — null when not on file
+  allergy_count: number | null;    // 0 → NKDA pill; >0 → ALLERGY pill (red)
   // Latest partograph (labour progress, FHR, contractions, interventions)
   last_station: string | null;
   last_fhr: number | null;

@@ -424,9 +424,10 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
   postgresql: `SELECT i.an, i.hn, i.regdate, i.regtime, i.ward,
        iptadm.bedno, iptadm.roomno, iptadm.bedtype,
        roomno.name AS roomname,
-       p.pname, p.fname, p.lname, p.birthday,
+       p.pname, p.fname, p.lname, p.birthday, p.blood_grp,
        il.g AS gravida, il.ga,
        di.name AS incharge_doctor_name,
+       (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
        (SELECT MAX(observe_datetime) FROM ipt_labour_partograph
          WHERE an = i.an) AS last_observation_at,
        (SELECT cervical_dilation_cm FROM ipt_labour_partograph
@@ -442,9 +443,10 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
   mysql: `SELECT i.an, i.hn, i.regdate, i.regtime, i.ward,
        iptadm.bedno, iptadm.roomno, iptadm.bedtype,
        roomno.name AS roomname,
-       p.pname, p.fname, p.lname, p.birthday,
+       p.pname, p.fname, p.lname, p.birthday, p.blood_grp,
        il.g AS gravida, il.ga,
        di.name AS incharge_doctor_name,
+       (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
        (SELECT MAX(observe_datetime) FROM ipt_labour_partograph
          WHERE an = i.an) AS last_observation_at,
        (SELECT cervical_dilation_cm FROM ipt_labour_partograph
@@ -462,30 +464,40 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
 // Bed occupancy snapshot (clinical-density variant) — same scope as
 // WARD_BEDS_OCCUPANCY but joins the LATEST ipt_labour_partograph row + LATEST
 // ipd_nurse_note row per AN, surfacing every field the dense bed-tile UI needs
-// (vitals, labour progress, contractions, FHR, interventions, last assessment).
+// (vitals, labour progress, contractions, FHR, interventions, last assessment,
+// allergy/blood-type identifier flags).
 //
-// **Vital-sign source split** — confirmed against HOSxP Delphi entry forms:
+// **Source map** — confirmed against HOSxP Delphi entry forms + project memory:
 //   * `ipd_nurse_note`            → BP / T / P / RR / SpO2 / pain
 //                                   (= the floor-nurse's standard observations)
 //   * `ipt_labour_partograph`     → cervix / station / FHR / contractions /
 //                                   oxytocin / IV fluids / amniotic fluid
 //                                   (= partograph time-series)
+//   * `opd_allergy`               → patient drug-allergy registry — used for
+//                                   the NKDA / ALLERGY pill on the bed tile
+//                                   (count > 0 ⇒ ALLERGY, else NKDA).
+//   * `patient.blood_grp`         → blood-group flag (A / B / AB / O).
 // Don't pull standard vitals from `ipt_pregnancy_vital_sign`; that table is
 // labour-context only and is not where IPD nurses log every-shift observations.
+// Don't pull allergy info from `person.allergy` free-text — `opd_allergy` is
+// the structured registry HOSxP itself reads.
 //
 // Latest-row strategy: each LEFT JOIN resolves to the PK of the most recent
 // row via a single ordered subquery, then the JOIN itself is a PK lookup. This
 // avoids one-correlated-subquery-per-column (16+ scans per ipt row) and keeps
 // the query within the constitution-VI 2-second SQL budget for 12-bed wards.
 // Both PostgreSQL and MySQL execute this pattern with proper indexes on
-// (an, observe_datetime) and (an, note_date, note_time).
+// (an, observe_datetime) and (an, note_date, note_time). Allergy uses a
+// COUNT subquery (returns int) rather than EXISTS so the result type is
+// dialect-portable without CASE/BOOL conversions.
 export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
   postgresql: `SELECT i.an, i.hn, i.regdate, i.regtime, i.ward,
        iptadm.bedno, iptadm.roomno, iptadm.bedtype,
        roomno.name AS roomname,
-       p.pname, p.fname, p.lname, p.birthday,
+       p.pname, p.fname, p.lname, p.birthday, p.blood_grp,
        il.g AS gravida, il.ga,
        di.name AS incharge_doctor_name,
+       (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
        latest_lp.observe_datetime    AS last_observation_at,
        latest_lp.cervical_dilation_cm AS last_cervix_cm,
        latest_lp.descent_of_head     AS last_station,
@@ -530,9 +542,10 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
   mysql: `SELECT i.an, i.hn, i.regdate, i.regtime, i.ward,
        iptadm.bedno, iptadm.roomno, iptadm.bedtype,
        roomno.name AS roomname,
-       p.pname, p.fname, p.lname, p.birthday,
+       p.pname, p.fname, p.lname, p.birthday, p.blood_grp,
        il.g AS gravida, il.ga,
        di.name AS incharge_doctor_name,
+       (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
        latest_lp.observe_datetime    AS last_observation_at,
        latest_lp.cervical_dilation_cm AS last_cervix_cm,
        latest_lp.descent_of_head     AS last_station,
