@@ -448,7 +448,7 @@ export function SimulationControl() {
                         ? 'border-red-400 bg-white text-red-700'
                         : 'border-[var(--rule-hair)] bg-white text-[var(--ink-navy-dim)]',
                     )}
-                    title="Wipe all patient/journey/labor rows before launching the simulation."
+                    title="Wipe patient/journey/labor data only — registered hospitals and API keys are preserved."
                   >
                     <input
                       type="checkbox"
@@ -458,7 +458,7 @@ export function SimulationControl() {
                       disabled={status.running}
                     />
                     <Trash2 className="h-3.5 w-3.5" />
-                    Start fresh — clear DB before starting
+                    Start fresh — clear patient data before starting
                   </label>
                   {!confirmClear ? (
                     <button
@@ -472,34 +472,39 @@ export function SimulationControl() {
                       title={
                         status.running
                           ? 'Stop the running simulation first'
-                          : 'Wipe all patient/journey/labor data (dev only)'
+                          : 'Wipe patient/journey/labor data only — registered hospitals and webhook API keys are preserved (dev only)'
                       }
                     >
                       <Trash2 className="h-3.5 w-3.5" />
-                      Clear all data
+                      Clear patient data
                     </button>
                   ) : (
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-col gap-1">
                       <span className="font-mono text-[10px] text-red-700">
-                        ยืนยัน? การลบนี้ไม่สามารถย้อนกลับได้
+                        ยืนยันการลบข้อมูลผู้ป่วย/journey/labor? (โรงพยาบาลที่ลงทะเบียนและ API key จะไม่ถูกลบ)
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmClear(false)}
-                        disabled={clearing}
-                        className="rounded-sm border border-[var(--rule-strong)] bg-white px-2.5 py-1 font-mono text-[10px] tracking-[0.06em] text-[var(--ink-navy-dim)] hover:bg-slate-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={onClear}
-                        disabled={clearing}
-                        className="inline-flex items-center gap-1 rounded-sm bg-red-600 px-3 py-1 font-mono text-[10px] font-semibold tracking-[0.06em] text-white hover:bg-red-700 disabled:opacity-60"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                        {clearing ? 'Clearing…' : 'YES — WIPE DB'}
-                      </button>
+                      <span className="font-mono text-[10px] text-[var(--ink-navy-dim)]">
+                        Patient/journey/labor data only — registered hospitals and API keys preserved.
+                      </span>
+                      <div className="mt-1 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmClear(false)}
+                          disabled={clearing}
+                          className="rounded-sm border border-[var(--rule-strong)] bg-white px-2.5 py-1 font-mono text-[10px] tracking-[0.06em] text-[var(--ink-navy-dim)] hover:bg-slate-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={onClear}
+                          disabled={clearing}
+                          className="inline-flex items-center gap-1 rounded-sm bg-red-600 px-3 py-1 font-mono text-[10px] font-semibold tracking-[0.06em] text-white hover:bg-red-700 disabled:opacity-60"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          {clearing ? 'Clearing…' : 'Clear patient data'}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

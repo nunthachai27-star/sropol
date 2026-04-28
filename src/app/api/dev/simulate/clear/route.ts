@@ -1,6 +1,19 @@
 // POST /api/dev/simulate/clear — dev-only. Wipes all patient / journey /
 // labor data so the next simulation run starts from a clean slate.
 //
+// PRESERVED — explicitly excluded from the wipe (do NOT add to `tables`):
+//   - hospitals             — admin-managed registry (KK_HOSPITALS seed +
+//                             multi-province admin additions). Wiping this
+//                             would force re-registration of every external
+//                             hospital and break their webhook keys.
+//   - hospital_bms_config   — BMS tunnel + DB credentials per hospital.
+//   - users / audit_logs    — auth identities and access trail.
+//   - provinces / districts / tambons / moph_hospitals — geo lookups.
+//   - system_config         — feature flags + active province pin.
+//   - webhook_api_keys      — only sim-issued rows (label LIKE 'sim:dev:%')
+//                             are deleted in step 4 below; production /
+//                             HOSxP-provisioned keys are preserved.
+//
 // NOT scoped to "simulation-authored" rows — there's no source marker in the
 // schema to tell simulator output from HOSxP / webhook data. In dev this is
 // intentional; running this in production is blocked by the guard above.
