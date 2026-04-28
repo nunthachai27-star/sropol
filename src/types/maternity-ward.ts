@@ -32,6 +32,45 @@ export interface BedOccupancy {
   last_cervix_cm: number | null;
 }
 
+/**
+ * Clinical-density bed occupancy row — superset of {@link BedOccupancy} backed
+ * by the WARD_BEDS_OCCUPANCY_FULL query. Adds latest-partograph + latest-
+ * nurse-note fields needed for the v2 dense bed tile (vitals, labour progress,
+ * contractions, FHR, interventions, last assessment).
+ *
+ * Vital-sign field SOURCE — see project memory `project_ipd_vital_sign_source`:
+ *   * `last_bp_sys/dia, last_temp, last_pulse, last_rr, last_spo2, last_pain` →
+ *      `ipd_nurse_note` latest row by (note_date, note_time)
+ *   * `last_cervix_cm, last_station, last_fhr, last_contr_*, last_oxytocin_*,
+ *      last_iv_fluids, last_amniotic` → `ipt_labour_partograph` latest row
+ *
+ * Every new field is nullable: a brand-new admission has no nurse-note nor
+ * partograph rows, and the bed tile must render gracefully with `—` placeholders.
+ */
+export interface BedOccupancyFull extends BedOccupancy {
+  // Latest partograph (labour progress, FHR, contractions, interventions)
+  last_station: string | null;
+  last_fhr: number | null;
+  last_contr_freq: number | null;
+  last_contr_duration: number | null;
+  last_contr_strength: string | null;
+  last_oxytocin_uml: number | null;
+  last_oxytocin_drops: number | null;
+  last_iv_fluids: string | null;
+  last_amniotic: string | null;
+  // Latest nurse note (standard IPD vitals + last assessment chronology)
+  last_bp_sys: number | null;
+  last_bp_dia: number | null;
+  last_temp: number | null;
+  last_pulse: number | null;
+  last_rr: number | null;
+  last_spo2: number | null;
+  last_pain: number | null;
+  last_assess_date: string | null;
+  last_assess_time: string | null;
+  last_assess_staff: string | null;
+}
+
 export interface PartographRow {
   ipt_labour_partograph_id: number;
   ipt_labour_id: number;

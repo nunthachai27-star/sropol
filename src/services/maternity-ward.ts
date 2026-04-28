@@ -21,6 +21,7 @@ import {
   PATIENT_VITAL_SIGNS_BY_AN,
   WARD_BEDS_INVENTORY,
   WARD_BEDS_OCCUPANCY,
+  WARD_BEDS_OCCUPANCY_FULL,
   getQuery,
   type DatabaseDialect,
 } from '@/config/hosxp-queries';
@@ -28,6 +29,7 @@ import type { ConnectionConfig, UserInfo } from '@/types/bms-browser';
 import type {
   BedMoveArgs,
   BedOccupancy,
+  BedOccupancyFull,
   BedSlot,
   ComplicationRow,
   DischargeArgs,
@@ -70,6 +72,26 @@ export async function listWardBedsOccupancy(
 ): Promise<BedOccupancy[]> {
   const sql = getQuery(WARD_BEDS_OCCUPANCY, DEFAULT_DIALECT);
   const r = await executeSql<BedOccupancy>(sql, config, { ward });
+  return r.data;
+}
+
+/**
+ * Clinical-density variant of {@link listWardBedsOccupancy} backing the v2
+ * bed-tile view. Joins the LATEST `ipt_labour_partograph` + LATEST
+ * `ipd_nurse_note` per AN so the dense tile renders without per-bed follow-up
+ * fetches (which would be 24+ extra queries for a 12-bed ward and break the
+ * <2s SQL budget under 200 concurrent users).
+ *
+ * The query (WARD_BEDS_OCCUPANCY_FULL) and result type (BedOccupancyFull) are
+ * a strict superset of the lite variant — the lite hook can keep using the
+ * narrower query/type without change.
+ */
+export async function listWardBedsOccupancyFull(
+  config: ConnectionConfig,
+  ward: string,
+): Promise<BedOccupancyFull[]> {
+  const sql = getQuery(WARD_BEDS_OCCUPANCY_FULL, DEFAULT_DIALECT);
+  const r = await executeSql<BedOccupancyFull>(sql, config, { ward });
   return r.data;
 }
 

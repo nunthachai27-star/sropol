@@ -459,6 +459,123 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
  ORDER BY iptadm.bedno`,
 };
 
+// Bed occupancy snapshot (clinical-density variant) — same scope as
+// WARD_BEDS_OCCUPANCY but joins the LATEST ipt_labour_partograph row + LATEST
+// ipd_nurse_note row per AN, surfacing every field the dense bed-tile UI needs
+// (vitals, labour progress, contractions, FHR, interventions, last assessment).
+//
+// **Vital-sign source split** — confirmed against HOSxP Delphi entry forms:
+//   * `ipd_nurse_note`            → BP / T / P / RR / SpO2 / pain
+//                                   (= the floor-nurse's standard observations)
+//   * `ipt_labour_partograph`     → cervix / station / FHR / contractions /
+//                                   oxytocin / IV fluids / amniotic fluid
+//                                   (= partograph time-series)
+// Don't pull standard vitals from `ipt_pregnancy_vital_sign`; that table is
+// labour-context only and is not where IPD nurses log every-shift observations.
+//
+// Latest-row strategy: each LEFT JOIN resolves to the PK of the most recent
+// row via a single ordered subquery, then the JOIN itself is a PK lookup. This
+// avoids one-correlated-subquery-per-column (16+ scans per ipt row) and keeps
+// the query within the constitution-VI 2-second SQL budget for 12-bed wards.
+// Both PostgreSQL and MySQL execute this pattern with proper indexes on
+// (an, observe_datetime) and (an, note_date, note_time).
+export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
+  postgresql: `SELECT i.an, i.hn, i.regdate, i.regtime, i.ward,
+       iptadm.bedno, iptadm.roomno, iptadm.bedtype,
+       roomno.name AS roomname,
+       p.pname, p.fname, p.lname, p.birthday,
+       il.g AS gravida, il.ga,
+       di.name AS incharge_doctor_name,
+       latest_lp.observe_datetime    AS last_observation_at,
+       latest_lp.cervical_dilation_cm AS last_cervix_cm,
+       latest_lp.descent_of_head     AS last_station,
+       latest_lp.fetal_heart_rate    AS last_fhr,
+       latest_lp.contraction_per_10min   AS last_contr_freq,
+       latest_lp.contraction_duration_sec AS last_contr_duration,
+       latest_lp.contraction_strength AS last_contr_strength,
+       latest_lp.oxytocin_uml        AS last_oxytocin_uml,
+       latest_lp.oxytocin_drops_min  AS last_oxytocin_drops,
+       latest_lp.drugs_iv_fluids     AS last_iv_fluids,
+       latest_lp.amniotic_fluid      AS last_amniotic,
+       latest_nn.bp_systolic         AS last_bp_sys,
+       latest_nn.bp_diastolic        AS last_bp_dia,
+       latest_nn.temperature         AS last_temp,
+       latest_nn.pulse               AS last_pulse,
+       latest_nn.respiratory_rate    AS last_rr,
+       COALESCE(latest_nn.spo2_ra, latest_nn.spo2_o2) AS last_spo2,
+       latest_nn.pain_score          AS last_pain,
+       latest_nn.note_date           AS last_assess_date,
+       latest_nn.note_time           AS last_assess_time,
+       latest_nn.doctor_code         AS last_assess_staff
+  FROM ipt i
+  JOIN iptadm ON iptadm.an = i.an
+  LEFT JOIN patient p ON p.hn = i.hn
+  LEFT JOIN ipt_labour il ON il.an = i.an
+  LEFT JOIN doctor di ON di.code = i.incharge_doctor
+  LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
+  LEFT JOIN ipt_labour_partograph latest_lp
+    ON latest_lp.ipt_labour_partograph_id = (
+      SELECT ipt_labour_partograph_id FROM ipt_labour_partograph
+       WHERE an = i.an
+       ORDER BY observe_datetime DESC, ipt_labour_partograph_id DESC
+       LIMIT 1)
+  LEFT JOIN ipd_nurse_note latest_nn
+    ON latest_nn.nurse_note_id = (
+      SELECT nurse_note_id FROM ipd_nurse_note
+       WHERE an = i.an
+       ORDER BY note_date DESC, note_time DESC, nurse_note_id DESC
+       LIMIT 1)
+ WHERE i.ward = :ward AND i.confirm_discharge = 'N'
+ ORDER BY iptadm.bedno`,
+  mysql: `SELECT i.an, i.hn, i.regdate, i.regtime, i.ward,
+       iptadm.bedno, iptadm.roomno, iptadm.bedtype,
+       roomno.name AS roomname,
+       p.pname, p.fname, p.lname, p.birthday,
+       il.g AS gravida, il.ga,
+       di.name AS incharge_doctor_name,
+       latest_lp.observe_datetime    AS last_observation_at,
+       latest_lp.cervical_dilation_cm AS last_cervix_cm,
+       latest_lp.descent_of_head     AS last_station,
+       latest_lp.fetal_heart_rate    AS last_fhr,
+       latest_lp.contraction_per_10min   AS last_contr_freq,
+       latest_lp.contraction_duration_sec AS last_contr_duration,
+       latest_lp.contraction_strength AS last_contr_strength,
+       latest_lp.oxytocin_uml        AS last_oxytocin_uml,
+       latest_lp.oxytocin_drops_min  AS last_oxytocin_drops,
+       latest_lp.drugs_iv_fluids     AS last_iv_fluids,
+       latest_lp.amniotic_fluid      AS last_amniotic,
+       latest_nn.bp_systolic         AS last_bp_sys,
+       latest_nn.bp_diastolic        AS last_bp_dia,
+       latest_nn.temperature         AS last_temp,
+       latest_nn.pulse               AS last_pulse,
+       latest_nn.respiratory_rate    AS last_rr,
+       COALESCE(latest_nn.spo2_ra, latest_nn.spo2_o2) AS last_spo2,
+       latest_nn.pain_score          AS last_pain,
+       latest_nn.note_date           AS last_assess_date,
+       latest_nn.note_time           AS last_assess_time,
+       latest_nn.doctor_code         AS last_assess_staff
+  FROM ipt i
+  JOIN iptadm ON iptadm.an = i.an
+  LEFT JOIN patient p ON p.hn = i.hn
+  LEFT JOIN ipt_labour il ON il.an = i.an
+  LEFT JOIN doctor di ON di.code = i.incharge_doctor
+  LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
+  LEFT JOIN ipt_labour_partograph latest_lp
+    ON latest_lp.ipt_labour_partograph_id = (
+      SELECT ipt_labour_partograph_id FROM ipt_labour_partograph
+       WHERE an = i.an
+       ORDER BY observe_datetime DESC, ipt_labour_partograph_id DESC
+       LIMIT 1)
+  LEFT JOIN ipd_nurse_note latest_nn
+    ON latest_nn.nurse_note_id = (
+      SELECT nurse_note_id FROM ipd_nurse_note
+       WHERE an = i.an
+       ORDER BY note_date DESC, note_time DESC, nurse_note_id DESC
+       LIMIT 1)
+ WHERE i.ward = :ward AND i.confirm_discharge = 'N'
+ ORDER BY iptadm.bedno`,
+};
+
 // All partograph observations for a single admission (chronological)
 export const PATIENT_PARTOGRAPH_BY_AN: SqlQueryTemplate = {
   postgresql: `SELECT * FROM ipt_labour_partograph WHERE an = :an ORDER BY observe_datetime`,
