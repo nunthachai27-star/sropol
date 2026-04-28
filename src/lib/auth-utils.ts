@@ -15,6 +15,10 @@ export function mapPositionToRole(position: string): UserRole {
 
 export interface BmsUserIdentity {
   name: string;
+  /** เลขบัตรประชาชน 13 หลัก of the BMS user. Used by middleware to enforce
+   *  the ADMIN_ALLOWED_CIDS allow-list — even when role=ADMIN (or when
+   *  DEV_AUTH_BYPASS forces ADMIN), only CIDs on the list reach /admin. */
+  userCid: string;
   role: UserRole;
   hospitalCode: string;
   hospitalName: string;
@@ -45,6 +49,7 @@ async function fetchRealBmsIdentity(sessionId: string): Promise<BmsUserIdentity 
     const hcode = userInfo.hospital_code ?? '';
     return {
       name: userInfo.name ?? 'Unknown',
+      userCid: userInfo.user_cid ?? '',
       role: mapPositionToRole(userInfo.position ?? ''),
       hospitalCode: hcode,
       hospitalName: userInfo.location && userInfo.location !== 'server' ? userInfo.location : `รพ.${hcode}`,
@@ -87,6 +92,11 @@ export async function validateBmsSession(
     logger.info('auth_dev_bypass_bms_unreachable', { sessionId, role: 'ADMIN' });
     return {
       name: 'Dev Admin (ผู้ดูแลระบบ)',
+      // DEV_USER_CID lets a dev impersonate a real CID for testing the
+      // ADMIN_ALLOWED_CIDS allow-list. Empty when not set, which means a
+      // configured allow-list will reject offline-dev sessions — by design,
+      // because we shouldn't auto-grant admin to a no-CID identity.
+      userCid: process.env.DEV_USER_CID ?? '',
       role: UserRole.ADMIN,
       hospitalCode: '10670',
       hospitalName: 'รพ.ขอนแก่น',

@@ -43,6 +43,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         return {
           id: sessionId,
           name: identity.name,
+          userCid: identity.userCid,
           role: identity.role,
           hospitalCode: identity.hospitalCode,
           hospitalName: identity.hospitalName,
@@ -55,6 +56,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   callbacks: {
     jwt({ token, user }) {
       if (user) {
+        token.userCid = user.userCid;
         token.role = user.role;
         token.hospitalCode = user.hospitalCode;
         token.hospitalName = user.hospitalName;
@@ -65,6 +67,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     session({ session, token }) {
       if (session.user) {
+        session.user.userCid = token.userCid;
         session.user.role = token.role;
         session.user.hospitalCode = token.hospitalCode;
         session.user.hospitalName = token.hospitalName;

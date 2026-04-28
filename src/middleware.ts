@@ -75,10 +75,26 @@ export default auth((req) => {
     return addSecurityHeaders(NextResponse.redirect(loginUrl));
   }
 
-  // Admin-only route protection
+  // Admin-only route protection. Two gates, both must pass:
+  //   1. role === 'ADMIN'  (BMS-derived, may be promoted by DEV_AUTH_BYPASS).
+  //   2. user_cid in ADMIN_ALLOWED_CIDS  (when env var is non-empty).
+  // The CID gate exists because (a) `mapPositionToRole` grants ADMIN to anyone
+  // whose BMS position contains "director"/"ผู้อำนวยการ", and (b) DEV_AUTH_BYPASS
+  // promotes everyone to ADMIN — neither is acceptable as the sole gate for
+  // production /admin access. The allow-list short-circuits both.
   if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin')) {
     if (session.user.role !== 'ADMIN') {
       return addSecurityHeaders(NextResponse.redirect(new URL('/', req.url)));
+    }
+    const allowList = (process.env.ADMIN_ALLOWED_CIDS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (allowList.length > 0) {
+      const cid = session.user.userCid ?? '';
+      if (!cid || !allowList.includes(cid)) {
+        return addSecurityHeaders(NextResponse.redirect(new URL('/', req.url)));
+      }
     }
   }
 

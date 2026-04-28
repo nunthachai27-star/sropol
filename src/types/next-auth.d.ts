@@ -7,6 +7,7 @@ declare module 'next-auth' {
   interface User {
     id: string;
     name?: string | null;
+    userCid: string;
     role: UserRole;
     hospitalCode: string;
     hospitalName: string;
@@ -20,6 +21,7 @@ declare module 'next-auth' {
       name?: string | null;
       email?: string | null;
       image?: string | null;
+      userCid: string;
       role: UserRole;
       hospitalCode: string;
       hospitalName: string;
@@ -31,6 +33,7 @@ declare module 'next-auth' {
 
 declare module 'next-auth/jwt' {
   interface JWT {
+    userCid: string;
     role: UserRole;
     hospitalCode: string;
     hospitalName: string;
