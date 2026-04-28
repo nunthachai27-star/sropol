@@ -218,7 +218,7 @@ function LockedTile({ bedno }: { bedno: string }) {
 
 const bedNoStyle: React.CSSProperties = {
   fontFamily: FONT_MONO,
-  fontSize: 22,
+  fontSize: 19,
   fontWeight: 800,
   letterSpacing: '-0.01em',
   color: C.ink,
@@ -253,9 +253,9 @@ function tileHeadStyle(bg: string): React.CSSProperties {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '12px 16px 10px',
+    padding: '8px 14px 7px',
     background: bg,
-    borderBottom: `2px solid ${C.rule}`,
+    borderBottom: `1.5px solid ${C.rule}`,
   };
 }
 
@@ -288,16 +288,16 @@ function emptyBodyBigStyle(color: string): React.CSSProperties {
 
 const sectionLabelStyle: React.CSSProperties = {
   fontFamily: FONT_MONO,
-  fontSize: 9,
-  letterSpacing: '0.24em',
+  fontSize: 8.5,
+  letterSpacing: '0.22em',
   textTransform: 'uppercase',
   fontWeight: 800,
-  marginBottom: 6,
+  marginBottom: 3,
 };
 
 function sectionStyle(bg: string, accent: string): React.CSSProperties {
   return {
-    padding: '10px 16px 12px',
+    padding: '7px 14px 8px',
     borderBottom: `1px solid ${C.ruleSoft}`,
     position: 'relative',
     background: bg,
@@ -315,7 +315,7 @@ const dataKeyStyle: React.CSSProperties = {
 
 const dataValueStyle: React.CSSProperties = {
   fontFamily: FONT_MONO,
-  fontSize: 14,
+  fontSize: 13,
   fontWeight: 700,
   color: C.ink,
   fontVariantNumeric: 'tabular-nums',
@@ -401,9 +401,9 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
           gap: 10,
-          padding: '10px 16px',
+          padding: '6px 14px',
           fontFamily: FONT_MONO,
-          fontSize: 11,
+          fontSize: 10.5,
           fontWeight: 600,
           letterSpacing: '0.04em',
           color: C.mute,
@@ -422,11 +422,11 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
       </div>
 
       {/* Name */}
-      <div style={{ padding: '12px 16px 10px', borderBottom: `1px solid ${C.ruleSoft}` }}>
-        <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.2, color: C.ink, marginBottom: 4 }}>
+      <div style={{ padding: '7px 14px 6px', borderBottom: `1px solid ${C.ruleSoft}` }}>
+        <div style={{ fontSize: 15, fontWeight: 800, lineHeight: 1.2, color: C.ink, marginBottom: 2 }}>
           {thaiName(occupant)}
         </div>
-        <div style={{ fontFamily: FONT_MONO, fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', color: C.mute }}>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.04em', color: C.mute }}>
           {age !== null && <b style={{ color: C.inkSoft, fontWeight: 700 }}>{age}Y</b>}
           {age !== null && occupant.gravida !== null && <> · </>}
           {occupant.gravida !== null && <>G{occupant.gravida}</>}
@@ -537,7 +537,7 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
             <span
               style={{
                 fontFamily: FONT_MONO,
-                fontSize: 26,
+                fontSize: 22,
                 fontWeight: 800,
                 color: C.cFhr,
                 letterSpacing: '-0.02em',
@@ -591,7 +591,7 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
           justifyContent: 'space-between',
           alignItems: 'center',
           marginTop: 'auto',
-          padding: '10px 16px',
+          padding: '6px 14px',
           background: footBg,
           color: footColor,
           borderTop: `1px solid ${isCrit ? 'rgba(220, 38, 38, 0.4)' : '#CBD5E1'}`,
