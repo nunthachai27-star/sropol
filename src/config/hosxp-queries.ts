@@ -235,10 +235,11 @@ export const ANC_CLASSIFYING: SqlQueryTemplate = {
       WHERE pac.person_anc_id = ?`,
 };
 
-// Infant records for a specific admission number
+// Infant records for a specific admission number. ipt_labour_infant has no
+// `an` column directly — surface mother's AN via il.an and baby's HN via li.hn.
 export const LABOUR_INFANTS: SqlQueryTemplate = {
   postgresql: `
-      SELECT li.ipt_labour_infant_id, li.ipt_labour_id, li.an,
+      SELECT li.ipt_labour_infant_id, li.ipt_labour_id, il.an,
              li.infant_number, li.sex, li.birth_weight, li.body_length, li.head_length,
              li.temperature, li.rr, li.hr,
              li.apgar_score_min1, li.apgar_score_min5, li.apgar_score_min10,
@@ -246,13 +247,13 @@ export const LABOUR_INFANTS: SqlQueryTemplate = {
              li.infant_check_oxygen_box, li.infant_check_narcan,
              li.infant_check_feed_milk, li.infant_check_vitk, li.infant_check_eyepaste,
              li.infant_check_bcg, li.infant_check_hepb, li.infant_check_azt,
-             li.infant_icd10, li.infant_hn, li.infant_an, li.infant_dchstts,
+             li.infant_icd10, li.hn AS infant_hn, li.infant_an, li.infant_dchstts,
              li.birth_date, li.birth_time
       FROM ipt_labour_infant li
       JOIN ipt_labour il ON il.ipt_labour_id = li.ipt_labour_id
       WHERE il.an = $1`,
   mysql: `
-      SELECT li.ipt_labour_infant_id, li.ipt_labour_id, li.an,
+      SELECT li.ipt_labour_infant_id, li.ipt_labour_id, il.an,
              li.infant_number, li.sex, li.birth_weight, li.body_length, li.head_length,
              li.temperature, li.rr, li.hr,
              li.apgar_score_min1, li.apgar_score_min5, li.apgar_score_min10,
@@ -260,7 +261,7 @@ export const LABOUR_INFANTS: SqlQueryTemplate = {
              li.infant_check_oxygen_box, li.infant_check_narcan,
              li.infant_check_feed_milk, li.infant_check_vitk, li.infant_check_eyepaste,
              li.infant_check_bcg, li.infant_check_hepb, li.infant_check_azt,
-             li.infant_icd10, li.infant_hn, li.infant_an, li.infant_dchstts,
+             li.infant_icd10, li.hn AS infant_hn, li.infant_an, li.infant_dchstts,
              li.birth_date, li.birth_time
       FROM ipt_labour_infant li
       JOIN ipt_labour il ON il.ipt_labour_id = li.ipt_labour_id
@@ -671,10 +672,29 @@ export const PATIENT_COMPLICATIONS_BY_LABOUR_ID: SqlQueryTemplate = {
   mysql: `SELECT lc.*, lcl.labour_complication_name AS complication_name FROM ipt_labour_complication lc LEFT JOIN labour_complication lcl ON lcl.labour_complication_id = lc.labour_complication_id WHERE lc.ipt_labour_id = :ipt_labour_id`,
 };
 
-// Newborn + ipt_labour_infant join for a single admission
+// Infants for a mother's admission. ipt_labour_infant has no `an` column —
+// it links to the mother via ipt_labour_id. Baby's HN lives on li.hn; baby's
+// AN on li.infant_an. ipt_newborn (PK = baby's AN) is left-joined for any
+// extra fields the UI may surface later.
 export const PATIENT_INFANTS_BY_AN: SqlQueryTemplate = {
-  postgresql: `SELECT n.*, li.* FROM ipt_newborn n LEFT JOIN ipt_labour_infant li ON li.an = n.an WHERE n.an = :an`,
-  mysql: `SELECT n.*, li.* FROM ipt_newborn n LEFT JOIN ipt_labour_infant li ON li.an = n.an WHERE n.an = :an`,
+  postgresql: `SELECT li.ipt_labour_infant_id, li.ipt_labour_id, il.an,
+                      li.sex, li.birth_weight, li.body_length, li.head_length,
+                      li.temperature, li.rr, li.hr,
+                      li.apgar_score_min1, li.apgar_score_min5, li.apgar_score_min10,
+                      li.hn AS infant_hn, li.infant_an, li.infant_dchstts,
+                      li.birth_date, li.birth_time
+               FROM ipt_labour_infant li
+               JOIN ipt_labour il ON il.ipt_labour_id = li.ipt_labour_id
+               WHERE il.an = :an`,
+  mysql: `SELECT li.ipt_labour_infant_id, li.ipt_labour_id, il.an,
+                 li.sex, li.birth_weight, li.body_length, li.head_length,
+                 li.temperature, li.rr, li.hr,
+                 li.apgar_score_min1, li.apgar_score_min5, li.apgar_score_min10,
+                 li.hn AS infant_hn, li.infant_an, li.infant_dchstts,
+                 li.birth_date, li.birth_time
+          FROM ipt_labour_infant li
+          JOIN ipt_labour il ON il.ipt_labour_id = li.ipt_labour_id
+          WHERE il.an = :an`,
 };
 
 // Lookup: bed-move reason values
