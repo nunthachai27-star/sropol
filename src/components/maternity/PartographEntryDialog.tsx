@@ -479,6 +479,37 @@ function CollapsibleSection({
 // reads as a comfortable thumb-flick.
 const DRAG_PX_PER_STEP = 8;
 
+// Per-chip clinical tone — color signals severity at a glance.
+type ChipTone =
+  | 'default' | 'ok' | 'warn' | 'crit'
+  | 'severity-0' | 'severity-2' | 'severity-4'
+  | 'severity-6' | 'severity-8' | 'severity-10';
+
+const CHIP_TONE_CLASSES: Record<ChipTone, { selected: string; unselected: string }> = {
+  default: {
+    selected: 'border-cyan-600 bg-cyan-600 text-white shadow-sm ring-2 ring-cyan-600/20',
+    unselected: 'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700',
+  },
+  ok: {
+    selected: 'border-emerald-600 bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-600/20',
+    unselected: 'border-emerald-300 bg-emerald-50/60 text-emerald-700 hover:border-emerald-500 hover:bg-emerald-50',
+  },
+  warn: {
+    selected: 'border-amber-600 bg-amber-600 text-white shadow-sm ring-2 ring-amber-600/20',
+    unselected: 'border-amber-300 bg-amber-50/60 text-amber-700 hover:border-amber-500 hover:bg-amber-50',
+  },
+  crit: {
+    selected: 'border-rose-600 bg-rose-600 text-white shadow-sm ring-2 ring-rose-600/20',
+    unselected: 'border-rose-300 bg-rose-50/60 text-rose-700 hover:border-rose-500 hover:bg-rose-50',
+  },
+  'severity-0':  { selected: 'border-emerald-600 bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-600/20', unselected: 'border-emerald-300 bg-emerald-50/60 text-emerald-700 hover:border-emerald-500 hover:bg-emerald-50' },
+  'severity-2':  { selected: 'border-lime-600 bg-lime-600 text-white shadow-sm ring-2 ring-lime-600/20',          unselected: 'border-lime-300 bg-lime-50/60 text-lime-700 hover:border-lime-500 hover:bg-lime-50' },
+  'severity-4':  { selected: 'border-yellow-600 bg-yellow-500 text-white shadow-sm ring-2 ring-yellow-600/20',    unselected: 'border-yellow-300 bg-yellow-50/60 text-yellow-700 hover:border-yellow-500 hover:bg-yellow-50' },
+  'severity-6':  { selected: 'border-amber-600 bg-amber-600 text-white shadow-sm ring-2 ring-amber-600/20',       unselected: 'border-amber-300 bg-amber-50/60 text-amber-700 hover:border-amber-500 hover:bg-amber-50' },
+  'severity-8':  { selected: 'border-orange-600 bg-orange-600 text-white shadow-sm ring-2 ring-orange-600/20',    unselected: 'border-orange-300 bg-orange-50/60 text-orange-700 hover:border-orange-500 hover:bg-orange-50' },
+  'severity-10': { selected: 'border-red-700 bg-red-700 text-white shadow-sm ring-2 ring-red-700/20',             unselected: 'border-red-400 bg-red-100/80 text-red-700 hover:border-red-600 hover:bg-red-100' },
+};
+
 function DraggableChip({
   chip,
   selected,
@@ -487,7 +518,7 @@ function DraggableChip({
   isFloat,
   range,
 }: {
-  chip: { value: string; label: string };
+  chip: { value: string; label: string; tone?: ChipTone };
   selected: string;
   onPick: (v: string) => void;
   step: number;
@@ -502,6 +533,7 @@ function DraggableChip({
 
   const isSelected = drag ? selected === drag.preview : selected === chip.value;
   const displayLabel = drag ? drag.preview : chip.label;
+  const toneClasses = CHIP_TONE_CLASSES[chip.tone ?? 'default'];
 
   return (
     <button
@@ -605,24 +637,24 @@ function ChipRow({
   );
 }
 
-// Quick-pick chip catalogues. Each set covers the most-commonly entered
-// measurements per Thai LR practice + WHO partograph guidelines. Values are
-// chosen as landmark/anchor points — typing is still possible for in-between
-// readings; chips are an accelerator for the 70-80% case.
+// Quick-pick chip catalogues. Per-chip `tone` color-codes clinical zone:
+// ok=green (normal), warn=amber (borderline), crit=red (abnormal),
+// default=neutral cyan. Categorical chips (Strength/Descent/Amniotic) keep
+// the neutral default since their values aren't on a severity axis.
 const FHR_CHIPS = [
-  { value: '130', label: '130' },
-  { value: '140', label: '140' },
-  { value: '145', label: '145' },
-  { value: '150', label: '150' },
-  { value: '155', label: '155' },
+  { value: '130', label: '130', tone: 'ok' as ChipTone },
+  { value: '140', label: '140', tone: 'ok' as ChipTone },
+  { value: '145', label: '145', tone: 'ok' as ChipTone },
+  { value: '150', label: '150', tone: 'ok' as ChipTone },
+  { value: '155', label: '155', tone: 'ok' as ChipTone },
 ];
 const CX_CHIPS = [
-  { value: '0', label: '0' },
-  { value: '2', label: '2' },
-  { value: '4', label: '4' },
-  { value: '6', label: '6' },
-  { value: '8', label: '8' },
-  { value: '10', label: '10' },
+  { value: '0',  label: '0' },
+  { value: '2',  label: '2' },
+  { value: '4',  label: '4' },  // active phase begins
+  { value: '6',  label: '6' },
+  { value: '8',  label: '8' },
+  { value: '10', label: '10' }, // fully dilated
 ];
 const DESCENT_CHIPS = [
   { value: '5/5', label: '5/5' },
@@ -633,52 +665,52 @@ const DESCENT_CHIPS = [
   { value: '0/5', label: '0/5' },
 ];
 const STRENGTH_CHIPS = [
-  { value: 'Mild', label: 'Mild' },
+  { value: 'Mild',     label: 'Mild' },
   { value: 'Moderate', label: 'Moderate' },
-  { value: 'Strong', label: 'Strong' },
+  { value: 'Strong',   label: 'Strong' },
 ];
 const CONTR_FREQ_CHIPS = [
   { value: '1', label: '1' },
   { value: '2', label: '2' },
-  { value: '3', label: '3' },
-  { value: '4', label: '4' },
-  { value: '5', label: '5' },
+  { value: '3', label: '3', tone: 'ok'   as ChipTone },
+  { value: '4', label: '4', tone: 'ok'   as ChipTone },
+  { value: '5', label: '5', tone: 'warn' as ChipTone }, // tachysystole border
 ];
 const CONTR_DUR_CHIPS = [
   { value: '30', label: '30' },
-  { value: '40', label: '40' },
-  { value: '50', label: '50' },
-  { value: '60', label: '60' },
+  { value: '40', label: '40', tone: 'ok' as ChipTone },
+  { value: '50', label: '50', tone: 'ok' as ChipTone },
+  { value: '60', label: '60', tone: 'ok' as ChipTone },
 ];
 const PULSE_CHIPS = [
-  { value: '60', label: '60' },
-  { value: '70', label: '70' },
-  { value: '80', label: '80' },
-  { value: '90', label: '90' },
-  { value: '100', label: '100' },
+  { value: '60',  label: '60',  tone: 'ok' as ChipTone },
+  { value: '70',  label: '70',  tone: 'ok' as ChipTone },
+  { value: '80',  label: '80',  tone: 'ok' as ChipTone },
+  { value: '90',  label: '90',  tone: 'ok' as ChipTone },
+  { value: '100', label: '100', tone: 'ok' as ChipTone },
 ];
 const BP_SYS_CHIPS = [
-  { value: '100', label: '100' },
-  { value: '110', label: '110' },
-  { value: '120', label: '120' },
-  { value: '130', label: '130' },
-  { value: '140', label: '140' },
+  { value: '100', label: '100', tone: 'ok'   as ChipTone },
+  { value: '110', label: '110', tone: 'ok'   as ChipTone },
+  { value: '120', label: '120', tone: 'ok'   as ChipTone },
+  { value: '130', label: '130', tone: 'warn' as ChipTone },
+  { value: '140', label: '140', tone: 'crit' as ChipTone },
 ];
 const BP_DIA_CHIPS = [
-  { value: '60', label: '60' },
-  { value: '70', label: '70' },
-  { value: '80', label: '80' },
-  { value: '90', label: '90' },
+  { value: '60', label: '60', tone: 'ok'   as ChipTone },
+  { value: '70', label: '70', tone: 'ok'   as ChipTone },
+  { value: '80', label: '80', tone: 'ok'   as ChipTone },
+  { value: '90', label: '90', tone: 'crit' as ChipTone },
 ];
 const TEMP_CHIPS = [
-  { value: '36.5', label: '36.5' },
-  { value: '37.0', label: '37.0' },
-  { value: '37.5', label: '37.5' },
-  { value: '38.0', label: '38.0' },
-  { value: '38.5', label: '38.5' },
+  { value: '36.5', label: '36.5', tone: 'ok'   as ChipTone },
+  { value: '37.0', label: '37.0', tone: 'ok'   as ChipTone },
+  { value: '37.5', label: '37.5', tone: 'ok'   as ChipTone },
+  { value: '38.0', label: '38.0', tone: 'warn' as ChipTone },
+  { value: '38.5', label: '38.5', tone: 'crit' as ChipTone },
 ];
 const OXY_UML_CHIPS = [
-  { value: '5', label: '5' },
+  { value: '5',  label: '5' },
   { value: '10', label: '10' },
   { value: '15', label: '15' },
   { value: '20', label: '20' },
@@ -732,10 +764,9 @@ interface FieldProps {
   abnormal?: boolean;
   abnormalHint?: string;
   /** Quick-pick chip presets rendered INLINE below the input. Tap → onChange(value).
-   *  Selection is derived from the current `value` so chips highlight when they
-   *  match. Keeping chips per-field (vs a section-level row) makes the visual
-   *  binding between helper and input direct. */
-  chips?: ReadonlyArray<{ value: string; label: string }>;
+   *  Each chip can carry a `tone` to color-code clinical zone (normal=green,
+   *  borderline=amber, abnormal=red) or VAS severity ladder (Pain). */
+  chips?: ReadonlyArray<{ value: string; label: string; tone?: ChipTone }>;
   /** Min/max bounds for chip drag-adjust. The DraggableChip clamps the
    *  previewed value to [min, max] and shows an amber edge-pinned ring when
    *  the drag tries to push past either end — the nurse sees they've hit the

@@ -387,6 +387,60 @@ function CollapsibleSection({
 // value on the chip face so the nurse confirms before releasing.
 const DRAG_PX_PER_STEP = 8;
 
+// Per-chip clinical tone — color signals severity at a glance:
+//   default          neutral cyan (no clinical zone meaning)
+//   ok               green (normal range)
+//   warn             amber (borderline)
+//   crit             red (off-range / abnormal)
+//   severity-N       Pain VAS 0-10 ladder (emerald → lime → yellow → amber → orange → red)
+type ChipTone =
+  | 'default' | 'ok' | 'warn' | 'crit'
+  | 'severity-0' | 'severity-2' | 'severity-4'
+  | 'severity-6' | 'severity-8' | 'severity-10';
+
+const CHIP_TONE_CLASSES: Record<ChipTone, { selected: string; unselected: string }> = {
+  default: {
+    selected: 'border-cyan-600 bg-cyan-600 text-white shadow-sm ring-2 ring-cyan-600/20',
+    unselected: 'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700',
+  },
+  ok: {
+    selected: 'border-emerald-600 bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-600/20',
+    unselected: 'border-emerald-300 bg-emerald-50/60 text-emerald-700 hover:border-emerald-500 hover:bg-emerald-50',
+  },
+  warn: {
+    selected: 'border-amber-600 bg-amber-600 text-white shadow-sm ring-2 ring-amber-600/20',
+    unselected: 'border-amber-300 bg-amber-50/60 text-amber-700 hover:border-amber-500 hover:bg-amber-50',
+  },
+  crit: {
+    selected: 'border-rose-600 bg-rose-600 text-white shadow-sm ring-2 ring-rose-600/20',
+    unselected: 'border-rose-300 bg-rose-50/60 text-rose-700 hover:border-rose-500 hover:bg-rose-50',
+  },
+  'severity-0': {
+    selected: 'border-emerald-600 bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-600/20',
+    unselected: 'border-emerald-300 bg-emerald-50/60 text-emerald-700 hover:border-emerald-500 hover:bg-emerald-50',
+  },
+  'severity-2': {
+    selected: 'border-lime-600 bg-lime-600 text-white shadow-sm ring-2 ring-lime-600/20',
+    unselected: 'border-lime-300 bg-lime-50/60 text-lime-700 hover:border-lime-500 hover:bg-lime-50',
+  },
+  'severity-4': {
+    selected: 'border-yellow-600 bg-yellow-500 text-white shadow-sm ring-2 ring-yellow-600/20',
+    unselected: 'border-yellow-300 bg-yellow-50/60 text-yellow-700 hover:border-yellow-500 hover:bg-yellow-50',
+  },
+  'severity-6': {
+    selected: 'border-amber-600 bg-amber-600 text-white shadow-sm ring-2 ring-amber-600/20',
+    unselected: 'border-amber-300 bg-amber-50/60 text-amber-700 hover:border-amber-500 hover:bg-amber-50',
+  },
+  'severity-8': {
+    selected: 'border-orange-600 bg-orange-600 text-white shadow-sm ring-2 ring-orange-600/20',
+    unselected: 'border-orange-300 bg-orange-50/60 text-orange-700 hover:border-orange-500 hover:bg-orange-50',
+  },
+  'severity-10': {
+    selected: 'border-red-700 bg-red-700 text-white shadow-sm ring-2 ring-red-700/20',
+    unselected: 'border-red-400 bg-red-100/80 text-red-700 hover:border-red-600 hover:bg-red-100',
+  },
+};
+
 function DraggableChip({
   chip,
   selected,
@@ -395,7 +449,7 @@ function DraggableChip({
   isFloat,
   range,
 }: {
-  chip: { value: string; label: string };
+  chip: { value: string; label: string; tone?: ChipTone };
   selected: string;
   onPick: (v: string) => void;
   step: number;
@@ -407,6 +461,7 @@ function DraggableChip({
   const fmt = (n: number): string => (isFloat ? n.toFixed(1) : String(Math.round(n)));
   const isSelected = drag ? selected === drag.preview : selected === chip.value;
   const displayLabel = drag ? drag.preview : chip.label;
+  const toneClasses = CHIP_TONE_CLASSES[chip.tone ?? 'default'];
 
   return (
     <button
@@ -457,9 +512,7 @@ function DraggableChip({
       }
       className={cn(
         'min-w-[48px] cursor-ew-resize touch-none select-none rounded-md border px-3 py-1.5 text-[13px] font-semibold tabular-nums transition-all',
-        isSelected
-          ? 'border-cyan-600 bg-cyan-600 text-white shadow-sm ring-2 ring-cyan-600/20'
-          : 'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700',
+        isSelected ? toneClasses.selected : toneClasses.unselected,
         drag && movedRef.current && !drag.clamped && 'scale-110 shadow-lg ring-2 ring-cyan-400',
         drag && movedRef.current && drag.clamped && 'scale-110 shadow-lg ring-2 ring-amber-400 cursor-not-allowed',
       )}
@@ -478,7 +531,7 @@ function ChipRow({
   isFloat = false,
   range,
 }: {
-  options: ReadonlyArray<{ value: string; label: string }>;
+  options: ReadonlyArray<{ value: string; label: string; tone?: ChipTone }>;
   selected: string;
   onPick: (v: string) => void;
   ariaLabel?: string;
@@ -496,48 +549,68 @@ function ChipRow({
 }
 
 // Quick-pick chip catalogues. Landmark/anchor values nurses tap-pick most
-// often; typing remains available for in-between readings. The set covers
-// every numeric vital where presets help — fields like weight/height/BMI
-// stay un-chipped because they're precise readings without preset values.
+// often; typing remains available for in-between readings. Per-chip `tone`
+// color-codes clinical severity so the chip itself signals the zone (normal
+// = green, borderline = amber, abnormal = red). Pain uses the discrete
+// VAS-ladder palette (emerald → lime → yellow → amber → orange → red).
 const PAIN_CHIPS = [
-  { value: '0', label: '0' }, { value: '2', label: '2' },
-  { value: '4', label: '4' }, { value: '6', label: '6' },
-  { value: '8', label: '8' }, { value: '10', label: '10' },
+  { value: '0',  label: '0',  tone: 'severity-0'  as ChipTone },
+  { value: '2',  label: '2',  tone: 'severity-2'  as ChipTone },
+  { value: '4',  label: '4',  tone: 'severity-4'  as ChipTone },
+  { value: '6',  label: '6',  tone: 'severity-6'  as ChipTone },
+  { value: '8',  label: '8',  tone: 'severity-8'  as ChipTone },
+  { value: '10', label: '10', tone: 'severity-10' as ChipTone },
 ];
 const TEMP_CHIPS = [
-  { value: '36.5', label: '36.5' }, { value: '37.0', label: '37.0' },
-  { value: '37.5', label: '37.5' }, { value: '38.0', label: '38.0' },
-  { value: '38.5', label: '38.5' },
+  { value: '36.5', label: '36.5', tone: 'ok'   as ChipTone }, // normal
+  { value: '37.0', label: '37.0', tone: 'ok'   as ChipTone },
+  { value: '37.5', label: '37.5', tone: 'ok'   as ChipTone }, // upper normal
+  { value: '38.0', label: '38.0', tone: 'warn' as ChipTone }, // mild fever
+  { value: '38.5', label: '38.5', tone: 'crit' as ChipTone }, // fever
 ];
 const PULSE_CHIPS = [
-  { value: '60', label: '60' }, { value: '70', label: '70' },
-  { value: '80', label: '80' }, { value: '90', label: '90' },
-  { value: '100', label: '100' },
+  { value: '60',  label: '60',  tone: 'ok' as ChipTone },
+  { value: '70',  label: '70',  tone: 'ok' as ChipTone },
+  { value: '80',  label: '80',  tone: 'ok' as ChipTone },
+  { value: '90',  label: '90',  tone: 'ok' as ChipTone },
+  { value: '100', label: '100', tone: 'ok' as ChipTone },
 ];
 const HR_CHIPS = [
-  { value: '60', label: '60' }, { value: '70', label: '70' },
-  { value: '80', label: '80' }, { value: '90', label: '90' },
-  { value: '100', label: '100' }, { value: '110', label: '110' },
-  { value: '120', label: '120' },
+  { value: '60',  label: '60',  tone: 'ok'   as ChipTone },
+  { value: '70',  label: '70',  tone: 'ok'   as ChipTone },
+  { value: '80',  label: '80',  tone: 'ok'   as ChipTone },
+  { value: '90',  label: '90',  tone: 'ok'   as ChipTone },
+  { value: '100', label: '100', tone: 'ok'   as ChipTone },
+  { value: '110', label: '110', tone: 'warn' as ChipTone }, // tachycardia border
+  { value: '120', label: '120', tone: 'crit' as ChipTone },
 ];
 const BP_SYS_CHIPS = [
-  { value: '100', label: '100' }, { value: '110', label: '110' },
-  { value: '120', label: '120' }, { value: '130', label: '130' },
-  { value: '140', label: '140' },
+  { value: '100', label: '100', tone: 'ok'   as ChipTone },
+  { value: '110', label: '110', tone: 'ok'   as ChipTone },
+  { value: '120', label: '120', tone: 'ok'   as ChipTone },
+  { value: '130', label: '130', tone: 'warn' as ChipTone }, // pre-hypertension
+  { value: '140', label: '140', tone: 'crit' as ChipTone }, // hypertension
 ];
 const BP_DIA_CHIPS = [
-  { value: '60', label: '60' }, { value: '70', label: '70' },
-  { value: '80', label: '80' }, { value: '90', label: '90' },
+  { value: '60', label: '60', tone: 'ok'   as ChipTone },
+  { value: '70', label: '70', tone: 'ok'   as ChipTone },
+  { value: '80', label: '80', tone: 'ok'   as ChipTone },
+  { value: '90', label: '90', tone: 'crit' as ChipTone }, // hypertension
 ];
 const RR_CHIPS = [
-  { value: '14', label: '14' }, { value: '16', label: '16' },
-  { value: '18', label: '18' }, { value: '20', label: '20' },
-  { value: '22', label: '22' },
+  { value: '14', label: '14', tone: 'ok' as ChipTone },
+  { value: '16', label: '16', tone: 'ok' as ChipTone },
+  { value: '18', label: '18', tone: 'ok' as ChipTone },
+  { value: '20', label: '20', tone: 'ok' as ChipTone },
+  { value: '22', label: '22', tone: 'ok' as ChipTone },
 ];
 const SPO2_CHIPS = [
-  { value: '95', label: '95' }, { value: '96', label: '96' },
-  { value: '97', label: '97' }, { value: '98', label: '98' },
-  { value: '99', label: '99' }, { value: '100', label: '100' },
+  { value: '95',  label: '95',  tone: 'warn' as ChipTone }, // borderline
+  { value: '96',  label: '96',  tone: 'ok'   as ChipTone },
+  { value: '97',  label: '97',  tone: 'ok'   as ChipTone },
+  { value: '98',  label: '98',  tone: 'ok'   as ChipTone },
+  { value: '99',  label: '99',  tone: 'ok'   as ChipTone },
+  { value: '100', label: '100', tone: 'ok'   as ChipTone },
 ];
 
 // Compact "label + chips" row used inside Section `chips` slots.
@@ -573,8 +646,10 @@ interface FieldProps {
   colSpan?: 'full';
   abnormal?: boolean;
   /** Quick-pick chip presets rendered INLINE below the input. Tap → onChange,
-   *  click-and-drag horizontally → micro-adjust by ±step (handled by ChipRow). */
-  chips?: ReadonlyArray<{ value: string; label: string }>;
+   *  click-and-drag horizontally → micro-adjust by ±step. Each chip can carry
+   *  a `tone` to color-code clinical severity (Pain ladder, BP/Temp/SpO₂
+   *  zones). */
+  chips?: ReadonlyArray<{ value: string; label: string; tone?: ChipTone }>;
   /** Min/max bounds for chip drag-adjust. Required for any field that uses
    *  numeric chips — clamps the dragged preview to the legal clinical range
    *  and shows an amber edge ring when pinned at min/max. */
