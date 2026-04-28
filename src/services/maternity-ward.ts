@@ -414,21 +414,32 @@ export async function deleteNurseNote(
 }
 
 // ─── Task 43: pregnancy + labour upsert (1:1 records keyed by AN) ──────────
-// Both ipt_pregnancy and ipt_labour are 1:1 with the admission, so the AN itself
-// acts as the resource identifier on the BMS REST endpoint. No serial mint
-// because we never insert a brand-new pregnancy record from this UI — HOSxP
-// creates that row at admit time. We only ever update.
+// Both ipt_pregnancy and ipt_labour are 1:1 with the admission. AN is the
+// natural key, so the BMS REST endpoint accepts it as the resource identifier.
+//
+// **INSERT-or-UPDATE** — the original Task 43 port assumed HOSxP creates these
+// rows at admit time and only ever did restUpdate, but the live HOSxP install
+// confirmed that's NOT always true (esp. for admissions that didn't enter via
+// the maternity workflow). The Delphi precare entry frame uses
+// "auto-INSERT with append; otherwise EDIT mode" — replicating that here:
+// caller passes `exists` (derived from whether the SWR fetch returned a row)
+// and we route to the right verb.
 export async function upsertPregnancy(
   config: ConnectionConfig,
   userInfo: UserInfo,
   an: string,
   fields: Partial<PregnancyRecord>,
   hcode: string,
+  exists = true,
 ): Promise<void> {
-  await restUpdate('ipt_pregnancy', an, fields as Record<string, unknown>, config);
+  if (exists) {
+    await restUpdate('ipt_pregnancy', an, fields as Record<string, unknown>, config);
+  } else {
+    await restInsert('ipt_pregnancy', { an, ...fields } as Record<string, unknown>, config);
+  }
   fireAudit({
     entity: 'ipt_pregnancy',
-    op: 'update',
+    op: exists ? 'update' : 'insert',
     resourceId: an,
     hcode,
     staff: userInfo.loginname,
@@ -442,11 +453,16 @@ export async function upsertLabour(
   an: string,
   fields: Partial<LabourRecord>,
   hcode: string,
+  exists = true,
 ): Promise<void> {
-  await restUpdate('ipt_labour', an, fields as Record<string, unknown>, config);
+  if (exists) {
+    await restUpdate('ipt_labour', an, fields as Record<string, unknown>, config);
+  } else {
+    await restInsert('ipt_labour', { an, ...fields } as Record<string, unknown>, config);
+  }
   fireAudit({
     entity: 'ipt_labour',
-    op: 'update',
+    op: exists ? 'update' : 'insert',
     resourceId: an,
     hcode,
     staff: userInfo.loginname,
