@@ -212,17 +212,21 @@ function buildPayload(draft: DraftState): Partial<NurseNoteRow> {
 function abnormal(draft: DraftState): Partial<Record<AnyField, boolean>> {
   const temp = toFloatOrNull(draft.temperature);
   const pulse = toIntOrNull(draft.pulse);
+  const hr = toIntOrNull(draft.heart_rate);
   const bps = toIntOrNull(draft.bp_systolic);
   const bpd = toIntOrNull(draft.bp_diastolic);
   const rr = toIntOrNull(draft.respiratory_rate);
   const spo2ra = toIntOrNull(draft.spo2_ra);
+  const spo2o2 = toIntOrNull(draft.spo2_o2);
   return {
     temperature: temp !== null && temp >= 38,
     pulse: pulse !== null && pulse > 0 && (pulse < 60 || pulse > 100),
+    heart_rate: hr !== null && hr > 0 && (hr < 60 || hr > 100),
     bp_systolic: bps !== null && bps >= 140,
     bp_diastolic: bpd !== null && bpd >= 90,
     respiratory_rate: rr !== null && rr > 0 && (rr < 12 || rr > 24),
     spo2_ra: spo2ra !== null && spo2ra > 0 && spo2ra < 95,
+    spo2_o2: spo2o2 !== null && spo2o2 > 0 && spo2o2 < 95,
   };
 }
 
@@ -728,12 +732,12 @@ export function VitalSignEntryDialog({
           <Section title="สัญญาณชีพหลัก" tone="vitals" cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
             <Field name="temperature" label="Temp" hint="°C · <38" type="float" value={draft.temperature} onChange={(v) => set('temperature', v)} abnormal={abn.temperature} chips={TEMP_CHIPS} chipRange={{ min: 34, max: 42 }} />
             <Field name="pulse" label="Pulse" hint="60–100" value={draft.pulse} onChange={(v) => set('pulse', v)} abnormal={abn.pulse} chips={PULSE_CHIPS} chipRange={{ min: 30, max: 200 }} />
-            <Field name="heart_rate" label="HR" hint="60–100" value={draft.heart_rate} onChange={(v) => set('heart_rate', v)} chips={HR_CHIPS} chipRange={{ min: 30, max: 220 }} />
+            <Field name="heart_rate" label="HR" hint="60–100" value={draft.heart_rate} onChange={(v) => set('heart_rate', v)} abnormal={abn.heart_rate} chips={HR_CHIPS} chipRange={{ min: 30, max: 220 }} />
             <Field name="bp_systolic" label="BP Sys" hint="<140" value={draft.bp_systolic} onChange={(v) => set('bp_systolic', v)} abnormal={abn.bp_systolic} chips={BP_SYS_CHIPS} chipRange={{ min: 60, max: 220 }} />
             <Field name="bp_diastolic" label="BP Dia" hint="<90" value={draft.bp_diastolic} onChange={(v) => set('bp_diastolic', v)} abnormal={abn.bp_diastolic} chips={BP_DIA_CHIPS} chipRange={{ min: 30, max: 130 }} />
             <Field name="respiratory_rate" label="RR" hint="12–24" value={draft.respiratory_rate} onChange={(v) => set('respiratory_rate', v)} abnormal={abn.respiratory_rate} chips={RR_CHIPS} chipRange={{ min: 4, max: 60 }} />
             <Field name="spo2_ra" label="SpO₂ (RA)" hint="%" value={draft.spo2_ra} onChange={(v) => set('spo2_ra', v)} abnormal={abn.spo2_ra} chips={SPO2_CHIPS} chipRange={{ min: 50, max: 100 }} />
-            <Field name="spo2_o2" label="SpO₂ (on O₂)" hint="%" value={draft.spo2_o2} onChange={(v) => set('spo2_o2', v)} chips={SPO2_CHIPS} chipRange={{ min: 50, max: 100 }} />
+            <Field name="spo2_o2" label="SpO₂ (on O₂)" hint="%" value={draft.spo2_o2} onChange={(v) => set('spo2_o2', v)} abnormal={abn.spo2_o2} chips={SPO2_CHIPS} chipRange={{ min: 50, max: 100 }} />
             <Field name="pain_score" label="Pain" hint="0–10" value={draft.pain_score} onChange={(v) => set('pain_score', v)} chips={PAIN_CHIPS} chipRange={{ min: 0, max: 10 }} />
           </Section>
 
