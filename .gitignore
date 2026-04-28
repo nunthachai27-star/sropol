@@ -55,6 +55,9 @@ dev.sqlite-wal
 # Dev pglite database (in-process Postgres)
 .pglite-data/
 
+# Postgres data (bind-mounted from docker-compose)
+postgres-data/
+
 # Screenshots
 screenshots/
 *-current.png

@@ -125,14 +125,17 @@ export async function DELETE(
       return NextResponse.json({ error: 'hospital not found' }, { status: 404 });
     }
 
-    // Hard delete — hospital_bms_config rows keyed on hospital_id must be
-    // cleared first to avoid orphans (no FK cascade on PGlite setup).
-    await db.execute('DELETE FROM hospital_bms_config WHERE hospital_id = ?', [
-      existing[0].id,
-    ]);
-    await db.execute('DELETE FROM hospitals WHERE hcode = ?', [hcode]);
+    // Soft-delete — flip is_active=false so cached patient/journey/referral
+    // rows that reference this hospital via FK keep their linkage intact.
+    // Hard DELETE is blocked by FK constraints from 6 child tables; preserving
+    // history matches the file-header intent ("deactivate / soft-delete") and
+    // keeps audit trails usable. To resurrect, PUT { isActive: true }.
+    await db.execute(
+      'UPDATE hospitals SET is_active = ?, updated_at = ? WHERE hcode = ?',
+      [false, new Date().toISOString(), hcode],
+    );
 
-    return NextResponse.json({ hcode, deleted: true });
+    return NextResponse.json({ hcode, deactivated: true });
   } catch (error) {
     logger.error('admin_hospital_delete_failed', { error });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

@@ -1,7 +1,51 @@
 // T020: PostgresAdapter — pg.Pool connection pooling for production
 
-import { Pool, type PoolConfig } from 'pg';
+import { Pool, types as pgTypes, type PoolConfig } from 'pg';
 import { DatabaseAdapter, type ColumnInfo } from './adapter';
+
+// By default `pg` returns int8/bigint (OID 20) as a string because JS numbers
+// can't safely represent values > 2^53. In this app all IDs are UUIDs and the
+// only bigints in practice are `COUNT(*)` / `SUM(...)` results, which are
+// always safely within Number range. Leaving the default string behaviour
+// caused dashboard aggregations to string-concat ("0" + "0" + ... → "000...").
+pgTypes.setTypeParser(20, (val: string) => parseInt(val, 10));
+
+// The codebase writes SQL with `?` placeholders (SQLite dialect). `pg` only
+// understands `$1, $2, …` so every query arriving at this adapter must be
+// rewritten. We walk the string instead of a global replace so `?` inside a
+// single-quoted literal is left alone (with SQL's '' escape handled).
+function convertPlaceholders(sql: string): string {
+  let out = '';
+  let i = 0;
+  let idx = 1;
+  while (i < sql.length) {
+    const c = sql[i];
+    if (c === "'") {
+      out += "'";
+      i++;
+      while (i < sql.length) {
+        if (sql[i] === "'" && sql[i + 1] === "'") {
+          out += "''";
+          i += 2;
+        } else if (sql[i] === "'") {
+          out += "'";
+          i++;
+          break;
+        } else {
+          out += sql[i];
+          i++;
+        }
+      }
+    } else if (c === '?') {
+      out += '$' + idx++;
+      i++;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
 
 export class PostgresAdapter extends DatabaseAdapter {
   private pool: Pool;
@@ -18,11 +62,11 @@ export class PostgresAdapter extends DatabaseAdapter {
   }
 
   async execute(sql: string, params: unknown[] = []): Promise<void> {
-    await this.pool.query(sql, params);
+    await this.pool.query(convertPlaceholders(sql), params);
   }
 
   async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
-    const result = await this.pool.query(sql, params);
+    const result = await this.pool.query(convertPlaceholders(sql), params);
     return result.rows as T[];
   }
 
@@ -92,11 +136,11 @@ class PostgresTransactionAdapter extends DatabaseAdapter {
   }
 
   async execute(sql: string, params: unknown[] = []): Promise<void> {
-    await this.client.query(sql, params);
+    await this.client.query(convertPlaceholders(sql), params);
   }
 
   async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
-    const result = await this.client.query(sql, params);
+    const result = await this.client.query(convertPlaceholders(sql), params);
     return result.rows as T[];
   }
 

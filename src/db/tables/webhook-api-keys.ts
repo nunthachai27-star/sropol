@@ -17,6 +17,12 @@ export const webhookApiKeysTable: TableDefinition = {
     { name: 'last_used_at', type: 'datetime', nullable: true },
     { name: 'created_at', type: 'datetime' },
     { name: 'revoked_at', type: 'datetime', nullable: true },
+    // Set when the hook confirms the key was successfully installed on
+    // HOSxP's webhook_setting row. Unconfirmed keys are treated as orphans
+    // by the onboarding reuse-check — they get revoked on retry so a fresh
+    // key can be minted and pushed again, instead of trapping the flow in
+    // a "local exists / remote never got it" short-circuit.
+    { name: 'pushed_to_hosxp_at', type: 'datetime', nullable: true },
   ],
   indexes: [
     { name: 'idx_wak_key_hash', columns: ['key_hash'], unique: true },

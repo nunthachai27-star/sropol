@@ -20,6 +20,7 @@ import { getOrCreateDevApiKey, revokeDevApiKeys } from './api-keys';
 import { resetPool } from './pool';
 import { ensurePlan, getHospitalPlan, resetPlans } from './planner';
 import { evalStats, resetEvalStats } from './generators';
+import { isSimulationEnabled } from '@/lib/feature-flags';
 import type {
   SimulationConfig,
   SimulationStatus,
@@ -65,8 +66,8 @@ class SimulationOrchestrator {
     if (this.running) {
       throw new Error('Simulation already running; stop it first');
     }
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('Simulation blocked in production');
+    if (!isSimulationEnabled()) {
+      throw new Error('Simulation disabled by feature flag');
     }
     if (config.eventTypes.length === 0) {
       throw new Error('At least one event type required');

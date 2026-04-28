@@ -21,3 +21,8 @@ tests/
 *.test.tsx
 *.spec.ts
 present/
+postgres-data/
+.pglite-data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

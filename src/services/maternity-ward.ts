@@ -1,11 +1,11 @@
 'use client';
 import {
-  callFunction,
   executeSql,
   restDelete,
   restInsert,
   restUpdate,
 } from '@/lib/bms-browser-client';
+import { mintSerial } from '@/lib/bms-serial';
 import {
   BED_MOVE_REASONS,
   MATERNITY_WARDS,
@@ -204,31 +204,7 @@ function fireAudit(payload: AuditPayload): void {
   }).catch(() => undefined);
 }
 
-/**
- * Mint a fresh primary-key value via BMS `get_serialnumber`.
- *
- * The function requires THREE fields in the payload (verified against live
- * BMS — the previous single-field `id_field` shape returned MessageCode 500
- * "No serial_name"):
- *   - `serial_name`: name of the serial sequence (almost always == column name)
- *   - `table_name`: the destination table
- *   - `field_name`: the PK column name
- *
- * In standard HOSxP convention `serial_name === field_name === '<table>_id'`,
- * so `idField` is reused for both.
- */
-async function mintSerial(
-  config: ConnectionConfig,
-  table: string,
-  idField: string,
-): Promise<number> {
-  const r = await callFunction<{ Value: number }>('get_serialnumber', config, {
-    serial_name: idField,
-    table_name: table,
-    field_name: idField,
-  });
-  return Number(r.Value);
-}
+// mintSerial moved to '@/lib/bms-serial' — imported at the top.
 
 // Task 41: insert-or-update a single partograph row. Insert path mints a fresh
 // PK via get_serialnumber; update path strips the PK from the body since BMS

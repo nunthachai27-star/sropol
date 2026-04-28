@@ -9,11 +9,10 @@ import { FlaskConical, AlertTriangle } from 'lucide-react';
 import { SimulationControl } from '@/components/dashboard/SimulationControl';
 
 export function SimulationTab() {
-  const isDev = process.env.NODE_ENV !== 'production';
   return (
     <div className="space-y-4">
       <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--ink-navy-muted)]">
-        DEV SIMULATION · {isDev ? 'ENABLED' : 'BLOCKED BY SERVER IN PROD'}
+        DEV SIMULATION
       </div>
 
       <div
@@ -49,8 +48,8 @@ export function SimulationTab() {
                   คำเตือน
                 </strong>{' '}
                 · ข้อมูลที่สร้างจะเขียนจริงลงในตาราง cache ของ kk-lrms และแสดงในแดชบอร์ด
-                · ใช้กับ DB ทดสอบเท่านั้น · ในโปรดักชัน API /api/dev/simulate
-                จะถูกบล็อกโดย simulationGuard ฝั่งเซิร์ฟเวอร์
+                · ใช้กับ DB ทดสอบเท่านั้น · API /api/dev/simulate
+                จะถูกบล็อกโดยเซิร์ฟเวอร์เมื่อ DEV_SIMULATION_ENABLED ไม่ได้เปิดไว้
               </div>
             </div>
 

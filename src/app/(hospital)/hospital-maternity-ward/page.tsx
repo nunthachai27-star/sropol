@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { useBmsSession } from '@/hooks/useBmsSession';
 import { useMaternityWardState } from '@/hooks/useMaternityWardState';
+import { useOnboardHosxpWebhook } from '@/hooks/useOnboardHosxpWebhook';
 import {
   WardLayoutView,
   type BedMovePayload,
@@ -68,6 +69,14 @@ function BedGridSkeleton() {
 
 export default function HospitalMaternityWardPage() {
   const { isReady, error: sessionError, config, userInfo } = useBmsSession();
+  // Auto-provisions HOSxP's webhook_setting row on first kiosk landing (same
+  // flow as the provincial dashboard). No-op when already confirmed. Error
+  // surfaces via the red banner below so the kiosk operator can act on it
+  // without opening DevTools.
+  const { state: onboardingState } = useOnboardHosxpWebhook();
+  const [onboardingErrorDismissed, setOnboardingErrorDismissed] = useState(false);
+  const showOnboardingError =
+    !!onboardingState?.error && !onboardingErrorDismissed;
   const { wards, ward, beds, occupancy, isLoading, error, mutateBeds, mutateOccupancy } =
     useMaternityWardState();
   const [selectedAn, setSelectedAn] = useState<string | null>(null);
@@ -232,8 +241,39 @@ export default function HospitalMaternityWardPage() {
     return hrs >= 12 && (cx === null || cx < 4);
   }).length;
 
+  const onboardingBanner = showOnboardingError ? (
+    <div
+      role="alert"
+      className="mb-3 flex items-start gap-3 rounded-lg border bg-white px-4 py-3 text-sm shadow-sm"
+      style={{ borderColor: '#dc2626' }}
+    >
+      <div
+        className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-white"
+        style={{ background: '#dc2626' }}
+      >
+        HOSxP WEBHOOK
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="font-semibold text-slate-900">
+          ไม่สามารถอัปเดต webhook_setting บน HOSxP
+        </div>
+        <div className="mt-0.5 truncate text-xs text-slate-600">
+          {onboardingState?.error}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => setOnboardingErrorDismissed(true)}
+        className="shrink-0 rounded border border-slate-300 bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-slate-600 hover:bg-slate-50"
+      >
+        ซ่อน
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div className="mx-auto max-w-[1600px] p-4 lg:p-6">
+      {onboardingBanner}
       {/* Summary bar — sticky under the navbar so ward context stays visible while scrolling the grid. */}
       <header className="sticky top-14 z-10 mb-4 rounded-xl border border-slate-200 bg-white/90 shadow-sm backdrop-blur">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3 lg:px-5">

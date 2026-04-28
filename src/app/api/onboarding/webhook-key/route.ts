@@ -47,6 +47,55 @@ export async function POST(request: NextRequest) {
     const hospital = rows[0];
 
     const label = body.label?.trim() || 'HOSxP auto-provisioned';
+
+    // Reuse-if-confirmed: only short-circuit when the hospital already has
+    // an active auto-provisioned key that was successfully pushed to HOSxP
+    // (`pushed_to_hosxp_at IS NOT NULL`). Unconfirmed keys from a previous
+    // failed push are "orphans" — the local row has no raw value we can
+    // recover, so the remote side can't be repaired with it. Auto-revoke
+    // those so the next mint yields a fresh raw key that can be pushed.
+    const activeRows = await db.query<{
+      id: string;
+      key_prefix: string;
+      pushed_to_hosxp_at: string | null;
+    }>(
+      `SELECT id, key_prefix, pushed_to_hosxp_at FROM webhook_api_keys
+        WHERE hospital_id = ?
+          AND is_active = true
+          AND (label = ? OR label = ?)
+        ORDER BY created_at DESC`,
+      [hospital.id, 'HOSxP auto-provisioned', 'HOSxP webhook_setting auto-provision'],
+    );
+    const confirmed = activeRows.find((r) => r.pushed_to_hosxp_at !== null);
+    if (confirmed) {
+      logger.info('onboarding_webhook_key_reused', {
+        hcode,
+        keyPrefix: confirmed.key_prefix,
+      });
+      return NextResponse.json({
+        alreadyExists: true,
+        id: confirmed.id,
+        keyPrefix: confirmed.key_prefix,
+        hcode,
+        hospitalName: hospital.name,
+      });
+    }
+    const orphans = activeRows.filter((r) => r.pushed_to_hosxp_at === null);
+    if (orphans.length > 0) {
+      const now = new Date().toISOString();
+      for (const o of orphans) {
+        await db.execute(
+          'UPDATE webhook_api_keys SET is_active = false, revoked_at = ? WHERE id = ?',
+          [now, o.id],
+        );
+      }
+      logger.warn('onboarding_webhook_key_orphans_revoked', {
+        hcode,
+        count: orphans.length,
+        keyPrefixes: orphans.map((o) => o.key_prefix),
+      });
+    }
+
     const { id, rawKey, keyPrefix } = await createApiKey(db, hospital.id, label);
 
     logger.info('onboarding_webhook_key_created', {
@@ -56,6 +105,7 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json({
+      alreadyExists: false,
       id,
       apiKey: rawKey,
       keyPrefix,

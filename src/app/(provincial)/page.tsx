@@ -42,7 +42,8 @@ export default function DashboardPage() {
   // Auto-provisions the HOSxP `webhook_setting` row for module_id=3 /
   // setting_code='KK-LRMS' on first onboarding. No-op when the row already
   // exists or when the BMS session / marketplace_token isn't present.
-  useOnboardHosxpWebhook();
+  const { state: onboardingState } = useOnboardHosxpWebhook();
+  const [onboardingErrorDismissed, setOnboardingErrorDismissed] = useState(false);
   const { hospitals, summary, stageKPIs, alerts, trends, updatedAt, isLoading, mutate } =
     useDashboard();
   const { patients: highRiskPatients, isLoading: hrLoading, mutate: hrMutate } =
@@ -206,6 +207,9 @@ export default function DashboardPage() {
   // under the navbar instead of overflowing. ~60px covers the single-row
   // navbar plus its 3px accent strip. Keep it in sync if the navbar ever
   // gains a second row again.
+  const showOnboardingError =
+    !!onboardingState?.error && !onboardingErrorDismissed;
+
   return (
     <div
       style={{
@@ -213,6 +217,47 @@ export default function DashboardPage() {
         zoom: 1.15,
       }}
     >
+      {showOnboardingError && (
+        <div
+          role="alert"
+          className="flex items-start gap-3 border-b px-5 py-3 font-mono text-[12px] leading-snug"
+          style={{
+            background: 'color-mix(in srgb, var(--risk-high) 10%, white)',
+            borderColor: 'var(--risk-high)',
+            color: 'var(--ink-navy)',
+          }}
+        >
+          <div
+            className="shrink-0 rounded px-1.5 py-0.5 font-semibold uppercase tracking-wider"
+            style={{
+              background: 'var(--risk-high)',
+              color: 'white',
+              fontSize: '10px',
+            }}
+          >
+            HOSxP WEBHOOK
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold">ไม่สามารถอัปเดต webhook_setting บน HOSxP</div>
+            <div className="mt-0.5 truncate" style={{ color: 'var(--ink-navy-dim)' }}>
+              {onboardingState?.error}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOnboardingErrorDismissed(true)}
+            className="shrink-0 px-2 py-0.5 uppercase tracking-wider"
+            style={{
+              border: '1px solid var(--rule-strong)',
+              background: 'white',
+              color: 'var(--ink-navy-dim)',
+              fontSize: '10px',
+            }}
+          >
+            ซ่อน
+          </button>
+        </div>
+      )}
       <div
         className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_520px]"
         style={{ alignItems: 'start' }}

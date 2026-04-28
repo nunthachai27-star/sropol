@@ -15,13 +15,14 @@
 //  3. Reuses an in-memory key if already issued this process.
 //  4. Provides `revokeDevApiKeys()` so the orchestrator can clean up on stop.
 //
-// This file HARD-REFUSES to run in production — calling any function when
-// `NODE_ENV === 'production'` throws. The UI and orchestrator also gate
-// themselves separately.
+// This file HARD-REFUSES to run when the simulator is disabled — calling any
+// function while `isSimulationEnabled()` returns false throws. The UI and
+// orchestrator also gate themselves separately through the same helper.
 
 import type { DatabaseAdapter } from '@/db/adapter';
 import { createApiKey, revokeApiKey } from '@/services/webhook';
 import { logger } from '@/lib/logger';
+import { isSimulationEnabled } from '@/lib/feature-flags';
 
 const SIM_LABEL_PREFIX = 'sim:dev:';
 
@@ -39,8 +40,8 @@ const cache: Map<string, CachedKey> =
 if (!globalAny.__simApiKeyCache) globalAny.__simApiKeyCache = cache;
 
 function ensureDev(): void {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('Simulation API key cache blocked in production');
+  if (!isSimulationEnabled()) {
+    throw new Error('Simulation API key cache disabled by feature flag');
   }
 }
 
