@@ -286,15 +286,15 @@ function Section({
       <span aria-hidden className={cn('absolute left-0 top-0 bottom-0 w-1', t.bar)} />
       <h4
         className={cn(
-          'flex items-center gap-2 border-b border-slate-100 px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.18em]',
+          'flex items-center gap-2 border-b border-slate-100 px-5 py-3 text-[15px] font-bold tracking-tight',
           t.ink,
           t.bg,
         )}
       >
         {title}
       </h4>
-      {chips && <div className="border-b border-slate-100 bg-slate-50/40 px-4 py-2.5">{chips}</div>}
-      <div className={cn('grid gap-x-3 gap-y-2.5 p-4', cols)}>{children}</div>
+      {chips && <div className="border-b border-slate-100 bg-slate-50/40 px-5 py-3">{chips}</div>}
+      <div className={cn('grid gap-x-4 gap-y-3.5 p-5', cols)}>{children}</div>
     </section>
   );
 }
@@ -320,31 +320,31 @@ function CollapsibleSection({
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         className={cn(
-          'flex w-full items-center justify-between border-b border-slate-100 px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.18em] transition-colors hover:bg-slate-50',
+          'flex w-full items-center justify-between border-b border-slate-100 px-5 py-3 text-[15px] font-bold tracking-tight transition-colors hover:bg-slate-50',
           t.ink,
           t.bg,
         )}
       >
-        <span className="flex items-center gap-2">
-          <span aria-hidden className={cn('inline-block text-[10px] transition-transform', open && 'rotate-90')}>
+        <span className="flex items-center gap-2.5">
+          <span aria-hidden className={cn('inline-block text-[12px] transition-transform', open && 'rotate-90')}>
             ▸
           </span>
           {title}
           {badge && (
-            <span className="text-[10px] font-normal normal-case tracking-normal text-slate-400">
+            <span className="text-[12px] font-normal text-slate-500">
               · {badge}
             </span>
           )}
         </span>
         {!open && (
-          <span className="font-sans text-[10px] font-normal normal-case tracking-normal text-slate-400">
+          <span className="text-[12px] font-medium text-slate-400">
             คลิกเพื่อขยาย
           </span>
         )}
       </button>
       <div className={cn(!open && 'hidden')}>
-        {chips && <div className="border-b border-slate-100 bg-slate-50/40 px-4 py-2.5">{chips}</div>}
-        <div className={cn('grid gap-x-3 gap-y-2.5 p-4', cols)}>{children}</div>
+        {chips && <div className="border-b border-slate-100 bg-slate-50/40 px-5 py-3">{chips}</div>}
+        <div className={cn('grid gap-x-4 gap-y-3.5 p-5', cols)}>{children}</div>
       </div>
     </section>
   );
@@ -362,7 +362,7 @@ function ChipRow({
   ariaLabel?: string;
 }) {
   return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label={ariaLabel}>
+    <div className="flex flex-wrap gap-2" role="group" aria-label={ariaLabel}>
       {options.map((o) => {
         const isSelected = selected === o.value;
         return (
@@ -371,9 +371,9 @@ function ChipRow({
             type="button"
             onClick={() => onPick(o.value)}
             className={cn(
-              'rounded-md border px-2.5 py-1 font-mono text-[11px] font-semibold tabular-nums tracking-tight transition-all',
+              'min-w-[44px] rounded-md border px-3 py-1.5 text-[13px] font-semibold tabular-nums transition-all',
               isSelected
-                ? 'border-cyan-600 bg-cyan-600 text-white shadow-sm'
+                ? 'border-cyan-600 bg-cyan-600 text-white shadow-sm ring-2 ring-cyan-600/20'
                 : 'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700',
             )}
           >
@@ -443,8 +443,8 @@ function ChipLabelRow({
   onPick: (v: string) => void;
 }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-20 shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-500">
+    <div className="flex items-center gap-3">
+      <span className="w-24 shrink-0 text-[12px] font-semibold text-slate-700">
         {label}
       </span>
       <ChipRow options={options} selected={selected} onPick={onPick} ariaLabel={label} />
@@ -470,8 +470,8 @@ function Field({
   const inputId = `nn-${name}`;
   const isNumeric = type === 'int' || type === 'float';
   const baseCls =
-    'h-10 w-full rounded-md border bg-white px-3 text-sm text-slate-900 shadow-sm transition-colors focus:outline-none focus:ring-2';
-  const numericCls = isNumeric ? 'font-mono tabular-nums tracking-tight' : '';
+    'h-11 w-full rounded-md border bg-white px-3.5 text-[15px] text-slate-900 shadow-sm transition-colors focus:outline-none focus:ring-2';
+  const numericCls = isNumeric ? 'font-semibold tabular-nums' : '';
   const normalCls = 'border-slate-200 hover:border-slate-300 focus:border-cyan-500 focus:ring-cyan-500/20';
   const abnormalCls =
     'border-rose-400 bg-rose-50/40 font-semibold text-rose-700 focus:border-rose-500 focus:ring-rose-500/30';
@@ -480,18 +480,18 @@ function Field({
     <div className={cn('flex flex-col gap-1', colSpan === 'full' && 'col-span-full')}>
       <label
         htmlFor={inputId}
-        className="flex items-baseline gap-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600"
+        className="flex items-baseline gap-2 text-[13px] font-semibold text-slate-800"
       >
         <span className="truncate">{label}</span>
         {hint && (
-          <span className="font-sans text-[10px] font-normal normal-case tracking-normal text-slate-400">
+          <span className="text-[11px] font-normal text-slate-500">
             {hint}
           </span>
         )}
         {abnormal && (
           <span
             data-testid={`abnormal-${name}`}
-            className="ml-auto rounded-sm bg-rose-600 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.16em] text-white"
+            className="ml-auto rounded bg-rose-600 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-white shadow-sm"
             title="ผิดปกติ — แจ้งแพทย์"
           >
             ผิดปกติ
@@ -604,11 +604,11 @@ export function VitalSignEntryDialog({
         className="sm:max-w-5xl max-h-[92vh] overflow-y-auto gap-3 bg-slate-50 p-4"
         showCloseButton={false}
       >
-        <DialogHeader className="flex-row items-center justify-between gap-3 border-b-2 border-slate-900 pb-3">
+        <DialogHeader className="flex-row items-center justify-between gap-3 border-b-2 border-slate-900 pb-4">
           <div className="flex items-center gap-3">
-            <span aria-hidden className="block h-1 w-7 bg-cyan-600" />
-            <DialogTitle className="font-mono text-[13px] font-extrabold uppercase tracking-[0.16em] text-slate-900">
-              {mode === 'add' ? 'NURSE NOTE · NEW ENTRY' : 'NURSE NOTE · EDIT'}
+            <span aria-hidden className="block h-1.5 w-8 bg-cyan-600" />
+            <DialogTitle className="text-[18px] font-bold tracking-tight text-slate-900">
+              {mode === 'add' ? 'เพิ่มบันทึกสัญญาณชีพ' : 'แก้ไขบันทึกสัญญาณชีพ'}
             </DialogTitle>
           </div>
         </DialogHeader>
@@ -860,7 +860,7 @@ export function VitalSignEntryDialog({
                 type="button"
                 onClick={handleDelete}
                 disabled={saving}
-                className="rounded-md border-2 border-rose-300 bg-white px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-rose-700 transition-colors hover:bg-rose-50 disabled:opacity-40"
+                className="rounded-md border border-rose-300 bg-white px-4 py-2.5 text-[14px] font-semibold text-rose-700 transition-colors hover:bg-rose-50 disabled:opacity-40"
               >
                 ลบ
               </button>
@@ -870,14 +870,14 @@ export function VitalSignEntryDialog({
                 type="button"
                 onClick={onCancel}
                 disabled={saving}
-                className="rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40"
+                className="rounded-md border border-slate-300 bg-white px-4 py-2.5 text-[14px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40"
               >
                 ยกเลิก
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="rounded-md border-2 border-cyan-700 bg-cyan-700 px-5 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-white transition-colors hover:bg-cyan-800 disabled:opacity-40"
+                className="rounded-md border-2 border-cyan-700 bg-cyan-700 px-6 py-2.5 text-[14px] font-bold text-white transition-colors hover:bg-cyan-800 disabled:opacity-40"
               >
                 {saving ? 'กำลังบันทึก…' : 'บันทึก'}
               </button>
