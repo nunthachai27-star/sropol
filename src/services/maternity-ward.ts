@@ -8,6 +8,7 @@ import {
 import { mintSerial } from '@/lib/bms-serial';
 import {
   BED_MOVE_REASONS,
+  DRUG_LOOKUP,
   MATERNITY_WARDS,
   PATIENT_COMPLICATIONS_BY_LABOUR_ID,
   PATIENT_INFANTS_BY_AN,
@@ -767,6 +768,26 @@ export async function deleteInfant(
 // Lookup the configured reason values from iptbedmove_reason. The list is small
 // enough to fetch on demand whenever the modal opens; we don't cache between
 // opens because admins may add new reasons via HOSxP without restarting clients.
+// ─── Drug master lookup (typeahead for medication entry) ─────────────────
+// Wraps DRUG_LOOKUP. The query LIKE-matches `name` against the user's typed
+// fragment; we wrap it as `%fragment%` so partial matches at any position
+// are returned. Server-side LIMIT 50 caps the result so a tap on a single
+// letter doesn't ship the whole drug master.
+export async function searchDrugs(
+  config: ConnectionConfig,
+  query: string,
+): Promise<Array<{ icode: string; label: string }>> {
+  const trimmed = query.trim();
+  if (trimmed.length < 1) return [];
+  const sql = getQuery(DRUG_LOOKUP, DEFAULT_DIALECT);
+  const r = await executeSql<{ icode: string; label: string }>(
+    sql,
+    config,
+    { q: `%${trimmed}%` },
+  );
+  return r.data;
+}
+
 export async function getBedMoveReasons(config: ConnectionConfig): Promise<string[]> {
   const sql = getQuery(BED_MOVE_REASONS, DEFAULT_DIALECT);
   const r = await executeSql<{ reason: string }>(sql, config);

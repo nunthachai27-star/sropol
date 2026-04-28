@@ -14,15 +14,17 @@
 // drugusage / note are all kept.
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { useBmsSession } from '@/hooks/useBmsSession';
 import {
   deleteLabourMedication,
   getPatientLabourMedications,
+  searchDrugs,
   upsertLabourMedication,
 } from '@/services/maternity-ward';
 import type { LabourMedRow } from '@/types/maternity-ward';
+import type { ConnectionConfig } from '@/types/bms-browser';
 import { cn } from '@/lib/utils';
 
 type EditState = {
@@ -44,6 +46,159 @@ function toNumberOrNull(v: string): number | null {
   if (v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// ─── Drug picker — debounced autocomplete over s_drugitems ───────────────
+// Mirrors the Delphi medication-search dialog (R81/R92-R99 in
+// HOSxPMedicationOrderFrameUnit). User types a drug name fragment; after
+// 300 ms of idle, searchDrugs() runs the LIKE query and the dropdown
+// surfaces up to 50 matches. Click a result to populate the row's icode
+// (visible in the dedicated icode input below the picker, which keeps the
+// existing tests' getByLabelText('icode') queryable).
+
+interface DrugSuggestion {
+  icode: string;
+  label: string;
+}
+
+function DrugPicker({
+  config,
+  selectedLabel,
+  onPick,
+}: {
+  config: ConnectionConfig;
+  /** Label to display in the search box on first render — usually the
+   *  joined medication_name from the row being edited. Empty for "new". */
+  selectedLabel: string;
+  onPick: (s: DrugSuggestion) => void;
+}) {
+  const [query, setQuery] = useState(selectedLabel);
+  const [suggestions, setSuggestions] = useState<DrugSuggestion[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Debounce: schedule a search 300 ms after the last keystroke. Re-typing
+  // resets the timer. Skip when the input matches the last-picked label
+  // (avoids re-querying when the user just selected a result).
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length === 0 || trimmed === selectedLabel) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setLoading(true);
+      searchDrugs(config, trimmed)
+        .then((rows) => {
+          if (!cancelled) setSuggestions(rows);
+        })
+        .catch(() => {
+          if (!cancelled) setSuggestions([]);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query, selectedLabel, config]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder="พิมพ์ชื่อยา เช่น Pethi…"
+        aria-label="drug_search"
+        className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-[14px] text-slate-900 shadow-sm transition-colors hover:border-slate-300 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
+      />
+      {open && (suggestions.length > 0 || loading) && (
+        <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-72 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+          {loading && suggestions.length === 0 && (
+            <div className="px-3 py-2 text-[12px] text-slate-500">กำลังค้นหา…</div>
+          )}
+          {suggestions.map((s) => (
+            <button
+              key={s.icode}
+              type="button"
+              onClick={() => {
+                onPick(s);
+                setQuery(s.label);
+                setOpen(false);
+                setSuggestions([]);
+              }}
+              className="flex w-full flex-col gap-0.5 border-b border-slate-100 px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-cyan-50/60"
+            >
+              <span className="text-[14px] font-semibold text-slate-900">{s.label}</span>
+              <span className="font-mono text-[11px] text-slate-500">{s.icode}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Common drug-usage strings — Thai LR practice. Tap to set; the field stays
+// fully editable for one-off cases (the chip is just an accelerator).
+const DRUGUSAGE_PRESETS = [
+  '1x1 oral', '1x2 oral', '1x3 oral', '1x4 oral',
+  'PRN', 'stat', 'IV bolus', 'IM',
+];
+const QTY_PRESETS = ['1', '2', '3', '5', '10'];
+
+function ChipRow({
+  options,
+  selected,
+  onPick,
+  ariaLabel,
+}: {
+  options: readonly string[];
+  selected: string;
+  onPick: (v: string) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label={ariaLabel}>
+      {options.map((opt) => {
+        const isSelected = selected === opt;
+        return (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onPick(opt)}
+            className={cn(
+              'rounded-md border px-2.5 py-1 text-[12px] font-semibold transition-all',
+              isSelected
+                ? 'border-cyan-600 bg-cyan-600 text-white shadow-sm ring-2 ring-cyan-600/20'
+                : 'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700',
+            )}
+          >
+            {opt}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // ─── shared inputs ─────────────────────────────────────────────────────────
@@ -151,68 +306,111 @@ export function MedicationsTab({ an }: { an: string }) {
   // Inline edit row — used for both new add and existing edit. Spans the
   // full table width via colSpan so the form stays inline rather than
   // breaking out into a modal.
-  function EditRow({ keyPrefix }: { keyPrefix: string }) {
+  function EditRow({ keyPrefix, initialDrugLabel }: { keyPrefix: string; initialDrugLabel: string }) {
     return (
-      <tr className="bg-cyan-50/60">
+      <tr className="bg-cyan-50/40">
         <td colSpan={5} className="px-4 py-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[1.5fr_0.6fr_1.5fr_2fr]">
-            <div className="flex flex-col gap-1">
-              <label className="text-[12px] font-semibold text-slate-700">รหัสยา (icode)</label>
-              <InlineInput
-                ariaLabel="icode"
-                value={draft.icode}
-                onChange={(v) => setDraft((d) => ({ ...d, icode: v }))}
-                placeholder="เช่น D0001"
-              />
+          <div className="space-y-4">
+            {/* DRUG SECTION — name search + icode display */}
+            <div className="rounded-md border border-cyan-200 bg-white p-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[2fr_1fr]">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[12px] font-semibold text-slate-700">
+                    ค้นหายา · Drug name
+                  </label>
+                  <DrugPicker
+                    config={config!}
+                    selectedLabel={initialDrugLabel}
+                    onPick={(s) => setDraft((d) => ({ ...d, icode: s.icode }))}
+                  />
+                  <div className="text-[11px] text-slate-500">
+                    พิมพ์ชื่อยาบางส่วน — แตะเลือกจากผลค้นหา
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[12px] font-semibold text-slate-700">
+                    รหัสยา · icode
+                  </label>
+                  <InlineInput
+                    ariaLabel="icode"
+                    value={draft.icode}
+                    onChange={(v) => setDraft((d) => ({ ...d, icode: v }))}
+                    placeholder="ระบบเติมเอง"
+                  />
+                  <div className="text-[11px] text-slate-500">
+                    เลือกจากผลค้นหา หรือพิมพ์เอง
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[12px] font-semibold text-slate-700">จำนวน</label>
-              <InlineInput
-                ariaLabel="qty"
-                value={draft.qty}
-                onChange={(v) => setDraft((d) => ({ ...d, qty: v }))}
-                type="number"
-              />
+
+            {/* QTY + USAGE — chip presets above each input */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[0.6fr_1.4fr_2fr]">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[12px] font-semibold text-slate-700">จำนวน</label>
+                <ChipRow
+                  ariaLabel="qty quick picks"
+                  options={QTY_PRESETS}
+                  selected={draft.qty}
+                  onPick={(v) => setDraft((d) => ({ ...d, qty: v }))}
+                />
+                <InlineInput
+                  ariaLabel="qty"
+                  value={draft.qty}
+                  onChange={(v) => setDraft((d) => ({ ...d, qty: v }))}
+                  type="number"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[12px] font-semibold text-slate-700">วิธีใช้</label>
+                <ChipRow
+                  ariaLabel="drugusage quick picks"
+                  options={DRUGUSAGE_PRESETS}
+                  selected={draft.drugusage}
+                  onPick={(v) => setDraft((d) => ({ ...d, drugusage: v }))}
+                />
+                <InlineInput
+                  ariaLabel="drugusage"
+                  value={draft.drugusage}
+                  onChange={(v) => setDraft((d) => ({ ...d, drugusage: v }))}
+                  placeholder="เช่น 1x3 oral หรือพิมพ์เอง"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[12px] font-semibold text-slate-700">หมายเหตุ</label>
+                {/* Spacer to align the input with the two chip-ed columns */}
+                <div className="h-7" aria-hidden />
+                <InlineInput
+                  ariaLabel="medication_note_text"
+                  value={draft.medication_note_text}
+                  onChange={(v) => setDraft((d) => ({ ...d, medication_note_text: v }))}
+                  placeholder="เช่น ก่อนอาหาร"
+                />
+              </div>
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[12px] font-semibold text-slate-700">วิธีใช้</label>
-              <InlineInput
-                ariaLabel="drugusage"
-                value={draft.drugusage}
-                onChange={(v) => setDraft((d) => ({ ...d, drugusage: v }))}
-                placeholder="เช่น 1x3 oral"
-              />
+
+            {/* Action bar */}
+            <div className="flex justify-end gap-2 border-t border-cyan-200 pt-3">
+              <button
+                type="button"
+                onClick={cancel}
+                disabled={saving}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-[13px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={save}
+                disabled={saving || !draft.icode.trim()}
+                className="rounded-md border-2 border-cyan-700 bg-cyan-700 px-5 py-2 text-[13px] font-bold text-white transition-colors hover:bg-cyan-800 disabled:opacity-40"
+                title={!draft.icode.trim() ? 'ต้องเลือกยาก่อน' : undefined}
+              >
+                {saving ? 'กำลังบันทึก…' : 'บันทึก'}
+              </button>
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[12px] font-semibold text-slate-700">หมายเหตุ</label>
-              <InlineInput
-                ariaLabel="medication_note_text"
-                value={draft.medication_note_text}
-                onChange={(v) => setDraft((d) => ({ ...d, medication_note_text: v }))}
-              />
-            </div>
+            <span data-key={keyPrefix} className="hidden" />
           </div>
-          <div className="mt-3 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={cancel}
-              disabled={saving}
-              className="rounded-md border border-slate-300 bg-white px-4 py-2 text-[13px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40"
-            >
-              ยกเลิก
-            </button>
-            <button
-              type="button"
-              onClick={save}
-              disabled={saving}
-              className="rounded-md border-2 border-cyan-700 bg-cyan-700 px-5 py-2 text-[13px] font-bold text-white transition-colors hover:bg-cyan-800 disabled:opacity-40"
-            >
-              {saving ? 'กำลังบันทึก…' : 'บันทึก'}
-            </button>
-          </div>
-          {/* hidden anchor element to give the row a stable React key when the
-              shape of <tr> changes between create/edit */}
-          <span data-key={keyPrefix} className="hidden" />
         </td>
       </tr>
     );
@@ -263,10 +461,14 @@ export function MedicationsTab({ an }: { an: string }) {
               </tr>
             </thead>
             <tbody>
-              {editingId === 'new' && <EditRow keyPrefix="new" />}
+              {editingId === 'new' && <EditRow keyPrefix="new" initialDrugLabel="" />}
               {rows.map((row) =>
                 editingId === row.labour_medication_id ? (
-                  <EditRow key={`edit-${row.labour_medication_id}`} keyPrefix={`edit-${row.labour_medication_id}`} />
+                  <EditRow
+                    key={`edit-${row.labour_medication_id}`}
+                    keyPrefix={`edit-${row.labour_medication_id}`}
+                    initialDrugLabel={row.medication_name ?? ''}
+                  />
                 ) : (
                   <tr
                     key={row.labour_medication_id}
