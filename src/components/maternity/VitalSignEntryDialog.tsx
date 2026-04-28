@@ -238,11 +238,38 @@ function hasClinicalValue(p: Partial<NurseNoteRow>): boolean {
 
 // ─── UI primitives ─────────────────────────────────────────────────────────
 
+// Categorical clinical palette — mirrors the v2 ward bed-tile color system.
+type SectionTone =
+  | 'fhr' | 'labour' | 'cont' | 'vitals' | 'interv'
+  | 'urine' | 'pps' | 'biometric' | 'pv' | 'pe'
+  | 'icu' | 'fluid' | 'slate';
+
+const TONE_TOKENS: Record<
+  SectionTone,
+  { ink: string; bar: string; bg: string; ring: string }
+> = {
+  fhr:       { ink: 'text-rose-700',     bar: 'bg-rose-500',     bg: 'bg-rose-50/40',     ring: 'ring-rose-200/60' },
+  labour:    { ink: 'text-indigo-700',   bar: 'bg-indigo-500',   bg: 'bg-indigo-50/40',   ring: 'ring-indigo-200/60' },
+  cont:      { ink: 'text-violet-700',   bar: 'bg-violet-500',   bg: 'bg-violet-50/40',   ring: 'ring-violet-200/60' },
+  vitals:    { ink: 'text-cyan-700',     bar: 'bg-cyan-500',     bg: 'bg-cyan-50/40',     ring: 'ring-cyan-200/60' },
+  interv:    { ink: 'text-emerald-700',  bar: 'bg-emerald-500',  bg: 'bg-emerald-50/40',  ring: 'ring-emerald-200/60' },
+  urine:     { ink: 'text-amber-700',    bar: 'bg-amber-500',    bg: 'bg-amber-50/40',    ring: 'ring-amber-200/60' },
+  pps:       { ink: 'text-sky-700',      bar: 'bg-sky-500',      bg: 'bg-sky-50/40',      ring: 'ring-sky-200/60' },
+  biometric: { ink: 'text-amber-700',    bar: 'bg-amber-500',    bg: 'bg-amber-50/40',    ring: 'ring-amber-200/60' },
+  pv:        { ink: 'text-indigo-700',   bar: 'bg-indigo-500',   bg: 'bg-indigo-50/40',   ring: 'ring-indigo-200/60' },
+  pe:        { ink: 'text-emerald-700',  bar: 'bg-emerald-500',  bg: 'bg-emerald-50/40',  ring: 'ring-emerald-200/60' },
+  icu:       { ink: 'text-rose-700',     bar: 'bg-rose-500',     bg: 'bg-rose-50/40',     ring: 'ring-rose-200/60' },
+  fluid:     { ink: 'text-sky-700',      bar: 'bg-sky-500',      bg: 'bg-sky-50/40',      ring: 'ring-sky-200/60' },
+  slate:     { ink: 'text-slate-600',    bar: 'bg-slate-400',    bg: 'bg-slate-50/60',    ring: 'ring-slate-200/60' },
+};
+
 interface SectionShellProps {
   title: string;
   cols?: string;
   /** Quick-pick chip row rendered between the heading and the fields. */
   chips?: React.ReactNode;
+  /** Categorical clinical color — sets the left bar + heading + tinted background. */
+  tone?: SectionTone;
   children: React.ReactNode;
 }
 
@@ -250,38 +277,56 @@ function Section({
   title,
   cols = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4',
   chips,
+  tone = 'slate',
   children,
 }: SectionShellProps) {
+  const t = TONE_TOKENS[tone];
   return (
-    <section className="rounded-md border border-slate-200 bg-white">
-      <h4 className="border-b border-slate-100 bg-slate-50/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
+    <section className={cn('relative overflow-hidden rounded-lg bg-white shadow-sm ring-1', t.ring)}>
+      <span aria-hidden className={cn('absolute left-0 top-0 bottom-0 w-1', t.bar)} />
+      <h4
+        className={cn(
+          'flex items-center gap-2 border-b border-slate-100 px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.18em]',
+          t.ink,
+          t.bg,
+        )}
+      >
         {title}
       </h4>
-      {chips && <div className="px-3 pt-2">{chips}</div>}
-      <div className={cn('grid gap-x-3 gap-y-2 p-3', cols)}>{children}</div>
+      {chips && <div className="border-b border-slate-100 bg-slate-50/40 px-4 py-2.5">{chips}</div>}
+      <div className={cn('grid gap-x-3 gap-y-2.5 p-4', cols)}>{children}</div>
     </section>
   );
 }
 
-// Native <details>-based collapsible. Children stay in DOM when collapsed so
-// getByLabelText still finds every input — important because the test suite
-// asserts every nurse-note column is queryable from the dialog.
+// Controlled-state collapsible — children always render so fireEvent.change
+// works in jsdom even when collapsed.
 function CollapsibleSection({
   title,
   cols = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4',
   defaultOpen = false,
   badge,
   chips,
+  tone = 'slate',
   children,
 }: SectionShellProps & { defaultOpen?: boolean; badge?: string }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const t = TONE_TOKENS[tone];
   return (
-    <details
-      open={defaultOpen}
-      className="group rounded-md border border-slate-200 bg-white"
-    >
-      <summary className="flex cursor-pointer list-none items-center justify-between border-b border-slate-100 bg-slate-50/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:bg-slate-100/60">
+    <section className={cn('relative overflow-hidden rounded-lg bg-white shadow-sm ring-1', t.ring)}>
+      <span aria-hidden className={cn('absolute left-0 top-0 bottom-0 w-1', t.bar)} />
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className={cn(
+          'flex w-full items-center justify-between border-b border-slate-100 px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.18em] transition-colors hover:bg-slate-50',
+          t.ink,
+          t.bg,
+        )}
+      >
         <span className="flex items-center gap-2">
-          <span aria-hidden className="inline-block transition-transform group-open:rotate-90">
+          <span aria-hidden className={cn('inline-block text-[10px] transition-transform', open && 'rotate-90')}>
             ▸
           </span>
           {title}
@@ -291,13 +336,17 @@ function CollapsibleSection({
             </span>
           )}
         </span>
-        <span className="text-[10px] font-normal text-slate-400 group-open:hidden">
-          คลิกเพื่อขยาย
-        </span>
-      </summary>
-      {chips && <div className="px-3 pt-2">{chips}</div>}
-      <div className={cn('grid gap-x-3 gap-y-2 p-3', cols)}>{children}</div>
-    </details>
+        {!open && (
+          <span className="font-sans text-[10px] font-normal normal-case tracking-normal text-slate-400">
+            คลิกเพื่อขยาย
+          </span>
+        )}
+      </button>
+      <div className={cn(!open && 'hidden')}>
+        {chips && <div className="border-b border-slate-100 bg-slate-50/40 px-4 py-2.5">{chips}</div>}
+        <div className={cn('grid gap-x-3 gap-y-2.5 p-4', cols)}>{children}</div>
+      </div>
+    </section>
   );
 }
 
@@ -313,7 +362,7 @@ function ChipRow({
   ariaLabel?: string;
 }) {
   return (
-    <div className="flex flex-wrap gap-1" role="group" aria-label={ariaLabel}>
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label={ariaLabel}>
       {options.map((o) => {
         const isSelected = selected === o.value;
         return (
@@ -322,10 +371,10 @@ function ChipRow({
             type="button"
             onClick={() => onPick(o.value)}
             className={cn(
-              'rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors tabular-nums',
+              'rounded-md border px-2.5 py-1 font-mono text-[11px] font-semibold tabular-nums tracking-tight transition-all',
               isSelected
-                ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
-                : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-400 hover:bg-emerald-50/40',
+                ? 'border-cyan-600 bg-cyan-600 text-white shadow-sm'
+                : 'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700',
             )}
           >
             {o.label}
@@ -336,21 +385,72 @@ function ChipRow({
   );
 }
 
+// Quick-pick chip catalogues. Landmark/anchor values nurses tap-pick most
+// often; typing remains available for in-between readings. The set covers
+// every numeric vital where presets help — fields like weight/height/BMI
+// stay un-chipped because they're precise readings without preset values.
 const PAIN_CHIPS = [
-  { value: '0', label: '0' },
-  { value: '2', label: '2' },
-  { value: '4', label: '4' },
-  { value: '6', label: '6' },
-  { value: '8', label: '8' },
-  { value: '10', label: '10' },
+  { value: '0', label: '0' }, { value: '2', label: '2' },
+  { value: '4', label: '4' }, { value: '6', label: '6' },
+  { value: '8', label: '8' }, { value: '10', label: '10' },
 ];
 const TEMP_CHIPS = [
-  { value: '36.5', label: '36.5' },
-  { value: '37.0', label: '37.0' },
-  { value: '37.5', label: '37.5' },
-  { value: '38.0', label: '38.0' },
+  { value: '36.5', label: '36.5' }, { value: '37.0', label: '37.0' },
+  { value: '37.5', label: '37.5' }, { value: '38.0', label: '38.0' },
   { value: '38.5', label: '38.5' },
 ];
+const PULSE_CHIPS = [
+  { value: '60', label: '60' }, { value: '70', label: '70' },
+  { value: '80', label: '80' }, { value: '90', label: '90' },
+  { value: '100', label: '100' },
+];
+const HR_CHIPS = [
+  { value: '60', label: '60' }, { value: '70', label: '70' },
+  { value: '80', label: '80' }, { value: '90', label: '90' },
+  { value: '100', label: '100' }, { value: '110', label: '110' },
+  { value: '120', label: '120' },
+];
+const BP_SYS_CHIPS = [
+  { value: '100', label: '100' }, { value: '110', label: '110' },
+  { value: '120', label: '120' }, { value: '130', label: '130' },
+  { value: '140', label: '140' },
+];
+const BP_DIA_CHIPS = [
+  { value: '60', label: '60' }, { value: '70', label: '70' },
+  { value: '80', label: '80' }, { value: '90', label: '90' },
+];
+const RR_CHIPS = [
+  { value: '14', label: '14' }, { value: '16', label: '16' },
+  { value: '18', label: '18' }, { value: '20', label: '20' },
+  { value: '22', label: '22' },
+];
+const SPO2_CHIPS = [
+  { value: '95', label: '95' }, { value: '96', label: '96' },
+  { value: '97', label: '97' }, { value: '98', label: '98' },
+  { value: '99', label: '99' }, { value: '100', label: '100' },
+];
+
+// Compact "label + chips" row used inside Section `chips` slots.
+function ChipLabelRow({
+  label,
+  options,
+  selected,
+  onPick,
+}: {
+  label: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  selected: string;
+  onPick: (v: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-20 shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-500">
+        {label}
+      </span>
+      <ChipRow options={options} selected={selected} onPick={onPick} ariaLabel={label} />
+    </div>
+  );
+}
 
 interface FieldProps {
   name: AnyField;
@@ -368,24 +468,30 @@ function Field({
   name, label, hint, value, onChange, type = 'int', options, colSpan, abnormal,
 }: FieldProps) {
   const inputId = `nn-${name}`;
+  const isNumeric = type === 'int' || type === 'float';
   const baseCls =
-    'h-9 w-full rounded-md border bg-white px-2.5 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-1';
-  const normalCls = 'border-slate-300 focus:border-emerald-500 focus:ring-emerald-500';
+    'h-10 w-full rounded-md border bg-white px-3 text-sm text-slate-900 shadow-sm transition-colors focus:outline-none focus:ring-2';
+  const numericCls = isNumeric ? 'font-mono tabular-nums tracking-tight' : '';
+  const normalCls = 'border-slate-200 hover:border-slate-300 focus:border-cyan-500 focus:ring-cyan-500/20';
   const abnormalCls =
-    'border-rose-400 bg-rose-50/40 font-semibold text-rose-700 focus:border-rose-500 focus:ring-rose-500';
-  const inputCls = cn(baseCls, abnormal ? abnormalCls : normalCls);
+    'border-rose-400 bg-rose-50/40 font-semibold text-rose-700 focus:border-rose-500 focus:ring-rose-500/30';
+  const inputCls = cn(baseCls, numericCls, abnormal ? abnormalCls : normalCls);
   return (
-    <div className={cn('flex flex-col gap-0.5', colSpan === 'full' && 'col-span-full')}>
+    <div className={cn('flex flex-col gap-1', colSpan === 'full' && 'col-span-full')}>
       <label
         htmlFor={inputId}
-        className="flex items-baseline gap-1.5 text-xs font-medium text-slate-700"
+        className="flex items-baseline gap-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600"
       >
         <span className="truncate">{label}</span>
-        {hint && <span className="text-[11px] font-normal text-slate-400">{hint}</span>}
+        {hint && (
+          <span className="font-sans text-[10px] font-normal normal-case tracking-normal text-slate-400">
+            {hint}
+          </span>
+        )}
         {abnormal && (
           <span
             data-testid={`abnormal-${name}`}
-            className="ml-auto rounded-sm bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700"
+            className="ml-auto rounded-sm bg-rose-600 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.16em] text-white"
             title="ผิดปกติ — แจ้งแพทย์"
           >
             ผิดปกติ
@@ -495,13 +601,16 @@ export function VitalSignEntryDialog({
       }}
     >
       <DialogContent
-        className="sm:max-w-5xl max-h-[92vh] overflow-y-auto gap-2 p-3"
+        className="sm:max-w-5xl max-h-[92vh] overflow-y-auto gap-3 bg-slate-50 p-4"
         showCloseButton={false}
       >
-        <DialogHeader>
-          <DialogTitle className="text-base">
-            {mode === 'add' ? 'เพิ่มบันทึกสัญญาณชีพ' : 'แก้ไขบันทึกสัญญาณชีพ'}
-          </DialogTitle>
+        <DialogHeader className="flex-row items-center justify-between gap-3 border-b-2 border-slate-900 pb-3">
+          <div className="flex items-center gap-3">
+            <span aria-hidden className="block h-1 w-7 bg-cyan-600" />
+            <DialogTitle className="font-mono text-[13px] font-extrabold uppercase tracking-[0.16em] text-slate-900">
+              {mode === 'add' ? 'NURSE NOTE · NEW ENTRY' : 'NURSE NOTE · EDIT'}
+            </DialogTitle>
+          </div>
         </DialogHeader>
 
         <form
@@ -509,30 +618,32 @@ export function VitalSignEntryDialog({
             e.preventDefault();
             handleSave();
           }}
-          className="flex flex-col gap-2"
+          className="flex flex-col gap-3"
         >
           {/* ── Tier 1: always-visible essentials.
                 Date/time → core vitals → free-text note. These three sections
                 cover ~95% of every-shift entry. */}
 
-          <Section title="วันที่และเวลา" cols="grid-cols-2 sm:grid-cols-4">
+          <Section title="วันที่และเวลา" tone="slate" cols="grid-cols-2 sm:grid-cols-4">
             <Field name="note_date" label="วันที่" type="date" value={draft.note_date} onChange={(v) => set('note_date', v)} />
             <Field name="note_time" label="เวลา" type="time" value={draft.note_time} onChange={(v) => set('note_time', v)} />
           </Section>
 
           <Section
             title="สัญญาณชีพหลัก"
+            tone="vitals"
             cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"
             chips={
               <div className="flex flex-col gap-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="w-12 shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-500">Temp</span>
-                  <ChipRow ariaLabel="Temperature quick picks" options={TEMP_CHIPS} selected={draft.temperature} onPick={(v) => set('temperature', v)} />
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-12 shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-500">Pain</span>
-                  <ChipRow ariaLabel="Pain score quick picks" options={PAIN_CHIPS} selected={draft.pain_score} onPick={(v) => set('pain_score', v)} />
-                </div>
+                <ChipLabelRow label="Temp" options={TEMP_CHIPS} selected={draft.temperature} onPick={(v) => set('temperature', v)} />
+                <ChipLabelRow label="Pulse" options={PULSE_CHIPS} selected={draft.pulse} onPick={(v) => set('pulse', v)} />
+                <ChipLabelRow label="HR" options={HR_CHIPS} selected={draft.heart_rate} onPick={(v) => set('heart_rate', v)} />
+                <ChipLabelRow label="BP Sys" options={BP_SYS_CHIPS} selected={draft.bp_systolic} onPick={(v) => set('bp_systolic', v)} />
+                <ChipLabelRow label="BP Dia" options={BP_DIA_CHIPS} selected={draft.bp_diastolic} onPick={(v) => set('bp_diastolic', v)} />
+                <ChipLabelRow label="RR" options={RR_CHIPS} selected={draft.respiratory_rate} onPick={(v) => set('respiratory_rate', v)} />
+                <ChipLabelRow label="SpO₂ RA" options={SPO2_CHIPS} selected={draft.spo2_ra} onPick={(v) => set('spo2_ra', v)} />
+                <ChipLabelRow label="SpO₂ O₂" options={SPO2_CHIPS} selected={draft.spo2_o2} onPick={(v) => set('spo2_o2', v)} />
+                <ChipLabelRow label="Pain" options={PAIN_CHIPS} selected={draft.pain_score} onPick={(v) => set('pain_score', v)} />
               </div>
             }
           >
@@ -553,6 +664,7 @@ export function VitalSignEntryDialog({
 
           <CollapsibleSection
             title="ร่างกาย"
+            tone="biometric"
             cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"
             defaultOpen={
               !!draft.weight || !!draft.weight_loss || !!draft.height ||
@@ -570,6 +682,7 @@ export function VitalSignEntryDialog({
 
           <CollapsibleSection
             title="การตรวจร่างกาย"
+            tone="pe"
             cols="grid-cols-1 sm:grid-cols-2"
             defaultOpen={
               !!draft.lung_text || !!draft.heart_text ||
@@ -585,6 +698,7 @@ export function VitalSignEntryDialog({
 
           <CollapsibleSection
             title="PV"
+            tone="pv"
             cols="grid-cols-2 sm:grid-cols-3"
             defaultOpen={!!draft.cervical_open_size || !!draft.eff || !!draft.station}
             badge="ผู้ป่วยอยู่ในระยะคลอด"
@@ -600,6 +714,7 @@ export function VitalSignEntryDialog({
 
           <CollapsibleSection
             title="IBP · CVP · ICP"
+            tone="icu"
             cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"
             defaultOpen={
               !!draft.ibps || !!draft.ibpd || !!draft.imap ||
@@ -617,6 +732,7 @@ export function VitalSignEntryDialog({
 
           <CollapsibleSection
             title="EtCO₂ · Scores · ออกซิเจน"
+            tone="cont"
             cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"
             defaultOpen={
               !!draft.etco2 || !!draft.sedation_score || !!draft.news2_score ||
@@ -634,6 +750,7 @@ export function VitalSignEntryDialog({
 
           <CollapsibleSection
             title="น้ำเข้า"
+            tone="fluid"
             cols="grid-cols-2 sm:grid-cols-4"
             defaultOpen={
               !!draft.fluid_intake_oral || !!draft.fluid_intake_parenteral ||
@@ -658,6 +775,7 @@ export function VitalSignEntryDialog({
 
           <CollapsibleSection
             title="ยา/ยาน้ำ"
+            tone="interv"
             cols="grid-cols-2 sm:grid-cols-4"
             defaultOpen={
               !!draft.fluid_intake_medication1 || !!draft.fluid_intake_medication1_int ||
@@ -675,6 +793,7 @@ export function VitalSignEntryDialog({
 
           <CollapsibleSection
             title="น้ำออก"
+            tone="fluid"
             cols="grid-cols-2 sm:grid-cols-4"
             defaultOpen={
               !!draft.fluid_output_urine || !!draft.fluid_output_emesis ||
@@ -696,6 +815,7 @@ export function VitalSignEntryDialog({
 
           <CollapsibleSection
             title="อุจจาระ · ปัสสาวะ"
+            tone="urine"
             cols="grid-cols-2 sm:grid-cols-4"
             defaultOpen={
               !!draft.urine_qty || !!draft.urine_qty_unit ||
@@ -710,6 +830,7 @@ export function VitalSignEntryDialog({
 
           <CollapsibleSection
             title="อาหารและยา"
+            tone="interv"
             cols="grid-cols-1 sm:grid-cols-2"
             defaultOpen={!!draft.ipd_nurse_note_diet_text || !!draft.medication_text}
           >
@@ -719,7 +840,7 @@ export function VitalSignEntryDialog({
 
           {/* บันทึกเพิ่มเติม stays always-visible — note + bottom_note are
               the highest-traffic free-text fields and need no friction. */}
-          <Section title="บันทึกเพิ่มเติม" cols="grid-cols-1">
+          <Section title="บันทึกเพิ่มเติม" tone="slate" cols="grid-cols-1">
             <Field name="note" label="Note" type="textarea" value={draft.note} onChange={(v) => set('note', v)} colSpan="full" />
             <Field name="bottom_note_text" label="Bottom note" type="textarea" value={draft.bottom_note_text} onChange={(v) => set('bottom_note_text', v)} colSpan="full" />
           </Section>
@@ -727,19 +848,19 @@ export function VitalSignEntryDialog({
           {error && (
             <div
               role="alert"
-              className="rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-700"
+              className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-rose-700 shadow-sm"
             >
               {error}
             </div>
           )}
 
-          <div className="sticky bottom-0 -mx-3 -mb-3 flex flex-wrap items-center gap-2 border-t border-slate-200 bg-white/95 px-3 py-2.5 backdrop-blur">
+          <div className="sticky bottom-0 -mx-4 -mb-4 flex flex-wrap items-center gap-2 border-t-2 border-slate-900 bg-white/95 px-4 py-3 backdrop-blur">
             {mode === 'edit' && (
               <button
                 type="button"
                 onClick={handleDelete}
                 disabled={saving}
-                className="rounded-md border border-rose-300 bg-white px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                className="rounded-md border-2 border-rose-300 bg-white px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-rose-700 transition-colors hover:bg-rose-50 disabled:opacity-40"
               >
                 ลบ
               </button>
@@ -749,14 +870,14 @@ export function VitalSignEntryDialog({
                 type="button"
                 onClick={onCancel}
                 disabled={saving}
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40"
               >
                 ยกเลิก
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                className="rounded-md border-2 border-cyan-700 bg-cyan-700 px-5 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-white transition-colors hover:bg-cyan-800 disabled:opacity-40"
               >
                 {saving ? 'กำลังบันทึก…' : 'บันทึก'}
               </button>

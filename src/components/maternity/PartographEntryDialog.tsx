@@ -337,49 +337,114 @@ function softConfirmations(
   return msgs;
 }
 
+// Categorical clinical palette — mirrors the v2 ward bed-tile color system so
+// section identity carries through from the at-a-glance grid into the entry
+// dialog. Each tone is a (foreground, soft background, ring) trio.
+type SectionTone =
+  | 'fhr'       // rose / heart
+  | 'labour'    // indigo / partograph progress
+  | 'cont'      // violet / contractions
+  | 'vitals'    // cyan / nurse-note vitals
+  | 'interv'    // emerald / IV / Oxytocin
+  | 'urine'     // amber
+  | 'pps'       // sky / postpartum
+  | 'biometric' // amber
+  | 'pv'        // indigo
+  | 'pe'        // emerald
+  | 'icu'       // rose
+  | 'fluid'     // sky
+  | 'slate';    // neutral
+
+const TONE_TOKENS: Record<
+  SectionTone,
+  { ink: string; bar: string; bg: string; ring: string }
+> = {
+  fhr:       { ink: 'text-rose-700',     bar: 'bg-rose-500',     bg: 'bg-rose-50/40',     ring: 'ring-rose-200/60' },
+  labour:    { ink: 'text-indigo-700',   bar: 'bg-indigo-500',   bg: 'bg-indigo-50/40',   ring: 'ring-indigo-200/60' },
+  cont:      { ink: 'text-violet-700',   bar: 'bg-violet-500',   bg: 'bg-violet-50/40',   ring: 'ring-violet-200/60' },
+  vitals:    { ink: 'text-cyan-700',     bar: 'bg-cyan-500',     bg: 'bg-cyan-50/40',     ring: 'ring-cyan-200/60' },
+  interv:    { ink: 'text-emerald-700',  bar: 'bg-emerald-500',  bg: 'bg-emerald-50/40',  ring: 'ring-emerald-200/60' },
+  urine:     { ink: 'text-amber-700',    bar: 'bg-amber-500',    bg: 'bg-amber-50/40',    ring: 'ring-amber-200/60' },
+  pps:       { ink: 'text-sky-700',      bar: 'bg-sky-500',      bg: 'bg-sky-50/40',      ring: 'ring-sky-200/60' },
+  biometric: { ink: 'text-amber-700',    bar: 'bg-amber-500',    bg: 'bg-amber-50/40',    ring: 'ring-amber-200/60' },
+  pv:        { ink: 'text-indigo-700',   bar: 'bg-indigo-500',   bg: 'bg-indigo-50/40',   ring: 'ring-indigo-200/60' },
+  pe:        { ink: 'text-emerald-700',  bar: 'bg-emerald-500',  bg: 'bg-emerald-50/40',  ring: 'ring-emerald-200/60' },
+  icu:       { ink: 'text-rose-700',     bar: 'bg-rose-500',     bg: 'bg-rose-50/40',     ring: 'ring-rose-200/60' },
+  fluid:     { ink: 'text-sky-700',      bar: 'bg-sky-500',      bg: 'bg-sky-50/40',      ring: 'ring-sky-200/60' },
+  slate:     { ink: 'text-slate-600',    bar: 'bg-slate-400',    bg: 'bg-slate-50/60',    ring: 'ring-slate-200/60' },
+};
+
 type SectionProps = {
   title: string;
   /** Tailwind grid-cols classes for the inner field grid. */
   cols?: string;
   /** Quick-pick chip row to render between the heading and the fields. */
   chips?: React.ReactNode;
+  /** Categorical clinical color — sets the left bar + heading + tinted background. */
+  tone?: SectionTone;
   children: React.ReactNode;
 };
-// Tight two-line section: a small header strip plus a dense field grid.
-function Section({ title, cols = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4', chips, children }: SectionProps) {
+// Section: a colored 3px left bar carries categorical identity (matches the
+// v2 ward bed-tile color system), a mono caps title in the same hue, and a
+// dense field grid below. The optional `chips` slot renders quick-pick rows
+// between the heading and the field grid.
+function Section({
+  title,
+  cols = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4',
+  chips,
+  tone = 'slate',
+  children,
+}: SectionProps) {
+  const t = TONE_TOKENS[tone];
   return (
-    <section className="rounded-md border border-slate-200 bg-white">
-      <h4 className="border-b border-slate-100 bg-slate-50/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
+    <section className={cn('relative overflow-hidden rounded-lg bg-white shadow-sm ring-1', t.ring)}>
+      <span aria-hidden className={cn('absolute left-0 top-0 bottom-0 w-1', t.bar)} />
+      <h4
+        className={cn(
+          'flex items-center gap-2 border-b border-slate-100 px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.18em]',
+          t.ink,
+          t.bg,
+        )}
+      >
         {title}
       </h4>
-      {chips && <div className="px-3 pt-2">{chips}</div>}
-      <div className={cn('grid gap-x-3 gap-y-2 p-3', cols)}>{children}</div>
+      {chips && <div className="border-b border-slate-100 bg-slate-50/40 px-4 py-2.5">{chips}</div>}
+      <div className={cn('grid gap-x-3 gap-y-2.5 p-4', cols)}>{children}</div>
     </section>
   );
 }
 
-// Same shape as Section but uses native <details> so the section can collapse
-// while keeping its children in the DOM (so getByLabelText still finds them).
-// `defaultOpen` should be `true` if any child field has a value — the parent
-// computes that and passes it in so editing existing rows opens what's filled.
+// Controlled-state collapsible — children always render so fireEvent.change
+// in jsdom still updates state when the section is closed. Visibility is
+// CSS-only (`hidden`).
 function CollapsibleSection({
   title,
   cols = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4',
   defaultOpen = false,
   badge,
   chips,
+  tone = 'slate',
   children,
 }: SectionProps & { defaultOpen?: boolean; badge?: string }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const t = TONE_TOKENS[tone];
   return (
-    <details
-      open={defaultOpen}
-      className="group rounded-md border border-slate-200 bg-white"
-    >
-      <summary className="flex cursor-pointer list-none items-center justify-between border-b border-slate-100 bg-slate-50/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:bg-slate-100/60">
+    <section className={cn('relative overflow-hidden rounded-lg bg-white shadow-sm ring-1', t.ring)}>
+      <span aria-hidden className={cn('absolute left-0 top-0 bottom-0 w-1', t.bar)} />
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className={cn(
+          'flex w-full items-center justify-between border-b border-slate-100 px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.18em] transition-colors hover:bg-slate-50',
+          t.ink,
+          t.bg,
+        )}
+      >
         <span className="flex items-center gap-2">
           <span
             aria-hidden
-            className="inline-block transition-transform group-open:rotate-90"
+            className={cn('inline-block text-[10px] transition-transform', open && 'rotate-90')}
           >
             ▸
           </span>
@@ -390,13 +455,17 @@ function CollapsibleSection({
             </span>
           )}
         </span>
-        <span className="text-[10px] font-normal text-slate-400 group-open:hidden">
-          คลิกเพื่อขยาย
-        </span>
-      </summary>
-      {chips && <div className="px-3 pt-2">{chips}</div>}
-      <div className={cn('grid gap-x-3 gap-y-2 p-3', cols)}>{children}</div>
-    </details>
+        {!open && (
+          <span className="font-sans text-[10px] font-normal normal-case tracking-normal text-slate-400">
+            คลิกเพื่อขยาย
+          </span>
+        )}
+      </button>
+      <div className={cn(!open && 'hidden')}>
+        {chips && <div className="border-b border-slate-100 bg-slate-50/40 px-4 py-2.5">{chips}</div>}
+        <div className={cn('grid gap-x-3 gap-y-2.5 p-4', cols)}>{children}</div>
+      </div>
+    </section>
   );
 }
 
@@ -415,7 +484,7 @@ function ChipRow({
   ariaLabel?: string;
 }) {
   return (
-    <div className="flex flex-wrap gap-1" role="group" aria-label={ariaLabel}>
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label={ariaLabel}>
       {options.map((o) => {
         const isSelected = selected === o.value;
         return (
@@ -424,10 +493,10 @@ function ChipRow({
             type="button"
             onClick={() => onPick(o.value)}
             className={cn(
-              'rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors tabular-nums',
+              'rounded-md border px-2.5 py-1 font-mono text-[11px] font-semibold tabular-nums tracking-tight transition-all',
               isSelected
-                ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
-                : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-400 hover:bg-emerald-50/40',
+                ? 'border-cyan-600 bg-cyan-600 text-white shadow-sm'
+                : 'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700',
             )}
           >
             {o.label}
@@ -438,9 +507,10 @@ function ChipRow({
   );
 }
 
-// Quick-pick chip catalogues for partograph fields. Values mirror the most
-// commonly entered measurements per Thai LR practice + WHO partograph
-// guidelines. Order is most-common → least.
+// Quick-pick chip catalogues. Each set covers the most-commonly entered
+// measurements per Thai LR practice + WHO partograph guidelines. Values are
+// chosen as landmark/anchor points — typing is still possible for in-between
+// readings; chips are an accelerator for the 70-80% case.
 const FHR_CHIPS = [
   { value: '130', label: '130' },
   { value: '140', label: '140' },
@@ -456,11 +526,6 @@ const CX_CHIPS = [
   { value: '8', label: '8' },
   { value: '10', label: '10' },
 ];
-const STRENGTH_CHIPS = [
-  { value: 'Mild', label: 'Mild' },
-  { value: 'Moderate', label: 'Moderate' },
-  { value: 'Strong', label: 'Strong' },
-];
 const DESCENT_CHIPS = [
   { value: '5/5', label: '5/5' },
   { value: '4/5', label: '4/5' },
@@ -469,19 +534,93 @@ const DESCENT_CHIPS = [
   { value: '1/5', label: '1/5' },
   { value: '0/5', label: '0/5' },
 ];
-const AMNIOTIC_CHIPS = [
-  { value: 'Clear', label: 'Clear' },
-  { value: 'Meconium (light)', label: 'Mec L' },
-  { value: 'Meconium (thick)', label: 'Mec T' },
-  { value: 'Blood', label: 'Blood' },
-  { value: 'Absent', label: 'Absent' },
+const STRENGTH_CHIPS = [
+  { value: 'Mild', label: 'Mild' },
+  { value: 'Moderate', label: 'Moderate' },
+  { value: 'Strong', label: 'Strong' },
 ];
-const MOULDING_CHIPS = [
-  { value: '0', label: '0' },
-  { value: '+', label: '+' },
-  { value: '++', label: '++' },
-  { value: '+++', label: '+++' },
+const CONTR_FREQ_CHIPS = [
+  { value: '1', label: '1' },
+  { value: '2', label: '2' },
+  { value: '3', label: '3' },
+  { value: '4', label: '4' },
+  { value: '5', label: '5' },
 ];
+const CONTR_DUR_CHIPS = [
+  { value: '30', label: '30' },
+  { value: '40', label: '40' },
+  { value: '50', label: '50' },
+  { value: '60', label: '60' },
+];
+const PULSE_CHIPS = [
+  { value: '60', label: '60' },
+  { value: '70', label: '70' },
+  { value: '80', label: '80' },
+  { value: '90', label: '90' },
+  { value: '100', label: '100' },
+];
+const BP_SYS_CHIPS = [
+  { value: '100', label: '100' },
+  { value: '110', label: '110' },
+  { value: '120', label: '120' },
+  { value: '130', label: '130' },
+  { value: '140', label: '140' },
+];
+const BP_DIA_CHIPS = [
+  { value: '60', label: '60' },
+  { value: '70', label: '70' },
+  { value: '80', label: '80' },
+  { value: '90', label: '90' },
+];
+const TEMP_CHIPS = [
+  { value: '36.5', label: '36.5' },
+  { value: '37.0', label: '37.0' },
+  { value: '37.5', label: '37.5' },
+  { value: '38.0', label: '38.0' },
+  { value: '38.5', label: '38.5' },
+];
+const OXY_UML_CHIPS = [
+  { value: '5', label: '5' },
+  { value: '10', label: '10' },
+  { value: '15', label: '15' },
+  { value: '20', label: '20' },
+];
+const OXY_DROPS_CHIPS = [
+  { value: '10', label: '10' },
+  { value: '20', label: '20' },
+  { value: '30', label: '30' },
+  { value: '40', label: '40' },
+];
+
+// Compact "label + chips" row used inside Section `chips` slots. Aligns the
+// label column across stacked rows so vertical scan stays readable.
+function ChipLabelRow({
+  label,
+  options,
+  selected,
+  onPick,
+  ariaLabel,
+}: {
+  label: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  selected: string;
+  onPick: (v: string) => void;
+  ariaLabel?: string;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-16 shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-500">
+        {label}
+      </span>
+      <ChipRow
+        options={options}
+        selected={selected}
+        onPick={onPick}
+        ariaLabel={ariaLabel ?? label}
+      />
+    </div>
+  );
+}
 
 interface FieldProps {
   name: AnyEditableField;
@@ -508,31 +647,39 @@ function Field({
   abnormal,
 }: FieldProps) {
   const inputId = `pf-${name}`;
+  // Numeric fields render in IBM Plex Mono with tabular-nums so columns align
+  // visually across stacked rows (matches the v2 ward tile typography).
+  const isNumeric = type === 'int' || type === 'float';
   const baseCls =
-    'h-9 w-full rounded-md border bg-white px-2.5 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-1';
-  const normalCls = 'border-slate-300 focus:border-emerald-500 focus:ring-emerald-500';
+    'h-10 w-full rounded-md border bg-white px-3 text-sm text-slate-900 shadow-sm transition-colors focus:outline-none focus:ring-2';
+  const numericCls = isNumeric ? 'font-mono tabular-nums tracking-tight' : '';
+  const normalCls = 'border-slate-200 hover:border-slate-300 focus:border-cyan-500 focus:ring-cyan-500/20';
   const abnormalCls =
-    'border-rose-400 bg-rose-50/40 font-semibold text-rose-700 focus:border-rose-500 focus:ring-rose-500';
-  const inputCls = cn(baseCls, abnormal ? abnormalCls : normalCls);
+    'border-rose-400 bg-rose-50/40 font-semibold text-rose-700 focus:border-rose-500 focus:ring-rose-500/30';
+  const inputCls = cn(baseCls, numericCls, abnormal ? abnormalCls : normalCls);
   // colSpan-full is kept for the note textarea; everything else rides the
   // section's default grid template for maximum density.
   return (
     <div
       className={cn(
-        'flex flex-col gap-0.5',
+        'flex flex-col gap-1',
         colSpan === 'full' && 'col-span-full',
       )}
     >
       <label
         htmlFor={inputId}
-        className="flex items-baseline gap-1.5 text-xs font-medium text-slate-700"
+        className="flex items-baseline gap-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600"
       >
         <span className="truncate">{label}</span>
-        {hint && <span className="text-[11px] font-normal text-slate-400">{hint}</span>}
+        {hint && (
+          <span className="font-sans text-[10px] font-normal normal-case tracking-normal text-slate-400">
+            {hint}
+          </span>
+        )}
         {abnormal && (
           <span
             data-testid={`abnormal-${name}`}
-            className="ml-auto rounded-sm bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700"
+            className="ml-auto rounded-sm bg-rose-600 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.16em] text-white"
             title="ผิดปกติ — แจ้งแพทย์"
           >
             ผิดปกติ
@@ -698,34 +845,33 @@ export function PartographEntryDialog({
       }}
     >
       <DialogContent
-        className="sm:max-w-5xl max-h-[92vh] overflow-y-auto gap-2 p-3"
+        className="sm:max-w-5xl max-h-[92vh] overflow-y-auto gap-3 bg-slate-50 p-4"
         showCloseButton={false}
       >
-        {/* Compact title + live status strip on one row. The status panel is
-            the UpdateStatusPanel port (obs count · last entry · phase). */}
-        <DialogHeader className="flex-row items-center justify-between gap-3">
-          <DialogTitle className="text-base">
-            {mode === 'add' ? 'เพิ่มบันทึก Partograph' : 'แก้ไขบันทึก Partograph'}
-          </DialogTitle>
+        {/* Title strip — clinical-blue brand mark + live status pills */}
+        <DialogHeader className="flex-row items-center justify-between gap-3 border-b-2 border-slate-900 pb-3">
+          <div className="flex items-center gap-3">
+            <span aria-hidden className="block h-1 w-7 bg-cyan-600" />
+            <DialogTitle className="font-mono text-[13px] font-extrabold uppercase tracking-[0.16em] text-slate-900">
+              {mode === 'add' ? 'PARTOGRAPH · NEW ENTRY' : 'PARTOGRAPH · EDIT'}
+            </DialogTitle>
+          </div>
           <div
             data-testid="partograph-status"
-            className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-600"
+            className="flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500"
           >
-            <span>
-              <span className="font-semibold text-slate-800 tabular-nums">{obsCount}</span> รายการ
+            <span className="rounded bg-white px-2 py-1 ring-1 ring-slate-200">
+              <span className="font-bold text-slate-900 tabular-nums">{obsCount}</span> รายการ
             </span>
-            <span aria-hidden className="text-slate-300">·</span>
-            <span>
-              ล่าสุด{' '}
-              <span className="tabular-nums">{lastEntry ? formatRelativeTime(lastEntry) : '—'}</span>
+            <span className="rounded bg-white px-2 py-1 ring-1 ring-slate-200">
+              ล่าสุด <span className="tabular-nums text-slate-900">{lastEntry ? formatRelativeTime(lastEntry) : '—'}</span>
             </span>
-            <span aria-hidden className="text-slate-300">·</span>
             <span
               className={cn(
-                'rounded px-2 py-0.5 text-[11px] font-semibold tracking-wide',
+                'rounded px-2 py-1 font-bold ring-1',
                 phase === 'ACTIVE'
-                  ? 'bg-emerald-100 text-emerald-800'
-                  : 'bg-slate-100 text-slate-700',
+                  ? 'bg-emerald-600 text-white ring-emerald-700'
+                  : 'bg-slate-200 text-slate-700 ring-slate-300',
               )}
             >
               {phase === 'ACTIVE' ? 'ACTIVE PHASE' : 'LATENT PHASE'}
@@ -738,10 +884,10 @@ export function PartographEntryDialog({
             e.preventDefault();
             handleSave();
           }}
-          className="flex flex-col gap-2"
+          className="flex flex-col gap-3"
         >
-          {/* Timestamp + hour number on one inline row. */}
-          <section className="grid grid-cols-2 gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 sm:grid-cols-4">
+          {/* Timestamp + hour-no — compact strip with mono numerics. */}
+          <section className="grid grid-cols-2 gap-3 rounded-lg bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:grid-cols-4">
             <Field
               name="observe_datetime"
               label="เวลาสังเกต"
@@ -772,6 +918,7 @@ export function PartographEntryDialog({
           <div className="grid gap-2 lg:grid-cols-2">
             <Section
               title="ทารกในครรภ์"
+              tone="fhr"
               cols="grid-cols-3"
               chips={
                 <ChipRow
@@ -796,27 +943,12 @@ export function PartographEntryDialog({
 
             <Section
               title="ความก้าวหน้าของการคลอด"
+              tone="labour"
               cols="grid-cols-2"
               chips={
                 <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="w-16 shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-500">Cx</span>
-                    <ChipRow
-                      ariaLabel="Cervical dilation quick picks"
-                      options={CX_CHIPS}
-                      selected={draft.cervical_dilation_cm}
-                      onPick={(v) => set('cervical_dilation_cm', v)}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-16 shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-500">Descent</span>
-                    <ChipRow
-                      ariaLabel="Descent of head quick picks"
-                      options={DESCENT_CHIPS}
-                      selected={draft.descent_of_head}
-                      onPick={(v) => set('descent_of_head', v)}
-                    />
-                  </div>
+                  <ChipLabelRow label="Cx" options={CX_CHIPS} selected={draft.cervical_dilation_cm} onPick={(v) => set('cervical_dilation_cm', v)} />
+                  <ChipLabelRow label="Descent" options={DESCENT_CHIPS} selected={draft.descent_of_head} onPick={(v) => set('descent_of_head', v)} />
                 </div>
               }
             >
@@ -827,14 +959,14 @@ export function PartographEntryDialog({
 
           <Section
             title="การหดรัดตัวของมดลูก"
+            tone="cont"
             cols="grid-cols-3"
             chips={
-              <ChipRow
-                ariaLabel="Contraction strength quick picks"
-                options={STRENGTH_CHIPS}
-                selected={draft.contraction_strength}
-                onPick={(v) => set('contraction_strength', v)}
-              />
+              <div className="flex flex-col gap-1.5">
+                <ChipLabelRow label="Per/10 min" options={CONTR_FREQ_CHIPS} selected={draft.contraction_per_10min} onPick={(v) => set('contraction_per_10min', v)} />
+                <ChipLabelRow label="Duration" options={CONTR_DUR_CHIPS} selected={draft.contraction_duration_sec} onPick={(v) => set('contraction_duration_sec', v)} />
+                <ChipLabelRow label="Strength" options={STRENGTH_CHIPS} selected={draft.contraction_strength} onPick={(v) => set('contraction_strength', v)} />
+              </div>
             }
           >
             <Field name="contraction_per_10min" label="ครั้ง/10นาที" value={draft.contraction_per_10min} onChange={(v) => set('contraction_per_10min', v)} />
@@ -845,7 +977,19 @@ export function PartographEntryDialog({
           {/* Maternal vitals — moved up before drugs because pulse/BP are
               checked every 30 min during active labour vs. drugs adjusted only
               when augmenting. */}
-          <Section title="สัญญาณชีพมารดา" cols="grid-cols-2 sm:grid-cols-4">
+          <Section
+            title="สัญญาณชีพมารดา"
+            tone="vitals"
+            cols="grid-cols-2 sm:grid-cols-4"
+            chips={
+              <div className="flex flex-col gap-1.5">
+                <ChipLabelRow label="Pulse" options={PULSE_CHIPS} selected={draft.pulse} onPick={(v) => set('pulse', v)} />
+                <ChipLabelRow label="BP Sys" options={BP_SYS_CHIPS} selected={draft.bp_systolic} onPick={(v) => set('bp_systolic', v)} />
+                <ChipLabelRow label="BP Dia" options={BP_DIA_CHIPS} selected={draft.bp_diastolic} onPick={(v) => set('bp_diastolic', v)} />
+                <ChipLabelRow label="Temp" options={TEMP_CHIPS} selected={draft.temperature} onPick={(v) => set('temperature', v)} />
+              </div>
+            }
+          >
             <Field
               name="pulse"
               label="Pulse"
@@ -887,6 +1031,7 @@ export function PartographEntryDialog({
 
           <CollapsibleSection
             title="ยาและสารน้ำ"
+            tone="interv"
             cols="grid-cols-3"
             defaultOpen={
               draft.oxytocin_uml !== '' ||
@@ -894,6 +1039,12 @@ export function PartographEntryDialog({
               draft.drugs_iv_fluids !== ''
             }
             badge="เมื่อมีการให้ยา/สารน้ำ"
+            chips={
+              <div className="flex flex-col gap-1.5">
+                <ChipLabelRow label="Oxy U/mL" options={OXY_UML_CHIPS} selected={draft.oxytocin_uml} onPick={(v) => set('oxytocin_uml', v)} />
+                <ChipLabelRow label="Drops/min" options={OXY_DROPS_CHIPS} selected={draft.oxytocin_drops_min} onPick={(v) => set('oxytocin_drops_min', v)} />
+              </div>
+            }
           >
             <Field name="oxytocin_uml" label="Oxy U/mL" type="float" value={draft.oxytocin_uml} onChange={(v) => set('oxytocin_uml', v)} />
             <Field name="oxytocin_drops_min" label="Oxy หยด/นาที" value={draft.oxytocin_drops_min} onChange={(v) => set('oxytocin_drops_min', v)} />
@@ -902,6 +1053,7 @@ export function PartographEntryDialog({
 
           <CollapsibleSection
             title="ปัสสาวะ"
+            tone="urine"
             cols="grid-cols-2 sm:grid-cols-4"
             defaultOpen={
               draft.urine_volume_ml !== '' ||
@@ -919,6 +1071,7 @@ export function PartographEntryDialog({
 
           <CollapsibleSection
             title="บันทึกเพิ่มเติม"
+            tone="slate"
             cols="grid-cols-1"
             defaultOpen={draft.note !== ''}
           >
@@ -928,18 +1081,18 @@ export function PartographEntryDialog({
           {error && (
             <div
               role="alert"
-              className="rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-700"
+              className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-rose-700 shadow-sm"
             >
               {error}
             </div>
           )}
 
-          <div className="sticky bottom-0 -mx-3 -mb-3 flex flex-wrap items-center gap-2 border-t border-slate-200 bg-white/95 px-3 py-2.5 backdrop-blur">
+          <div className="sticky bottom-0 -mx-4 -mb-4 flex flex-wrap items-center gap-2 border-t-2 border-slate-900 bg-white/95 px-4 py-3 backdrop-blur">
             <button
               type="button"
               onClick={handleCopyPrev}
               disabled={!prevRow || saving}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:border-emerald-400 hover:text-emerald-700 disabled:opacity-50"
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-slate-700 transition-colors hover:border-cyan-400 hover:text-cyan-700 disabled:opacity-40"
               title="คัดลอกสัญญาณชีพและปัสสาวะจากครั้งก่อน"
             >
               คัดลอกครั้งก่อน
@@ -949,7 +1102,7 @@ export function PartographEntryDialog({
                 type="button"
                 onClick={handleDelete}
                 disabled={saving}
-                className="rounded-md border border-rose-300 bg-white px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                className="rounded-md border-2 border-rose-300 bg-white px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-rose-700 transition-colors hover:bg-rose-50 disabled:opacity-40"
               >
                 ลบ
               </button>
@@ -959,14 +1112,14 @@ export function PartographEntryDialog({
                 type="button"
                 onClick={onCancel}
                 disabled={saving}
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40"
               >
                 ยกเลิก
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                className="rounded-md border-2 border-cyan-700 bg-cyan-700 px-5 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-white transition-colors hover:bg-cyan-800 disabled:opacity-40"
               >
                 {saving ? 'กำลังบันทึก…' : 'บันทึก'}
               </button>
