@@ -697,6 +697,15 @@ export const PATIENT_INFANTS_BY_AN: SqlQueryTemplate = {
           WHERE il.an = :an`,
 };
 
+// Bed-move history for a single admission. iptbedmove records every move from
+// admit through discharge — the BedTab uses it to render an audit-trail
+// timeline. Two LEFT JOINs to `ward` resolve old/new ward codes to readable
+// names (verified accepted by the BMS Validator on the test tunnel).
+export const PATIENT_BED_MOVES_BY_AN: SqlQueryTemplate = {
+  postgresql: `SELECT bm.iptbedmove_id, bm.movedate, bm.movetime, bm.oward, bm.obedno, bm.nward, bm.nbedno, bm.nroomno, bm.movereason, bm.staff, ow.name AS oward_name, nw.name AS nward_name FROM iptbedmove bm LEFT JOIN ward ow ON ow.ward = bm.oward LEFT JOIN ward nw ON nw.ward = bm.nward WHERE bm.an = :an`,
+  mysql: `SELECT bm.iptbedmove_id, bm.movedate, bm.movetime, bm.oward, bm.obedno, bm.nward, bm.nbedno, bm.nroomno, bm.movereason, bm.staff, ow.name AS oward_name, nw.name AS nward_name FROM iptbedmove bm LEFT JOIN ward ow ON ow.ward = bm.oward LEFT JOIN ward nw ON nw.ward = bm.nward WHERE bm.an = :an`,
+};
+
 // Lookup: bed-move reason values
 export const BED_MOVE_REASONS: SqlQueryTemplate = {
   postgresql: `SELECT reason FROM iptbedmove_reason ORDER BY reason`,

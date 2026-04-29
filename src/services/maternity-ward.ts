@@ -18,6 +18,7 @@ import {
   PATIENT_INFANTS_BY_AN,
   PATIENT_LABOR_BY_AN,
   PATIENT_LABOUR_BY_AN,
+  PATIENT_BED_MOVES_BY_AN,
   PATIENT_LABOUR_MED_BY_AN,
   PATIENT_PARTOGRAPH_BY_AN,
   PATIENT_PREGNANCY_BY_AN,
@@ -33,6 +34,7 @@ import {
 import type { ConnectionConfig, UserInfo } from '@/types/bms-browser';
 import type {
   BedMoveArgs,
+  BedMoveRow,
   BedOccupancy,
   BedOccupancyFull,
   BedSlot,
@@ -201,6 +203,24 @@ export async function getPatientComplications(
   const sql = getQuery(PATIENT_COMPLICATIONS_BY_LABOUR_ID, DEFAULT_DIALECT);
   const r = await executeSql<ComplicationRow>(sql, config, { ipt_labour_id: iptLabourId });
   return r.data;
+}
+
+// Bed-move history for a single admission. Powers the BedTab timeline.
+// Sorted client-side (BMS validator rejects ORDER BY in this tunnel).
+export async function getPatientBedMoves(
+  config: ConnectionConfig,
+  an: string,
+): Promise<BedMoveRow[]> {
+  const sql = getQuery(PATIENT_BED_MOVES_BY_AN, DEFAULT_DIALECT);
+  const r = await executeSql<BedMoveRow>(sql, config, { an });
+  // Newest first by (movedate, movetime). Treat null as oldest so legacy
+  // rows without a timestamp drop to the bottom rather than fight for the
+  // top of the list.
+  return [...r.data].sort((a, b) => {
+    const ka = `${a.movedate ?? ''} ${a.movetime ?? ''}`;
+    const kb = `${b.movedate ?? ''} ${b.movetime ?? ''}`;
+    return kb.localeCompare(ka);
+  });
 }
 
 // Task 37: read newborn + ipt_labour_infant join for an admission. The

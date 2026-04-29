@@ -317,6 +317,23 @@ export interface BedMoveArgs {
   reason: string;
 }
 
+/** A single row from iptbedmove with old/new ward names resolved via JOIN.
+ *  Powers the BedTab move-history timeline. */
+export interface BedMoveRow {
+  iptbedmove_id: number;
+  movedate: string | null;
+  movetime: string | null;
+  oward: string | null;
+  obedno: string | null;
+  nward: string | null;
+  nbedno: string | null;
+  nroomno: string | null;
+  movereason: string | null;
+  staff: string | null;
+  oward_name?: string | null;
+  nward_name?: string | null;
+}
+
 export interface DischargeArgs {
   an: string;
   dchdate: string;   // ISO date

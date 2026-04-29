@@ -2,11 +2,24 @@
 /* @vitest-environment-options { "url": "http://localhost/" } */
 // Task 38: BedTab read-only — TDD: write tests FIRST. BedTab takes the
 // already-loaded BedOccupancy directly (no extra fetch needed).
-import { describe, it, expect } from 'vitest';
+//
+// Update (bedmove-history redesign): BedTab now also consults
+// useBmsSession + getPatientBedMoves to render the move-history timeline.
+// Mock both so existing tests stay focused on the current-location card.
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { SWRConfig } from 'swr';
+import type { ReactNode } from 'react';
+
+vi.mock('@/hooks/useBmsSession', () => ({ useBmsSession: vi.fn(() => ({ config: null })) }));
+vi.mock('@/services/maternity-ward', () => ({ getPatientBedMoves: vi.fn(async () => []) }));
 
 import { BedTab } from '@/components/maternity/tabs/BedTab';
 import type { BedOccupancy } from '@/types/maternity-ward';
+
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>{children}</SWRConfig>
+);
 
 const baseOccupant: BedOccupancy = {
   an: 'AN1',
@@ -31,7 +44,7 @@ const baseOccupant: BedOccupancy = {
 
 describe('BedTab', () => {
   it('renders fields when occupant present', () => {
-    render(<BedTab occupant={baseOccupant} />);
+    render(<BedTab occupant={baseOccupant} />, { wrapper });
     expect(screen.getByText('07')).toBeInTheDocument();
     expect(screen.getByText(/LR1/)).toBeInTheDocument();
     expect(screen.getByText(/ห้องคลอด 1/)).toBeInTheDocument();
@@ -40,12 +53,12 @@ describe('BedTab', () => {
   });
 
   it('shows ไม่พบข้อมูล when occupant is null', () => {
-    render(<BedTab occupant={null} />);
+    render(<BedTab occupant={null} />, { wrapper });
     expect(screen.getByText(/ไม่พบข้อมูล/)).toBeInTheDocument();
   });
 
   it('handles null roomname gracefully (falls back to roomno only)', () => {
-    render(<BedTab occupant={{ ...baseOccupant, roomname: null }} />);
+    render(<BedTab occupant={{ ...baseOccupant, roomname: null }} />, { wrapper });
     expect(screen.getByText('LR1')).toBeInTheDocument();
   });
 });
