@@ -1128,11 +1128,17 @@ describe('dischargePatient', () => {
     expect(mockFetch.mock.calls[0][0]).toBe('https://t.example/api/api/rest/ipt/AN1');
     expect(mockFetch.mock.calls[0][1].method).toBe('PUT');
     const iptBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    // confirm_discharge='Y' is the actual flag that flips the patient out of
+    // the active-ward roster (WARD_BEDS_OCCUPANCY filters on it). Without
+    // setting it here the bed kiosk would still show the patient as occupied
+    // even after dchdate/dchtime are filled — matches HOSxP's
+    // confirm-discharge checkbox semantics.
     expect(iptBody).toEqual({
       dchdate: '2026-04-19',
       dchtime: '14:30:00',
       dchtype: '1',
       dchstts: '1',
+      confirm_discharge: 'Y',
     });
     expect(mockFetch.mock.calls[1][0]).toBe('https://t.example/api/api/rest/iptadm/AN1');
     const admBody = JSON.parse(mockFetch.mock.calls[1][1].body);

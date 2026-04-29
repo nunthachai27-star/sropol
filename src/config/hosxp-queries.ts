@@ -710,6 +710,19 @@ export const DCHSTTS_LOOKUP: SqlQueryTemplate = {
   postgresql: `SELECT dchstts, name FROM dchstts`,
   mysql: `SELECT dchstts, name FROM dchstts`,
 };
+// Specialty master (ipt_spclty FK). PK = spclty varchar(2). Maternity LR's
+// canonical value is '03' (สูติกรรม / Obstetrics) — but the form supports
+// the full list because cross-specialty discharges happen.
+export const SPCLTY_LOOKUP: SqlQueryTemplate = {
+  postgresql: `SELECT spclty, name FROM spclty WHERE active_status = 'Y'`,
+  mysql: `SELECT spclty, name FROM spclty WHERE active_status = 'Y'`,
+};
+// Severity master (dch_severe_type_id FK). PK = ipt_severe_type_id int. Tiny
+// table — 4 rows on test BMS (ระดับ 1..4).
+export const IPT_SEVERE_TYPE_LOOKUP: SqlQueryTemplate = {
+  postgresql: `SELECT ipt_severe_type_id, ipt_severe_type_name FROM ipt_severe_type`,
+  mysql: `SELECT ipt_severe_type_id, ipt_severe_type_name FROM ipt_severe_type`,
+};
 
 // Bed-move history for a single admission. iptbedmove records every move from
 // admit through discharge — the BedTab uses it to render an audit-trail

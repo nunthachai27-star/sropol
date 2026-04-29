@@ -7,20 +7,28 @@
 // Field semantics learned from the Delphi form:
 //   - dchdate / dchtime           — when the patient was discharged
 //   - dchtype  (varchar 2 FK)     — circumstances of discharge (dchtype master).
-//                                   '01' With Approval, '02' Against Advice,
-//                                   '04' By Transfer, '08'/'09' Dead, etc.
 //   - dchstts  (varchar 2 FK)     — clinical outcome at discharge (dchstts master).
-//                                   '01' Complete Recovery, '04' Normal Delivery
-//                                   (canonical for maternity LR), '08' Dead Stillbirth, etc.
 //   - dch_doctor                  — discharging doctor (free-text doctor code)
-//   - confirm_discharge           — Y/N toggle in HOSxP — when N, all dch fields
-//                                   are nulled. We model "discharged vs not" as
-//                                   read-only status here; undo flow is future work.
+//   - ipt_spclty (varchar 2 FK)   — specialty at discharge (spclty master).
+//                                   '03' = สูติกรรม (Obstetrics), maternity LR canon.
+//   - dch_severe_type_id (int FK) — severity at discharge (ipt_severe_type, 1..4).
+//   - followup (Y/N)              — whether followup is required.
+//   - confirm_discharge (Y/N)     — CRITICAL gate. WARD_BEDS_OCCUPANCY filters
+//                                   on confirm_discharge='N'; until this flips
+//                                   to 'Y' the patient stays on the active ward
+//                                   roster even with dchdate/dchtime filled.
+//                                   Our service forces it to 'Y' on save.
 //
-// Bug fixed (this revision): previous tab hardcoded dchtype/dchstts options
-// as '1','2','3' — but the master tables key on varchar(2) codes ('01'..'09').
-// Hardcoded values silently violated the FK. Now the tab loads the live
-// dchtype/dchstts master tables and displays "code · name" in the dropdowns.
+// User-friendly UX in this revision:
+//   * 4 quick-scenario chips (Normal Delivery / Refer / AMA / Stillbirth)
+//     pre-fill the most common Maternity LR discharge patterns in one tap.
+//   * Specialty chips default to '03' (สูติกรรม) — maternity canon — with the
+//     full master available via the dropdown for cross-spec discharges.
+//   * Severity chips render with clinical tones (ระดับ 1 ok green → 4 crit rose).
+//   * Followup is a clear Y/N toggle chip.
+//   * Section-grouped layout: ข้อมูลการจำหน่าย / ผลการรักษา / ติดตามต่อเนื่อง.
+//   * Required-field asterisks; live ระยะเวลานอน calculation; explicit
+//     "confirm_discharge" banner so the nurse knows the save is final.
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -30,6 +38,8 @@ import {
   dischargePatient,
   listDchStatuses,
   listDchTypes,
+  listIptSevereTypes,
+  listSpecialties,
 } from '@/services/maternity-ward';
 import type { BedOccupancy } from '@/types/maternity-ward';
 import { cn } from '@/lib/utils';
@@ -80,19 +90,66 @@ interface DraftState {
   dchtime: string;
   dchtype: string;
   dchstts: string;
+  ipt_spclty: string;
+  dch_severe_type_id: string; // empty = not set; numeric string otherwise
   dch_doctor: string;
+  followup: 'Y' | 'N';
 }
 
-// Maternity-LR canonical defaults — '01' (With Approval) for type and
-// '04' (Normal Delivery) for status. The nurse can change either before
-// confirming. Date+time auto-fill to "now".
+// Maternity-LR canonical defaults — '01' (With Approval) for type, '04'
+// (Normal Delivery) for status, '03' (สูติกรรม) for specialty. The nurse
+// can change any before confirming. Date+time auto-fill to "now".
 const EMPTY_DRAFT: DraftState = {
   dchdate: '',
   dchtime: '',
   dchtype: '01',
   dchstts: '04',
+  ipt_spclty: '03',
+  dch_severe_type_id: '',
   dch_doctor: '',
+  followup: 'N',
 };
+
+// ─── Quick-scenario presets (common LR patterns) ───────────────────────────
+
+interface ScenarioPreset {
+  id: string;
+  label: string;
+  hint: string;
+  patch: Partial<DraftState>;
+  tone: 'ok' | 'warn' | 'crit';
+}
+
+const SCENARIOS: ScenarioPreset[] = [
+  {
+    id: 'normal-home',
+    label: 'คลอดปกติ ส่งกลับบ้าน',
+    hint: 'dchtype 01 · dchstts 04 · followup N',
+    patch: { dchtype: '01', dchstts: '04', followup: 'N' },
+    tone: 'ok',
+  },
+  {
+    id: 'refer-out',
+    label: 'ส่งต่อโรงพยาบาล',
+    hint: 'dchtype 04 · dchstts 03 · followup Y',
+    patch: { dchtype: '04', dchstts: '03', followup: 'Y' },
+    tone: 'warn',
+  },
+  {
+    id: 'ama',
+    label: 'ขออนุญาตกลับเอง',
+    hint: 'dchtype 02 · dchstts 03',
+    patch: { dchtype: '02', dchstts: '03', followup: 'N' },
+    tone: 'warn',
+  },
+  {
+    id: 'stillbirth',
+    label: 'ทารกเสียชีวิตในครรภ์',
+    hint: 'dchstts 08 · followup Y',
+    patch: { dchstts: '08', followup: 'Y' },
+    tone: 'crit',
+  },
+];
 
 // ─── Field primitives ──────────────────────────────────────────────────────
 
@@ -123,6 +180,68 @@ function ReadField({
 const inputCls =
   'h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-[14px] text-slate-900 shadow-sm transition-colors hover:border-slate-300 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20';
 
+function FormLabel({ children, required }: { children: React.ReactNode; required?: boolean }) {
+  return (
+    <label className="text-[12px] font-semibold text-slate-700">
+      {children}
+      {required && <span className="ml-0.5 text-rose-600">*</span>}
+    </label>
+  );
+}
+
+// Tonal chip with selected/unselected state — used for specialty / severity /
+// followup quick-pick rows. No drag (categorical values).
+function ToneChip({
+  label,
+  selected,
+  tone,
+  onClick,
+  hint,
+}: {
+  label: string;
+  selected: boolean;
+  tone: 'cyan' | 'emerald' | 'amber' | 'rose' | 'lime';
+  onClick: () => void;
+  hint?: string;
+}) {
+  const tones: Record<typeof tone, { selected: string; unselected: string }> = {
+    cyan: {
+      selected: 'border-cyan-600 bg-cyan-600 text-white shadow-sm ring-2 ring-cyan-600/20',
+      unselected: 'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700',
+    },
+    emerald: {
+      selected: 'border-emerald-600 bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-600/20',
+      unselected: 'border-emerald-300 bg-emerald-50/40 text-emerald-700 hover:border-emerald-500 hover:bg-emerald-50',
+    },
+    lime: {
+      selected: 'border-lime-600 bg-lime-600 text-white shadow-sm ring-2 ring-lime-600/20',
+      unselected: 'border-lime-300 bg-lime-50/40 text-lime-700 hover:border-lime-500 hover:bg-lime-50',
+    },
+    amber: {
+      selected: 'border-amber-600 bg-amber-600 text-white shadow-sm ring-2 ring-amber-600/20',
+      unselected: 'border-amber-300 bg-amber-50/40 text-amber-700 hover:border-amber-500 hover:bg-amber-50',
+    },
+    rose: {
+      selected: 'border-rose-600 bg-rose-600 text-white shadow-sm ring-2 ring-rose-600/20',
+      unselected: 'border-rose-300 bg-rose-50/40 text-rose-700 hover:border-rose-500 hover:bg-rose-50',
+    },
+  };
+  const t = tones[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={hint}
+      className={cn(
+        'rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-all',
+        selected ? t.selected : t.unselected,
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
 // ─── Main ──────────────────────────────────────────────────────────────────
 
 export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
@@ -131,10 +250,9 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [discharged, setDischarged] = useState(false);
+  const [activeScenario, setActiveScenario] = useState<string | null>(null);
 
-  // Load discharge type + status masters once. Both are small (~10 rows
-  // each on test BMS) so we cache them in SWR module memory and resolve
-  // the saved code to its readable name client-side.
+  // Master-table fetches — small, cacheable, never invalidate on focus.
   const dchTypes = useSWR(
     config ? ['dchtype-list', config.apiUrl] : null,
     () => listDchTypes(config!),
@@ -145,9 +263,18 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
     () => listDchStatuses(config!),
     { revalidateOnFocus: false },
   );
+  const specialties = useSWR(
+    config ? ['spclty-list', config.apiUrl] : null,
+    () => listSpecialties(config!),
+    { revalidateOnFocus: false },
+  );
+  const severeTypes = useSWR(
+    config ? ['ipt-severe-type-list', config.apiUrl] : null,
+    () => listIptSevereTypes(config!),
+    { revalidateOnFocus: false },
+  );
 
-  // Auto-fill date+time to "now" the first time the form mounts. Avoid
-  // overwriting a value the nurse already typed.
+  // Auto-fill date+time on mount — only when the form is freshly empty.
   useEffect(() => {
     setDraft((d) =>
       d.dchdate === '' && d.dchtime === ''
@@ -162,12 +289,37 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
 
   const hcode = userInfo?.hospcode ?? '';
   const admit = admitDate(occupant);
+  const losStr =
+    admit && draft.dchdate && draft.dchtime
+      ? lengthOfStayBetween(admit, draft.dchdate, draft.dchtime)
+      : '—';
 
   function nameForType(code: string): string | undefined {
     return dchTypes.data?.find((t) => t.dchtype === code)?.name;
   }
   function nameForStatus(code: string): string | undefined {
     return dchStatuses.data?.find((s) => s.dchstts === code)?.name;
+  }
+  function nameForSpclty(code: string): string | undefined {
+    return specialties.data?.find((s) => s.spclty === code)?.name;
+  }
+  function nameForSeverity(id: string): string | undefined {
+    if (id === '') return undefined;
+    const n = Number(id);
+    return severeTypes.data?.find((s) => s.ipt_severe_type_id === n)?.ipt_severe_type_name;
+  }
+
+  function applyScenario(s: ScenarioPreset) {
+    setDraft((d) => ({ ...d, ...s.patch }));
+    setActiveScenario(s.id);
+  }
+
+  // Severity tone ladder: 1 = ok green, 2 = lime, 3 = warn amber, 4 = crit rose.
+  function severityTone(id: number): 'emerald' | 'lime' | 'amber' | 'rose' {
+    if (id <= 1) return 'emerald';
+    if (id === 2) return 'lime';
+    if (id === 3) return 'amber';
+    return 'rose';
   }
 
   async function confirmAndSave() {
@@ -189,6 +341,10 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
         dchtype: draft.dchtype,
         dchstts: draft.dchstts,
         dch_doctor: draft.dch_doctor || null,
+        ipt_spclty: draft.ipt_spclty || null,
+        dch_severe_type_id:
+          draft.dch_severe_type_id !== '' ? Number(draft.dch_severe_type_id) : null,
+        followup: draft.followup,
       });
       setDischarged(true);
     } catch (e) {
@@ -200,7 +356,6 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
 
   // ─── Discharged-confirmation view ────────────────────────────────────────
   if (discharged) {
-    const losStr = admit ? lengthOfStayBetween(admit, draft.dchdate, draft.dchtime) : '—';
     return (
       <div className="space-y-4 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-slate-900 pb-3">
@@ -225,14 +380,32 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
             <ReadField label="จำหน่ายเมื่อ" value={`${draft.dchdate} ${draft.dchtime}`} emphasis="primary" />
             <ReadField label="ระยะเวลานอน" value={losStr} emphasis="cyan" />
             <ReadField
+              label="แผนก"
+              value={
+                nameForSpclty(draft.ipt_spclty)
+                  ? `${draft.ipt_spclty} · ${nameForSpclty(draft.ipt_spclty)}`
+                  : draft.ipt_spclty
+              }
+            />
+            <ReadField
               label="ประเภทจำหน่าย"
-              value={nameForType(draft.dchtype) ? `${draft.dchtype} · ${nameForType(draft.dchtype)}` : draft.dchtype}
+              value={
+                nameForType(draft.dchtype)
+                  ? `${draft.dchtype} · ${nameForType(draft.dchtype)}`
+                  : draft.dchtype
+              }
             />
             <ReadField
               label="สถานะจำหน่าย"
-              value={nameForStatus(draft.dchstts) ? `${draft.dchstts} · ${nameForStatus(draft.dchstts)}` : draft.dchstts}
+              value={
+                nameForStatus(draft.dchstts)
+                  ? `${draft.dchstts} · ${nameForStatus(draft.dchstts)}`
+                  : draft.dchstts
+              }
             />
+            <ReadField label="ความรุนแรง" value={nameForSeverity(draft.dch_severe_type_id)} />
             <ReadField label="แพทย์จำหน่าย" value={draft.dch_doctor} />
+            <ReadField label="ติดตามต่อเนื่อง" value={draft.followup === 'Y' ? 'ใช่' : 'ไม่'} />
           </dl>
         </section>
       </div>
@@ -242,6 +415,7 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
   // ─── Active-admission view ──────────────────────────────────────────────
   return (
     <div className="space-y-4 p-4">
+      {/* Title bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-slate-900 pb-3">
         <div className="flex items-center gap-3">
           <span aria-hidden className="block h-1.5 w-8 bg-cyan-600" />
@@ -267,27 +441,51 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
           <ReadField
             label="เตียง · ห้อง"
             value={
-              [occupant.bedno, occupant.roomname || occupant.roomno].filter(Boolean).join(' · ') || '—'
+              [occupant.bedno, occupant.roomname || occupant.roomno]
+                .filter(Boolean)
+                .join(' · ') || '—'
             }
           />
         </dl>
       </section>
 
-      {/* Discharge entry form */}
+      {/* Quick scenarios */}
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-3 text-[11px] font-bold uppercase tracking-wide text-slate-500">
-          บันทึกการจำหน่าย
+        <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+          สถานการณ์ที่พบบ่อย — แตะหนึ่งครั้งเพื่อเติมค่าทั้งหมด
         </div>
+        <div className="mb-3 text-[11px] text-slate-500">
+          ปรับค่าได้ในแบบฟอร์มด้านล่าง — สถานการณ์เป็น preset เพื่อความเร็ว
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {SCENARIOS.map((s) => (
+            <ToneChip
+              key={s.id}
+              label={s.label}
+              hint={s.hint}
+              selected={activeScenario === s.id}
+              tone={s.tone === 'ok' ? 'emerald' : s.tone === 'warn' ? 'amber' : 'rose'}
+              onClick={() => applyScenario(s)}
+            />
+          ))}
+        </div>
+      </section>
 
-        {saveError && (
-          <div role="alert" className="mb-3 rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-[13px] font-semibold text-rose-700">
-            {saveError}
-          </div>
-        )}
+      {saveError && (
+        <div role="alert" className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-[13px] font-semibold text-rose-700">
+          {saveError}
+        </div>
+      )}
 
+      {/* Section 1: ข้อมูลการจำหน่าย */}
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+          <span className="block h-2 w-2 rounded-full bg-cyan-500" aria-hidden />
+          ข้อมูลการจำหน่าย
+        </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex flex-col gap-1">
-            <label className="text-[12px] font-semibold text-slate-700">วันที่จำหน่าย</label>
+            <FormLabel required>วันที่จำหน่าย</FormLabel>
             <input
               type="date"
               value={draft.dchdate}
@@ -297,7 +495,7 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-[12px] font-semibold text-slate-700">เวลาจำหน่าย</label>
+            <FormLabel required>เวลาจำหน่าย</FormLabel>
             <input
               type="time"
               step="1"
@@ -307,8 +505,62 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
               className={cn(inputCls, 'tabular-nums font-semibold')}
             />
           </div>
+          <div className="flex flex-col gap-1 sm:col-span-2">
+            <FormLabel>แพทย์ผู้สั่งจำหน่าย</FormLabel>
+            <input
+              type="text"
+              value={draft.dch_doctor}
+              onChange={(e) => setDraft((d) => ({ ...d, dch_doctor: e.target.value }))}
+              aria-label="dch_doctor"
+              placeholder="รหัสหรือชื่อแพทย์"
+              className={inputCls}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5 sm:col-span-2 lg:col-span-4">
+            <FormLabel>แผนกที่จำหน่าย</FormLabel>
+            <div className="flex flex-wrap gap-2">
+              {/* Top 4 most-used specialties as chips; full list still
+                  available via the dropdown below. Maternity-LR canon is '03'. */}
+              {(specialties.data ?? [])
+                .filter((s) => ['01', '02', '03', '04', '05'].includes(s.spclty))
+                .map((s) => (
+                  <ToneChip
+                    key={s.spclty}
+                    label={`${s.spclty} · ${s.name.replace(/x+$/, '').slice(0, 30)}`}
+                    selected={draft.ipt_spclty === s.spclty}
+                    tone="cyan"
+                    onClick={() => setDraft((d) => ({ ...d, ipt_spclty: s.spclty }))}
+                  />
+                ))}
+            </div>
+            <select
+              value={draft.ipt_spclty}
+              onChange={(e) => setDraft((d) => ({ ...d, ipt_spclty: e.target.value }))}
+              aria-label="ipt_spclty"
+              className={cn(inputCls, 'max-w-md')}
+            >
+              {(specialties.data ?? []).map((s) => (
+                <option key={s.spclty} value={s.spclty}>
+                  {s.spclty} · {s.name}
+                </option>
+              ))}
+              {(!specialties.data || specialties.data.length === 0) && (
+                <option value={draft.ipt_spclty}>{draft.ipt_spclty}</option>
+              )}
+            </select>
+          </div>
+        </div>
+      </section>
+
+      {/* Section 2: ผลการรักษา */}
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+          <span className="block h-2 w-2 rounded-full bg-violet-500" aria-hidden />
+          ผลการรักษา
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="flex flex-col gap-1">
-            <label className="text-[12px] font-semibold text-slate-700">ประเภทจำหน่าย</label>
+            <FormLabel required>ประเภทจำหน่าย (dchtype)</FormLabel>
             <select
               value={draft.dchtype}
               onChange={(e) => setDraft((d) => ({ ...d, dchtype: e.target.value }))}
@@ -320,8 +572,6 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
                   {t.dchtype} · {t.name}
                 </option>
               ))}
-              {/* Fallback if master not yet loaded so the form is usable
-                  even on a slow tunnel — preserves the saved default. */}
               {(!dchTypes.data || dchTypes.data.length === 0) && (
                 <option value={draft.dchtype}>{draft.dchtype}</option>
               )}
@@ -331,7 +581,7 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
             </div>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-[12px] font-semibold text-slate-700">สถานะจำหน่าย</label>
+            <FormLabel required>สถานะจำหน่าย (dchstts)</FormLabel>
             <select
               value={draft.dchstts}
               onChange={(e) => setDraft((d) => ({ ...d, dchstts: e.target.value }))}
@@ -351,29 +601,78 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
               {nameForStatus(draft.dchstts) ?? 'รหัสจาก dchstts master'}
             </div>
           </div>
-          <div className="flex flex-col gap-1 sm:col-span-2">
-            <label className="text-[12px] font-semibold text-slate-700">แพทย์จำหน่าย (ทางเลือก)</label>
-            <input
-              type="text"
-              value={draft.dch_doctor}
-              onChange={(e) => setDraft((d) => ({ ...d, dch_doctor: e.target.value }))}
-              aria-label="dch_doctor"
-              placeholder="รหัสหรือชื่อแพทย์"
-              className={inputCls}
-            />
-          </div>
-          <div className="flex flex-col gap-1 sm:col-span-2">
-            <label className="text-[12px] font-semibold text-slate-700">ระยะเวลานอน (คำนวณ)</label>
-            <div className="flex h-10 items-center rounded-md bg-slate-50 px-3 text-[14px] font-semibold text-cyan-700">
-              {admit && draft.dchdate && draft.dchtime
-                ? lengthOfStayBetween(admit, draft.dchdate, draft.dchtime)
-                : '—'}
+          <div className="flex flex-col gap-1.5 sm:col-span-2">
+            <FormLabel>ความรุนแรงตอนจำหน่าย</FormLabel>
+            <div className="flex flex-wrap gap-2">
+              <ToneChip
+                label="ไม่ระบุ"
+                selected={draft.dch_severe_type_id === ''}
+                tone="cyan"
+                onClick={() => setDraft((d) => ({ ...d, dch_severe_type_id: '' }))}
+              />
+              {(severeTypes.data ?? []).map((s) => (
+                <ToneChip
+                  key={s.ipt_severe_type_id}
+                  label={s.ipt_severe_type_name.trim()}
+                  selected={draft.dch_severe_type_id === String(s.ipt_severe_type_id)}
+                  tone={severityTone(s.ipt_severe_type_id)}
+                  onClick={() =>
+                    setDraft((d) => ({ ...d, dch_severe_type_id: String(s.ipt_severe_type_id) }))
+                  }
+                />
+              ))}
             </div>
-            <div className="text-[11px] text-slate-500">นับจากวัน/เวลาแอดมิต ถึงวัน/เวลาจำหน่าย</div>
           </div>
         </div>
+      </section>
 
-        <div className="mt-5 flex items-center justify-end gap-2 border-t border-slate-200 pt-4">
+      {/* Section 3: ติดตามต่อเนื่อง */}
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+          <span className="block h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
+          ติดตามต่อเนื่อง · ระยะเวลานอน
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <FormLabel>ต้องการนัดติดตาม?</FormLabel>
+            <div className="flex gap-2">
+              <ToneChip
+                label="ไม่ต้องนัดติดตาม"
+                selected={draft.followup === 'N'}
+                tone="cyan"
+                onClick={() => setDraft((d) => ({ ...d, followup: 'N' }))}
+              />
+              <ToneChip
+                label="ต้องนัดติดตาม"
+                selected={draft.followup === 'Y'}
+                tone="emerald"
+                onClick={() => setDraft((d) => ({ ...d, followup: 'Y' }))}
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <FormLabel>ระยะเวลานอน (คำนวณ)</FormLabel>
+            <div className="flex h-10 items-center rounded-md bg-slate-50 px-3 text-[14px] font-semibold text-cyan-700">
+              {losStr}
+            </div>
+            <div className="text-[11px] text-slate-500">
+              นับจากวัน/เวลาแอดมิต ถึงวัน/เวลาจำหน่าย
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Confirm-discharge banner + save */}
+      <section className="rounded-lg border-2 border-rose-200 bg-rose-50 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-1">
+            <div className="text-[13px] font-bold text-rose-900">
+              ⚠ การกดยืนยันจะตั้งค่า <span className="font-mono">confirm_discharge = 'Y'</span> ใน HOSxP
+            </div>
+            <div className="text-[12px] text-rose-700">
+              ผู้ป่วยจะถูกย้ายออกจากรายชื่อเตียงในหอผู้ป่วยทันทีหลังบันทึก
+            </div>
+          </div>
           <button
             type="button"
             onClick={confirmAndSave}

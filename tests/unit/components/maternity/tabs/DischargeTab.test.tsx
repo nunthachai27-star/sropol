@@ -17,6 +17,16 @@ vi.mock('@/services/maternity-ward', () => ({
     { dchstts: '01', name: 'Complete Recovery' },
     { dchstts: '04', name: 'Normal Delivery' },
   ]),
+  listSpecialties: vi.fn(async () => [
+    { spclty: '03', name: 'สูติกรรม' },
+    { spclty: '01', name: 'อายุรกรรม' },
+  ]),
+  listIptSevereTypes: vi.fn(async () => [
+    { ipt_severe_type_id: 1, ipt_severe_type_name: 'ระดับ 1' },
+    { ipt_severe_type_id: 2, ipt_severe_type_name: 'ระดับ 2' },
+    { ipt_severe_type_id: 3, ipt_severe_type_name: 'ระดับ 3' },
+    { ipt_severe_type_id: 4, ipt_severe_type_name: 'ระดับ 4' },
+  ]),
 }));
 import { SWRConfig } from 'swr';
 import type { ReactNode } from 'react';

@@ -20,6 +20,8 @@ import {
   PATIENT_LABOUR_BY_AN,
   DCHSTTS_LOOKUP,
   DCHTYPE_LOOKUP,
+  IPT_SEVERE_TYPE_LOOKUP,
+  SPCLTY_LOOKUP,
   PATIENT_BED_MOVES_BY_AN,
   PATIENT_LABOUR_MED_BY_AN,
   PATIENT_PARTOGRAPH_BY_AN,
@@ -900,6 +902,25 @@ export async function listDchStatuses(
   return r.data;
 }
 
+export async function listSpecialties(
+  config: ConnectionConfig,
+): Promise<Array<{ spclty: string; name: string }>> {
+  const sql = getQuery(SPCLTY_LOOKUP, DEFAULT_DIALECT);
+  const r = await executeSql<{ spclty: string; name: string }>(sql, config);
+  return r.data;
+}
+
+export async function listIptSevereTypes(
+  config: ConnectionConfig,
+): Promise<Array<{ ipt_severe_type_id: number; ipt_severe_type_name: string }>> {
+  const sql = getQuery(IPT_SEVERE_TYPE_LOOKUP, DEFAULT_DIALECT);
+  const r = await executeSql<{
+    ipt_severe_type_id: number;
+    ipt_severe_type_name: string;
+  }>(sql, config);
+  return r.data;
+}
+
 // Drug-usage typeahead — searches `drugusage.shortlist` (the Thai
 // instruction text shown in dropdowns) and `drugusage` (the 7-char code).
 // Returns { drugusage, shortlist } — caller decides whether to store the
@@ -999,9 +1020,24 @@ export async function dischargePatient(
     dchtime: args.dchtime,
     dchtype: args.dchtype,
     dchstts: args.dchstts,
+    // CRITICAL: confirm_discharge='Y' is the actual flag that flips the
+    // patient out of the active-ward roster. WARD_BEDS_OCCUPANCY filters on
+    // confirm_discharge='N'. Without this, the patient stays in the kiosk's
+    // bed list even after dchdate/dchtime are filled — matching HOSxP's
+    // confirm-discharge checkbox semantics.
+    confirm_discharge: 'Y',
   };
   if (args.dch_doctor !== undefined && args.dch_doctor !== null && args.dch_doctor !== '') {
     iptFields.dch_doctor = args.dch_doctor;
+  }
+  if (args.ipt_spclty !== undefined && args.ipt_spclty !== null && args.ipt_spclty !== '') {
+    iptFields.ipt_spclty = args.ipt_spclty;
+  }
+  if (args.dch_severe_type_id !== undefined && args.dch_severe_type_id !== null) {
+    iptFields.dch_severe_type_id = args.dch_severe_type_id;
+  }
+  if (args.followup === 'Y' || args.followup === 'N') {
+    iptFields.followup = args.followup;
   }
   await restUpdate('ipt', args.an, iptFields, config);
   await restUpdate(

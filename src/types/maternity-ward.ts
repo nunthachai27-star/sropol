@@ -347,4 +347,12 @@ export interface DischargeArgs {
   /** Optional discharging doctor (HOSxP ipt.dch_doctor). Free-text doctor
    *  code or name. */
   dch_doctor?: string | null;
+  /** Specialty at discharge (ipt.ipt_spclty → spclty.spclty, varchar 2).
+   *  '03' = สูติกรรม (Obstetrics) — canonical for maternity LR. */
+  ipt_spclty?: string | null;
+  /** Severity at discharge (ipt.dch_severe_type_id → ipt_severe_type, int).
+   *  Optional — typical values are 1..4 (ระดับ 1..4). */
+  dch_severe_type_id?: number | null;
+  /** Followup-needed flag (ipt.followup, char 1 Y/N). */
+  followup?: 'Y' | 'N' | null;
 }
