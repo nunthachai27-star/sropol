@@ -254,10 +254,19 @@ export function ComplicationsTab({ an }: { an: string }) {
     config ? ['labour', config.apiUrl, an] : null,
     () => getPatientLabour(config!, an),
   );
-  const iptLabourId = labour.data?.ipt_labour_id ?? null;
+  // Use null/undefined check, NOT truthy: ipt_labour_id=0 is a real value
+  // for legacy rows on the test hospital (sentinel-keyed admissions). The
+  // earlier `!iptLabourId` falsy check disabled the Add button + skipped the
+  // comps fetch for any AN whose labour row carried id=0 — surfaced by user
+  // bug report on AN 000056222.
+  const iptLabourId =
+    labour.data?.ipt_labour_id !== undefined && labour.data?.ipt_labour_id !== null
+      ? labour.data.ipt_labour_id
+      : null;
+  const hasLabour = iptLabourId !== null;
   const comps = useSWR<ComplicationRow[]>(
-    config && iptLabourId ? ['complications', config.apiUrl, iptLabourId] : null,
-    () => getPatientComplications(config!, iptLabourId!),
+    config && hasLabour ? ['complications', config.apiUrl, iptLabourId] : null,
+    () => getPatientComplications(config!, iptLabourId as number),
   );
 
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
@@ -268,7 +277,7 @@ export function ComplicationsTab({ an }: { an: string }) {
   if (!config) {
     return <div className="p-4 text-slate-500">ไม่พร้อมใช้งาน (ไม่มี BMS session)</div>;
   }
-  if (labour.isLoading || (iptLabourId && comps.isLoading)) {
+  if (labour.isLoading || (hasLabour && comps.isLoading)) {
     return <div className="p-4 text-slate-500">กำลังโหลด…</div>;
   }
   const err = labour.error ?? comps.error;
@@ -278,7 +287,7 @@ export function ComplicationsTab({ an }: { an: string }) {
 
   const hcode = userInfo?.hospcode ?? '';
   const rows = comps.data ?? [];
-  const noLabour = !iptLabourId;
+  const noLabour = !hasLabour;
   const isEmpty = (noLabour || rows.length === 0) && editingId !== 'new';
 
   function startAdd() {
@@ -306,7 +315,8 @@ export function ComplicationsTab({ an }: { an: string }) {
 
   async function save() {
     if (!config || !userInfo) return;
-    if (!iptLabourId) {
+    // Explicit null check — id=0 is valid on legacy sentinel labour rows.
+    if (iptLabourId === null) {
       setSaveError(
         'ไม่พบข้อมูล ipt_labour สำหรับ AN นี้ — กรุณาสร้างข้อมูลที่แท็บ ก่อนคลอด หรือ Stage ก่อน',
       );
