@@ -30,6 +30,7 @@ import {
 import type { ComplicationRow, LabourRecord } from '@/types/maternity-ward';
 import type { ConnectionConfig } from '@/types/bms-browser';
 import { cn } from '@/lib/utils';
+import { AnchoredDropdown } from '../shared/AnchoredDropdown';
 
 type EditState = {
   ipt_labour_complication_id?: number;
@@ -80,7 +81,7 @@ function ComplicationPicker({
 
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Resolve the selected name from the option list whenever selectedId or
   // options change, so editing an existing row populates the search input
@@ -104,18 +105,10 @@ function ComplicationPicker({
       .slice(0, 50);
   }, [options, query, selectedName]);
 
-  useEffect(() => {
-    function onDocClick(e: MouseEvent) {
-      if (!containerRef.current) return;
-      if (!containerRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, []);
-
   return (
-    <div ref={containerRef} className="relative">
+    <>
       <input
+        ref={inputRef}
         type="text"
         value={query}
         onChange={(e) => {
@@ -127,28 +120,30 @@ function ComplicationPicker({
         aria-label="complication_search"
         className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-[14px] text-slate-900 shadow-sm transition-colors hover:border-slate-300 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
       />
-      {open && filtered.length > 0 && (
-        <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-72 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-          {filtered.map((o) => (
-            <button
-              key={o.labour_complication_id}
-              type="button"
-              onClick={() => {
-                onPick(o);
-                setQuery(o.name);
-                setOpen(false);
-              }}
-              className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-cyan-50/60"
-            >
-              <span className="text-[14px] font-semibold text-slate-900">{o.name}</span>
-              <span className="font-mono text-[11px] text-slate-500">
-                #{o.labour_complication_id}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+      <AnchoredDropdown
+        open={open && filtered.length > 0}
+        anchorRef={inputRef}
+        onDismiss={() => setOpen(false)}
+      >
+        {filtered.map((o) => (
+          <button
+            key={o.labour_complication_id}
+            type="button"
+            onClick={() => {
+              onPick(o);
+              setQuery(o.name);
+              setOpen(false);
+            }}
+            className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-cyan-50/60"
+          >
+            <span className="text-[14px] font-semibold text-slate-900">{o.name}</span>
+            <span className="font-mono text-[11px] text-slate-500">
+              #{o.labour_complication_id}
+            </span>
+          </button>
+        ))}
+      </AnchoredDropdown>
+    </>
   );
 }
 

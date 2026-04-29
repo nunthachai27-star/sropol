@@ -33,6 +33,7 @@ import {
   ChipRow as DraggableChipRow,
   type ChipOption,
 } from '../shared/DraggableChips';
+import { AnchoredDropdown } from '../shared/AnchoredDropdown';
 
 // ─── Types & helpers ──────────────────────────────────────────────────────
 
@@ -101,7 +102,7 @@ function LookupPicker({ ariaLabel, placeholder, initialQuery, fetch, onPick }: L
   const [items, setItems] = useState<LookupItem[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const lastPickedRef = useRef<string>(initialQuery);
 
   useEffect(() => {
@@ -130,18 +131,10 @@ function LookupPicker({ ariaLabel, placeholder, initialQuery, fetch, onPick }: L
     };
   }, [query, fetch]);
 
-  useEffect(() => {
-    function onDocClick(e: MouseEvent) {
-      if (!containerRef.current) return;
-      if (!containerRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, []);
-
   return (
-    <div ref={containerRef} className="relative">
+    <>
       <input
+        ref={inputRef}
         type="text"
         value={query}
         onChange={(e) => {
@@ -153,33 +146,35 @@ function LookupPicker({ ariaLabel, placeholder, initialQuery, fetch, onPick }: L
         aria-label={ariaLabel}
         className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-[14px] text-slate-900 shadow-sm transition-colors hover:border-slate-300 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
       />
-      {open && (items.length > 0 || loading) && (
-        <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-72 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-          {loading && items.length === 0 && (
-            <div className="px-3 py-2 text-[12px] text-slate-500">กำลังค้นหา…</div>
-          )}
-          {items.map((it, idx) => (
-            <button
-              key={`${it.payload}-${idx}`}
-              type="button"
-              onClick={() => {
-                onPick(it);
-                lastPickedRef.current = it.primary;
-                setQuery(it.primary);
-                setOpen(false);
-                setItems([]);
-              }}
-              className="flex w-full flex-col gap-0.5 border-b border-slate-100 px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-cyan-50/60"
-            >
-              <span className="text-[14px] font-semibold text-slate-900">{it.primary}</span>
-              {it.secondary && (
-                <span className="font-mono text-[11px] text-slate-500">{it.secondary}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+      <AnchoredDropdown
+        open={open && (items.length > 0 || loading)}
+        anchorRef={inputRef}
+        onDismiss={() => setOpen(false)}
+      >
+        {loading && items.length === 0 && (
+          <div className="px-3 py-2 text-[12px] text-slate-500">กำลังค้นหา…</div>
+        )}
+        {items.map((it, idx) => (
+          <button
+            key={`${it.payload}-${idx}`}
+            type="button"
+            onClick={() => {
+              onPick(it);
+              lastPickedRef.current = it.primary;
+              setQuery(it.primary);
+              setOpen(false);
+              setItems([]);
+            }}
+            className="flex w-full flex-col gap-0.5 border-b border-slate-100 px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-cyan-50/60"
+          >
+            <span className="text-[14px] font-semibold text-slate-900">{it.primary}</span>
+            {it.secondary && (
+              <span className="font-mono text-[11px] text-slate-500">{it.secondary}</span>
+            )}
+          </button>
+        ))}
+      </AnchoredDropdown>
+    </>
   );
 }
 
