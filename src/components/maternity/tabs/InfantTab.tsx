@@ -1,17 +1,26 @@
-// InfantTab — ipt_newborn + ipt_labour_infant CRUD with table + inline-edit row.
-// Visual matches the v2 dialog design language used by Medications/StageMed:
-//   * Sex chips (ชาย/หญิง) wired to a free-form text input so callers may also
-//     type Thai HOSxP codes ('1'/'2') or legacy 'M'/'F'.
-//   * Birth weight quick-pick chips (2500/3000/3500/4000) above a numeric input.
-//   * Body length / head length numeric inputs (cm).
-//   * APGAR 1' / 5' / 10' as 0–10 chip ladders with a clinical color zone:
-//     0–3 critical, 4–6 warn, 7–10 ok.
-//   * Birth checks (VitK/Eye paste/BCG/Hep B/Feed milk) as toggle chips that
-//     write 'Y'/null on click — matches the HOSxP char(1) convention.
-//   * Auto-fills today's date + now-time when adding a new infant.
-//   * EditRow + helpers live at module scope so React keeps stable identity
-//     across parent re-renders (avoids the picker remount bug we hit on the
-//     Medications tab).
+// InfantTab — ipt_labour_infant CRUD with table + inline-edit row.
+// HOSxP source reference: HOSxPIPTLabourInfantEntryFormUnit.pas (BMS XE2).
+// Field semantics + auto-defaults follow that form's IPTLabourInfantCDSNewRecord
+// + DoSaveData paths, adapted for our shared draggable chip primitives.
+//
+// Visual matches the v2 dialog design language used by VitalSign / Partograph
+// / Medications / StageMed:
+//   * All numeric chip rows now use the shared DraggableChipRow — tap to set
+//     the exact preset, click-and-drag horizontally to micro-adjust by ±step,
+//     range-clamp with amber edge-pin ring at min/max.
+//   * Sex / condition-type are categorical → SimpleChipRow (no drag math).
+//   * Birth-check toggle chips (VitK / Eye paste / BCG / Hep B / Feed milk)
+//     write 'Y' / null on click — matches HOSxP char(1) convention.
+//   * APGAR 1' / 5' / 10' as 0–10 chip ladders with severity tones (rose ≤3,
+//     amber 4–6, emerald ≥7). HOSxP also tracks 5 sub-components per
+//     timepoint; we surface only the totals in v1 — sub-components are a
+//     future enhancement (see "APGAR sub-components" comment below).
+//
+// Auto-defaults on add (mirrors HOSxPIPTLabourInfantCDSNewRecord):
+//   - birth_date / birth_time = now
+//   - infant_number = (existing infants count) + 1
+//   - condition_type1_id = 1 (alive/normal), condition_type2_id = 1
+//   - entry_staff = userInfo.loginname (set in service on insert)
 'use client';
 
 import { useState } from 'react';
@@ -25,12 +34,19 @@ import {
 } from '@/services/maternity-ward';
 import type { InfantRow } from '@/types/maternity-ward';
 import { cn } from '@/lib/utils';
+import {
+  ChipRow,
+  SimpleChipRow,
+  type ChipOption,
+  type ChipTone,
+} from '../shared/DraggableChips';
 
 // ─── Types & helpers ──────────────────────────────────────────────────────
 
 type EditState = {
   ipt_newborn_id?: number;
   ipt_labour_infant_id?: number;
+  infant_number: string;
   sex: string;
   birth_weight: string;
   body_length: string;
@@ -40,6 +56,8 @@ type EditState = {
   apgar1: string;
   apgar5: string;
   apgar10: string;
+  condition_type1_id: string;  // 1 = alive at delivery
+  condition_type2_id: string;  // 1 = alive at discharge
   vitk: 'Y' | '';
   eyepaste: 'Y' | '';
   bcg: 'Y' | '';
@@ -48,6 +66,7 @@ type EditState = {
 };
 
 const EMPTY_DRAFT: EditState = {
+  infant_number: '',
   sex: '',
   birth_weight: '',
   body_length: '',
@@ -57,6 +76,8 @@ const EMPTY_DRAFT: EditState = {
   apgar1: '',
   apgar5: '',
   apgar10: '',
+  condition_type1_id: '',
+  condition_type2_id: '',
   vitk: '',
   eyepaste: '',
   bcg: '',
@@ -89,68 +110,67 @@ function nowHhmm(): string {
   return `${hh}:${mm}`;
 }
 
-const SEX_CHIPS: ReadonlyArray<{ label: string; value: string }> = [
+// ─── Chip catalogues ──────────────────────────────────────────────────────
+
+const SEX_CHIPS = [
   { label: 'ชาย ♂', value: '1' },
   { label: 'หญิง ♀', value: '2' },
 ];
-const BIRTH_WEIGHT_PRESETS = ['2500', '3000', '3500', '4000'];
 
-// APGAR 0–10 ladder with severity zones (clinical convention):
-//   0–3: severe distress (red)  ·  4–6: depressed (amber)  ·  7–10: ok (green)
-const APGAR_SCORES = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'] as const;
-function apgarZone(v: string): 'crit' | 'warn' | 'ok' | 'none' {
-  if (v === '') return 'none';
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 'none';
-  if (n <= 3) return 'crit';
-  if (n <= 6) return 'warn';
-  return 'ok';
+// HOSxP person_labour_birth_condition convention (ipt_newborn.birthcondition1/2).
+// 1 = alive, 2 = stillborn, 3 = died after birth — our quick chips cover the
+// common cases; nurses can still edit the underlying numeric value.
+const CONDITION1_CHIPS = [
+  { label: 'มีชีวิต', value: '1' },
+  { label: 'ไม่มีชีวิต', value: '2' },
+];
+const CONDITION2_CHIPS = [
+  { label: 'ปกติ', value: '1' },
+  { label: 'ผิดปกติ', value: '2' },
+];
+
+// Birth weight: WHO low-birth-weight cutoff is 2500g; the four anchors here
+// span term-baby norm (≈3000–3500). Drag adjusts ±50g per step (see range/step
+// in the ChipRow below).
+const BIRTH_WEIGHT_CHIPS: ChipOption[] = [
+  { value: '2500', label: '2500', tone: 'warn' },
+  { value: '3000', label: '3000', tone: 'ok' },
+  { value: '3500', label: '3500', tone: 'ok' },
+  { value: '4000', label: '4000', tone: 'warn' },
+];
+
+// Term-baby anthropometry anchors. Body length 48–52cm, head circ 33–35cm.
+const BODY_LENGTH_CHIPS: ChipOption[] = [
+  { value: '48', label: '48' },
+  { value: '50', label: '50', tone: 'ok' },
+  { value: '52', label: '52', tone: 'ok' },
+];
+const HEAD_LENGTH_CHIPS: ChipOption[] = [
+  { value: '33', label: '33' },
+  { value: '34', label: '34', tone: 'ok' },
+  { value: '35', label: '35', tone: 'ok' },
+];
+
+// APGAR 0–10. Severity ladder per chip → at-a-glance score quality.
+//   0–3 = severe distress (rose), 4–6 = depressed (amber), 7–10 = ok (emerald)
+function apgarChips(): ChipOption[] {
+  return [...Array(11)].map((_, n) => {
+    let tone: ChipTone = 'default';
+    if (n <= 3) tone = 'crit';
+    else if (n <= 6) tone = 'warn';
+    else tone = 'ok';
+    return { value: String(n), label: String(n), tone };
+  });
 }
+const APGAR_CHIPS = apgarChips();
 
-// ─── Reusable input + chip primitives (module scope) ──────────────────────
+const INFANT_NUMBER_CHIPS: ChipOption[] = [
+  { value: '1', label: '1' },
+  { value: '2', label: '2' },
+  { value: '3', label: '3' },
+];
 
-interface ChipRowProps {
-  options: ReadonlyArray<string | { label: string; value: string }>;
-  selected: string;
-  onPick: (v: string) => void;
-  ariaLabel: string;
-  zoneOf?: (v: string) => 'crit' | 'warn' | 'ok' | 'none';
-}
-
-function ChipRow({ options, selected, onPick, ariaLabel, zoneOf }: ChipRowProps) {
-  return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label={ariaLabel}>
-      {options.map((opt) => {
-        const value = typeof opt === 'string' ? opt : opt.value;
-        const label = typeof opt === 'string' ? opt : opt.label;
-        const isSelected = selected === value;
-        const zone = zoneOf ? zoneOf(value) : 'none';
-        let tone = '';
-        if (isSelected) {
-          if (zone === 'crit') tone = 'border-rose-600 bg-rose-600 text-white shadow-sm ring-2 ring-rose-600/20';
-          else if (zone === 'warn') tone = 'border-amber-600 bg-amber-500 text-white shadow-sm ring-2 ring-amber-500/20';
-          else if (zone === 'ok') tone = 'border-emerald-600 bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-600/20';
-          else tone = 'border-cyan-600 bg-cyan-600 text-white shadow-sm ring-2 ring-cyan-600/20';
-        } else {
-          tone = 'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700';
-        }
-        return (
-          <button
-            key={value}
-            type="button"
-            onClick={() => onPick(value)}
-            className={cn(
-              'rounded-md border px-2.5 py-1 text-[12px] font-semibold transition-all',
-              tone,
-            )}
-          >
-            {label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+// ─── Reusable chip-toggle ──────────────────────────────────────────────────
 
 interface ToggleChipProps {
   label: string;
@@ -174,6 +194,8 @@ function ToggleChip({ label, checked, onToggle }: ToggleChipProps) {
     </button>
   );
 }
+
+// ─── Inline input ──────────────────────────────────────────────────────────
 
 interface InlineInputProps {
   ariaLabel: string;
@@ -212,26 +234,63 @@ interface EditRowProps {
 }
 
 function EditRow({ draft, setDraft, saving, onCancel, onSave }: EditRowProps) {
+  const set = (k: keyof EditState, v: string) =>
+    setDraft((d) => ({ ...d, [k]: v }));
+
   return (
     <tr className="bg-cyan-50/40">
       <td colSpan={5} className="px-4 py-4">
         <div className="space-y-4">
-          {/* IDENTITY: sex + birth date+time */}
+          {/* IDENTITY: infant_number + sex + condition + date/time */}
           <div className="rounded-md border border-cyan-200 bg-white p-3">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_1fr]">
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+              ทารกลำดับที่ · เพศ · สภาพ · เวลาเกิด
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[0.7fr_1.3fr_1.3fr_1fr_1fr]">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[12px] font-semibold text-slate-700">ลำดับที่</label>
+                <ChipRow
+                  ariaLabel="infant_number quick picks"
+                  options={INFANT_NUMBER_CHIPS}
+                  selected={draft.infant_number}
+                  onPick={(v) => set('infant_number', v)}
+                  range={{ min: 1, max: 9 }}
+                />
+                <InlineInput
+                  ariaLabel="infant_number"
+                  value={draft.infant_number}
+                  onChange={(v) => set('infant_number', v)}
+                  type="number"
+                />
+              </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-[12px] font-semibold text-slate-700">เพศ</label>
-                <ChipRow
+                <SimpleChipRow
                   ariaLabel="sex quick picks"
                   options={SEX_CHIPS}
                   selected={draft.sex}
-                  onPick={(v) => setDraft((d) => ({ ...d, sex: v }))}
+                  onPick={(v) => set('sex', v)}
                 />
                 <InlineInput
                   ariaLabel="sex"
                   value={draft.sex}
-                  onChange={(v) => setDraft((d) => ({ ...d, sex: v }))}
+                  onChange={(v) => set('sex', v)}
                   placeholder="1=ชาย / 2=หญิง"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[12px] font-semibold text-slate-700">สภาพแรกคลอด</label>
+                <SimpleChipRow
+                  ariaLabel="condition_type1 quick picks"
+                  options={CONDITION1_CHIPS}
+                  selected={draft.condition_type1_id}
+                  onPick={(v) => set('condition_type1_id', v)}
+                />
+                <SimpleChipRow
+                  ariaLabel="condition_type2 quick picks"
+                  options={CONDITION2_CHIPS}
+                  selected={draft.condition_type2_id}
+                  onPick={(v) => set('condition_type2_id', v)}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -240,7 +299,7 @@ function EditRow({ draft, setDraft, saving, onCancel, onSave }: EditRowProps) {
                 <InlineInput
                   ariaLabel="birth_date"
                   value={draft.birth_date}
-                  onChange={(v) => setDraft((d) => ({ ...d, birth_date: v }))}
+                  onChange={(v) => set('birth_date', v)}
                   type="date"
                 />
               </div>
@@ -250,17 +309,22 @@ function EditRow({ draft, setDraft, saving, onCancel, onSave }: EditRowProps) {
                 <InlineInput
                   ariaLabel="birth_time"
                   value={draft.birth_time}
-                  onChange={(v) => setDraft((d) => ({ ...d, birth_time: v }))}
+                  onChange={(v) => set('birth_time', v)}
                   type="time"
                 />
               </div>
             </div>
           </div>
 
-          {/* ANTHROPOMETRY */}
+          {/* ANTHROPOMETRY — drag-adjust per chip */}
           <div className="rounded-md border border-cyan-200 bg-white p-3">
-            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
-              ขนาดแรกเกิด
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                ขนาดแรกเกิด
+              </span>
+              <span className="text-[10px] text-slate-400">
+                แตะ = เลือก · ลากซ้าย/ขวา = ปรับค่า
+              </span>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1.4fr_1fr_1fr]">
               <div className="flex flex-col gap-1.5">
@@ -269,36 +333,52 @@ function EditRow({ draft, setDraft, saving, onCancel, onSave }: EditRowProps) {
                 </label>
                 <ChipRow
                   ariaLabel="birth_weight quick picks"
-                  options={BIRTH_WEIGHT_PRESETS}
+                  options={BIRTH_WEIGHT_CHIPS}
                   selected={draft.birth_weight}
-                  onPick={(v) => setDraft((d) => ({ ...d, birth_weight: v }))}
+                  onPick={(v) => set('birth_weight', v)}
+                  step={50}
+                  range={{ min: 500, max: 6000 }}
                 />
                 <InlineInput
                   ariaLabel="birth_weight"
                   value={draft.birth_weight}
-                  onChange={(v) => setDraft((d) => ({ ...d, birth_weight: v }))}
+                  onChange={(v) => set('birth_weight', v)}
                   type="number"
                   placeholder="เช่น 3200"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-[12px] font-semibold text-slate-700">ความยาว (ซม.)</label>
-                <div className="h-7" aria-hidden />
+                <ChipRow
+                  ariaLabel="body_length quick picks"
+                  options={BODY_LENGTH_CHIPS}
+                  selected={draft.body_length}
+                  onPick={(v) => set('body_length', v)}
+                  step={1}
+                  range={{ min: 30, max: 60 }}
+                />
                 <InlineInput
                   ariaLabel="body_length"
                   value={draft.body_length}
-                  onChange={(v) => setDraft((d) => ({ ...d, body_length: v }))}
+                  onChange={(v) => set('body_length', v)}
                   type="number"
                   placeholder="เช่น 50"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-[12px] font-semibold text-slate-700">รอบศีรษะ (ซม.)</label>
-                <div className="h-7" aria-hidden />
+                <ChipRow
+                  ariaLabel="head_length quick picks"
+                  options={HEAD_LENGTH_CHIPS}
+                  selected={draft.head_length}
+                  onPick={(v) => set('head_length', v)}
+                  step={1}
+                  range={{ min: 25, max: 45 }}
+                />
                 <InlineInput
                   ariaLabel="head_length"
                   value={draft.head_length}
-                  onChange={(v) => setDraft((d) => ({ ...d, head_length: v }))}
+                  onChange={(v) => set('head_length', v)}
                   type="number"
                   placeholder="เช่น 34"
                 />
@@ -306,7 +386,10 @@ function EditRow({ draft, setDraft, saving, onCancel, onSave }: EditRowProps) {
             </div>
           </div>
 
-          {/* APGAR LADDER */}
+          {/* APGAR LADDER — draggable 0-10 with severity zones */}
+          {/* APGAR sub-components: HOSxP also tracks 5 components per timepoint
+              (HR/RR/reflex/tone/color, each 0/1/2). Future enhancement —
+              v1 surfaces totals only since the chip ladder is fast to enter. */}
           <div className="rounded-md border border-cyan-200 bg-white p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
@@ -328,10 +411,10 @@ function EditRow({ draft, setDraft, saving, onCancel, onSave }: EditRowProps) {
                   <span className="w-16 text-[12px] font-semibold text-slate-600">{label}</span>
                   <ChipRow
                     ariaLabel={`${key} score`}
-                    options={[...APGAR_SCORES]}
+                    options={APGAR_CHIPS}
                     selected={draft[key]}
-                    onPick={(v) => setDraft((d) => ({ ...d, [key]: v }))}
-                    zoneOf={apgarZone}
+                    onPick={(v) => set(key, v)}
+                    range={{ min: 0, max: 10 }}
                   />
                 </div>
               ))}
@@ -431,8 +514,17 @@ export function InfantTab({ an }: { an: string }) {
   const isEmpty = rows.length === 0 && editingKey !== 'new';
 
   function startAdd() {
+    // HOSxP IPTLabourInfantCDSNewRecord defaults: infant_number = COUNT+1,
+    // birth_date/time = now, condition_type1/2_id = 1 (alive/normal).
     setEditingKey('new');
-    setDraft({ ...EMPTY_DRAFT, birth_date: todayIso(), birth_time: nowHhmm() });
+    setDraft({
+      ...EMPTY_DRAFT,
+      birth_date: todayIso(),
+      birth_time: nowHhmm(),
+      infant_number: String(rows.length + 1),
+      condition_type1_id: '1',
+      condition_type2_id: '1',
+    });
     setSaveError(null);
   }
 
@@ -448,6 +540,7 @@ export function InfantTab({ an }: { an: string }) {
     setDraft({
       ipt_newborn_id: row.ipt_newborn_id,
       ipt_labour_infant_id: row.ipt_labour_infant_id,
+      infant_number: str('infant_number'),
       sex: row.sex ?? '',
       birth_weight: row.birth_weight?.toString() ?? '',
       body_length: str('body_length'),
@@ -457,6 +550,8 @@ export function InfantTab({ an }: { an: string }) {
       apgar1: str('apgar_score_min1'),
       apgar5: str('apgar_score_min5'),
       apgar10: str('apgar_score_min10'),
+      condition_type1_id: str('condition_type1_id'),
+      condition_type2_id: str('condition_type2_id'),
       vitk: yn('infant_check_vitk'),
       eyepaste: yn('infant_check_eyepaste'),
       bcg: yn('infant_check_bcg'),
@@ -478,6 +573,7 @@ export function InfantTab({ an }: { an: string }) {
     setSaveError(null);
     try {
       const fields: Partial<InfantRow> = {
+        infant_number: toNumberOrNull(draft.infant_number),
         sex: draft.sex || null,
         birth_weight: toNumberOrNull(draft.birth_weight),
         body_length: toNumberOrNull(draft.body_length),
@@ -487,6 +583,8 @@ export function InfantTab({ an }: { an: string }) {
         apgar_score_min1: toNumberOrNull(draft.apgar1),
         apgar_score_min5: toNumberOrNull(draft.apgar5),
         apgar_score_min10: toNumberOrNull(draft.apgar10),
+        condition_type1_id: toNumberOrNull(draft.condition_type1_id),
+        condition_type2_id: toNumberOrNull(draft.condition_type2_id),
         infant_check_vitk: draft.vitk || null,
         infant_check_eyepaste: draft.eyepaste || null,
         infant_check_bcg: draft.bcg || null,

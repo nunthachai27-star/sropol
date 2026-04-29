@@ -23,6 +23,11 @@ import {
 import type { LabourMedRow } from '@/types/maternity-ward';
 import type { ConnectionConfig } from '@/types/bms-browser';
 import { cn } from '@/lib/utils';
+import {
+  ChipRow as DraggableChipRow,
+  SimpleChipRow,
+  type ChipOption,
+} from '../shared/DraggableChips';
 
 // ─── Types & helpers ──────────────────────────────────────────────────────
 
@@ -53,7 +58,15 @@ const DRUGUSAGE_PRESETS = [
   '1x1 oral', '1x2 oral', '1x3 oral', '1x4 oral',
   'PRN', 'stat', 'IV bolus', 'IM',
 ];
-const QTY_PRESETS = ['1', '2', '3', '5', '10'];
+// Numeric qty chips support click-and-drag micro-adjust (±1 per 8px) —
+// nurses tap a preset then drag to fine-tune (e.g., 5 → 7) without retyping.
+const QTY_CHIPS: ChipOption[] = [
+  { value: '1', label: '1' },
+  { value: '2', label: '2' },
+  { value: '3', label: '3' },
+  { value: '5', label: '5' },
+  { value: '10', label: '10' },
+];
 
 // ─── Generic LookupPicker — used for both drug + drugusage ───────────────
 // Module-scope component so React preserves its instance + local query
@@ -160,43 +173,6 @@ function LookupPicker({ ariaLabel, placeholder, initialQuery, fetch, onPick }: L
   );
 }
 
-// ─── Chip rows ─────────────────────────────────────────────────────────────
-
-function ChipRow({
-  options,
-  selected,
-  onPick,
-  ariaLabel,
-}: {
-  options: readonly string[];
-  selected: string;
-  onPick: (v: string) => void;
-  ariaLabel: string;
-}) {
-  return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label={ariaLabel}>
-      {options.map((opt) => {
-        const isSelected = selected === opt;
-        return (
-          <button
-            key={opt}
-            type="button"
-            onClick={() => onPick(opt)}
-            className={cn(
-              'rounded-md border px-2.5 py-1 text-[12px] font-semibold transition-all',
-              isSelected
-                ? 'border-cyan-600 bg-cyan-600 text-white shadow-sm ring-2 ring-cyan-600/20'
-                : 'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700',
-            )}
-          >
-            {opt}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 // ─── Inline input ──────────────────────────────────────────────────────────
 
 interface InlineInputProps {
@@ -288,14 +264,16 @@ function EditRow({
 
           {/* QTY + USAGE + NOTE */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-[0.6fr_2fr_1.4fr]">
-            {/* qty with chip presets */}
+            {/* qty with draggable chip presets — tap to set, drag to micro-adjust */}
             <div className="flex flex-col gap-1.5">
               <label className="text-[12px] font-semibold text-slate-700">จำนวน</label>
-              <ChipRow
+              <DraggableChipRow
                 ariaLabel="qty quick picks"
-                options={QTY_PRESETS}
+                options={QTY_CHIPS}
                 selected={draft.qty}
                 onPick={(v) => setDraft((d) => ({ ...d, qty: v }))}
+                step={1}
+                range={{ min: 1, max: 99 }}
               />
               <InlineInput
                 ariaLabel="qty"
@@ -308,7 +286,7 @@ function EditRow({
             {/* drugusage — table lookup + chip presets + free text */}
             <div className="flex flex-col gap-1.5">
               <label className="text-[12px] font-semibold text-slate-700">วิธีใช้</label>
-              <ChipRow
+              <SimpleChipRow
                 ariaLabel="drugusage quick picks"
                 options={DRUGUSAGE_PRESETS}
                 selected={draft.drugusage}
