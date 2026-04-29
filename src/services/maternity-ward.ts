@@ -24,6 +24,7 @@ import {
   HOSPCODE_LOOKUP,
   ICD10_LOOKUP,
   IPT_SEVERE_TYPE_LOOKUP,
+  PATIENT_IPT_DISCHARGE_BY_AN,
   PATIENT_REFEROUT_BY_AN,
   REFEROUT_EMERGENCY_TYPE_LOOKUP,
   REFER_CAUSE_LOOKUP,
@@ -58,6 +59,7 @@ import type {
   LabourRecord,
   MaternityWard,
   NurseNoteRow,
+  IptDischargeRow,
   PartographRow,
   PregnancyRecord,
   ReferOutArgs,
@@ -1029,6 +1031,18 @@ export async function searchIcd10(
     { q: `%${trimmed}%` },
   );
   return r.data;
+}
+
+// Read the discharge-related fields off the ipt master row. Returns null
+// when the AN has no ipt row (rare on the active-ward tab — ipt always
+// exists for an admitted patient — but defensively handled).
+export async function getPatientIptDischarge(
+  config: ConnectionConfig,
+  an: string,
+): Promise<IptDischargeRow | null> {
+  const sql = getQuery(PATIENT_IPT_DISCHARGE_BY_AN, DEFAULT_DIALECT);
+  const r = await executeSql<IptDischargeRow>(sql, config, { an });
+  return r.data?.[0] ?? null;
 }
 
 // Read existing referout for an AN. Returns null when nothing has been

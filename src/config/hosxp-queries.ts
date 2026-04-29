@@ -781,6 +781,16 @@ export const REFEROUT_EMERGENCY_TYPE_LOOKUP: SqlQueryTemplate = {
   mysql: `SELECT referout_emergency_type_id, referout_emergency_type_name FROM referout_emergency_type`,
 };
 
+// Read the discharge-related fields off the master `ipt` row for an AN.
+// DischargeTab uses this to hydrate the form on open so an operator who
+// saved a draft (confirm_discharge='N') can come back later and see what
+// they entered — without it the tab always rendered EMPTY_DRAFT and looked
+// like the data hadn't saved. Fields mirror what dischargePatient writes.
+export const PATIENT_IPT_DISCHARGE_BY_AN: SqlQueryTemplate = {
+  postgresql: `SELECT an, hn, regdate, regtime, dchdate, dchtime, dchtype, dchstts, dch_doctor, ipt_spclty, dch_severe_type_id, followup, confirm_discharge, ipt_severe_type_id FROM ipt WHERE an = :an`,
+  mysql: `SELECT an, hn, regdate, regtime, dchdate, dchtime, dchtype, dchstts, dch_doctor, ipt_spclty, dch_severe_type_id, followup, confirm_discharge, ipt_severe_type_id FROM ipt WHERE an = :an`,
+};
+
 // Read existing referout for an AN — HOSxP keys it by `vn` which holds the AN
 // for IPD records (Delphi: `select referout_id from referout where vn = '...'`).
 // Only one row per admission; the dialog UPDATEs if found, INSERTs otherwise.

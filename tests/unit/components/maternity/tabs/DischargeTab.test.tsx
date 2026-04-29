@@ -27,6 +27,10 @@ vi.mock('@/services/maternity-ward', () => ({
     { ipt_severe_type_id: 3, ipt_severe_type_name: 'ระดับ 3' },
     { ipt_severe_type_id: 4, ipt_severe_type_name: 'ระดับ 4' },
   ]),
+  // Hydration — DischargeTab now reads the existing ipt row to restore
+  // a saved draft when reopening the drawer. Returning null mirrors the
+  // "no prior save" path which existing tests already exercise.
+  getPatientIptDischarge: vi.fn(async () => null),
   // Refer-out support — DischargeTab fetches existing referout to drive the
   // warning banner / "edit" affordance. Tests don't exercise the dialog path
   // so a no-data stub is fine.

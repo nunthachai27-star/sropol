@@ -317,6 +317,27 @@ export interface BedMoveArgs {
   reason: string;
 }
 
+/** Discharge-related subset of HOSxP `ipt` row. Used by DischargeTab to
+ *  hydrate the form on open so a saved draft (confirm_discharge='N')
+ *  shows the same values the operator entered before. Mirrors the columns
+ *  dischargePatient writes. */
+export interface IptDischargeRow {
+  an: string;
+  hn: string | null;
+  regdate: string | null;
+  regtime: string | null;
+  dchdate: string | null;
+  dchtime: string | null;
+  dchtype: string | null;
+  dchstts: string | null;
+  dch_doctor: string | null;
+  ipt_spclty: string | null;
+  dch_severe_type_id: number | null;
+  followup: string | null;
+  confirm_discharge: string | null;
+  ipt_severe_type_id: number | null;
+}
+
 /** Refer-out row (HOSxP `referout` table). Loaded into the ReferOutDialog
  *  when the dialog opens; INSERT-or-UPDATE keyed by referout_id. The full
  *  schema has 70+ columns; we surface the clinically meaningful subset. */

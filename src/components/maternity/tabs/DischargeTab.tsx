@@ -31,11 +31,12 @@
 //     "confirm_discharge" banner so the nurse knows the save is final.
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { useBmsSession } from '@/hooks/useBmsSession';
 import {
   dischargePatient,
+  getPatientIptDischarge,
   getPatientReferOut,
   listDchStatuses,
   listDchTypes,
@@ -275,6 +276,49 @@ export function DischargeTab({ occupant }: { occupant: BedOccupancy | null }) {
     () => getPatientReferOut(config!, occupant!.an),
     { revalidateOnFocus: false },
   );
+
+  // Existing ipt discharge fields. Without this, reopening the drawer after
+  // saving a draft showed an empty form — the data was on the server but
+  // the tab never read it back. We hydrate the draft from this row when it
+  // arrives and skip straight to the discharged-confirmation view if
+  // confirm_discharge='Y' was already set on a previous save.
+  const iptDch = useSWR(
+    config && occupant ? ['ipt-discharge', config.apiUrl, occupant.an] : null,
+    () => getPatientIptDischarge(config!, occupant!.an),
+    { revalidateOnFocus: false },
+  );
+
+  // Hydrate draft from the ipt row exactly once per AN. We only seed when
+  // the user hasn't already edited the form (discharged === false &&
+  // saving === false); otherwise we'd clobber their in-progress changes
+  // on revalidate. Non-null fields win over EMPTY_DRAFT defaults.
+  const seededRef = useRef<string | null>(null);
+  useEffect(() => {
+    const row = iptDch.data;
+    if (!row || !occupant) return;
+    if (seededRef.current === occupant.an) return;
+    seededRef.current = occupant.an;
+    const str = (v: unknown): string =>
+      v === null || v === undefined ? '' : String(v);
+    const yn = (v: unknown): 'Y' | 'N' => (v === 'Y' ? 'Y' : 'N');
+    setDraft((d) => ({
+      ...d,
+      dchdate: str(row.dchdate).slice(0, 10) || d.dchdate,
+      dchtime: str(row.dchtime).slice(0, 8) || d.dchtime,
+      dchtype: str(row.dchtype) || d.dchtype,
+      dchstts: str(row.dchstts) || d.dchstts,
+      ipt_spclty: str(row.ipt_spclty) || d.ipt_spclty,
+      dch_severe_type_id: str(row.dch_severe_type_id),
+      dch_doctor: str(row.dch_doctor),
+      followup: yn(row.followup),
+      confirm_discharge: yn(row.confirm_discharge),
+    }));
+    // If confirm_discharge='Y' was already saved, the patient is already
+    // discharged in HOSxP — surface the confirmation view directly so the
+    // operator sees the canonical "จำหน่ายแล้ว" summary instead of a
+    // re-editable form.
+    if (row.confirm_discharge === 'Y') setDischarged(true);
+  }, [iptDch.data, occupant]);
 
   // Master-table fetches — small, cacheable, never invalidate on focus.
   const dchTypes = useSWR(
