@@ -338,6 +338,13 @@ export interface DischargeArgs {
   an: string;
   dchdate: string;   // ISO date
   dchtime: string;   // HH:mm:ss
+  /** dchtype.dchtype code (varchar 2) — '01' With Approval, '02' Against
+   *  Advice, '04' By Transfer, '08'/'09' Dead, etc. Resolve via DCHTYPE_LOOKUP. */
   dchtype: string;
+  /** dchstts.dchstts code (varchar 2) — '01' Complete Recovery, '04' Normal
+   *  Delivery (canonical for maternity LR), '08'/'09' Dead, etc. */
   dchstts: string;
+  /** Optional discharging doctor (HOSxP ipt.dch_doctor). Free-text doctor
+   *  code or name. */
+  dch_doctor?: string | null;
 }

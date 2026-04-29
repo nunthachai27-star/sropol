@@ -7,11 +7,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('@/hooks/useBmsSession', () => ({ useBmsSession: vi.fn() }));
-vi.mock('@/services/maternity-ward', () => ({ dischargePatient: vi.fn() }));
+vi.mock('@/services/maternity-ward', () => ({
+  dischargePatient: vi.fn(),
+  listDchTypes: vi.fn(async () => [
+    { dchtype: '01', name: 'With Approval' },
+    { dchtype: '04', name: 'By Transfer' },
+  ]),
+  listDchStatuses: vi.fn(async () => [
+    { dchstts: '01', name: 'Complete Recovery' },
+    { dchstts: '04', name: 'Normal Delivery' },
+  ]),
+}));
+import { SWRConfig } from 'swr';
+import type { ReactNode } from 'react';
 import { useBmsSession } from '@/hooks/useBmsSession';
 import { dischargePatient } from '@/services/maternity-ward';
 import { DischargeTab } from '@/components/maternity/tabs/DischargeTab';
 import type { BedOccupancy } from '@/types/maternity-ward';
+
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>{children}</SWRConfig>
+);
 
 const mockBmsSession = useBmsSession as unknown as ReturnType<typeof vi.fn>;
 const mockDischarge = dischargePatient as unknown as ReturnType<typeof vi.fn>;
@@ -47,7 +63,7 @@ beforeEach(() => {
 
 describe('DischargeTab', () => {
   it('shows admitted message + admit timestamp when occupant present', () => {
-    render(<DischargeTab occupant={baseOccupant} />);
+    render(<DischargeTab occupant={baseOccupant} />, { wrapper });
     expect(screen.getByText(/ยังไม่มีการจำหน่าย/)).toBeInTheDocument();
     expect(screen.getByText(/2026-04-19/)).toBeInTheDocument();
   });
@@ -60,7 +76,7 @@ describe('DischargeTab', () => {
 
 describe('DischargeTab CRUD', () => {
   it('shows the discharge form with date/time/type/status inputs', () => {
-    render(<DischargeTab occupant={baseOccupant} />);
+    render(<DischargeTab occupant={baseOccupant} />, { wrapper });
     expect(screen.getByLabelText('dchdate')).toBeInTheDocument();
     expect(screen.getByLabelText('dchtime')).toBeInTheDocument();
     expect(screen.getByLabelText('dchtype')).toBeInTheDocument();
@@ -68,7 +84,11 @@ describe('DischargeTab CRUD', () => {
   });
 
   it('blocks save when date is empty (Thai validation message)', () => {
-    render(<DischargeTab occupant={baseOccupant} />);
+    render(<DischargeTab occupant={baseOccupant} />, { wrapper });
+    // The form now auto-fills today/now on mount as a UX accelerator —
+    // clear them to exercise the empty-input validation path.
+    fireEvent.change(screen.getByLabelText('dchdate'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('dchtime'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: /ยืนยันการจำหน่าย/ }));
     expect(screen.getByText(/กรุณาระบุวันที่และเวลาจำหน่าย/)).toBeInTheDocument();
     expect(mockDischarge).not.toHaveBeenCalled();
@@ -78,19 +98,22 @@ describe('DischargeTab CRUD', () => {
     const origConfirm = window.confirm;
     window.confirm = vi.fn().mockReturnValue(true);
     mockDischarge.mockResolvedValue(undefined);
-    render(<DischargeTab occupant={baseOccupant} />);
+    render(<DischargeTab occupant={baseOccupant} />, { wrapper });
     fireEvent.change(screen.getByLabelText('dchdate'), { target: { value: '2026-04-19' } });
     fireEvent.change(screen.getByLabelText('dchtime'), { target: { value: '14:30:00' } });
     fireEvent.click(screen.getByRole('button', { name: /ยืนยันการจำหน่าย/ }));
     expect(window.confirm).toHaveBeenCalled();
     await waitFor(() => expect(mockDischarge).toHaveBeenCalled());
     const args = mockDischarge.mock.calls[0][3];
+    // Defaults now match real HOSxP master codes (varchar 2). Maternity LR
+    // canonical defaults: dchtype '01' (With Approval) + dchstts '04'
+    // (Normal Delivery). The previous '1'/'1' values were invalid FKs.
     expect(args).toMatchObject({
       an: 'AN1',
       dchdate: '2026-04-19',
       dchtime: '14:30:00',
-      dchtype: '1',
-      dchstts: '1',
+      dchtype: '01',
+      dchstts: '04',
     });
     await waitFor(() =>
       expect(screen.getByText(/ดำเนินการจำหน่ายเรียบร้อย/)).toBeInTheDocument(),
@@ -101,7 +124,7 @@ describe('DischargeTab CRUD', () => {
   it('does not fire dischargePatient when confirm returns false', () => {
     const origConfirm = window.confirm;
     window.confirm = vi.fn().mockReturnValue(false);
-    render(<DischargeTab occupant={baseOccupant} />);
+    render(<DischargeTab occupant={baseOccupant} />, { wrapper });
     fireEvent.change(screen.getByLabelText('dchdate'), { target: { value: '2026-04-19' } });
     fireEvent.change(screen.getByLabelText('dchtime'), { target: { value: '14:30:00' } });
     fireEvent.click(screen.getByRole('button', { name: /ยืนยันการจำหน่าย/ }));
@@ -114,7 +137,7 @@ describe('DischargeTab CRUD', () => {
     const origConfirm = window.confirm;
     window.confirm = vi.fn().mockReturnValue(true);
     mockDischarge.mockRejectedValue(new Error('rest 500'));
-    render(<DischargeTab occupant={baseOccupant} />);
+    render(<DischargeTab occupant={baseOccupant} />, { wrapper });
     fireEvent.change(screen.getByLabelText('dchdate'), { target: { value: '2026-04-19' } });
     fireEvent.change(screen.getByLabelText('dchtime'), { target: { value: '14:30:00' } });
     fireEvent.click(screen.getByRole('button', { name: /ยืนยันการจำหน่าย/ }));

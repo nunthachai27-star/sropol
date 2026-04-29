@@ -18,6 +18,8 @@ import {
   PATIENT_INFANTS_BY_AN,
   PATIENT_LABOR_BY_AN,
   PATIENT_LABOUR_BY_AN,
+  DCHSTTS_LOOKUP,
+  DCHTYPE_LOOKUP,
   PATIENT_BED_MOVES_BY_AN,
   PATIENT_LABOUR_MED_BY_AN,
   PATIENT_PARTOGRAPH_BY_AN,
@@ -879,6 +881,25 @@ export async function listLabourComplications(
   return r.data;
 }
 
+// Discharge type / status master lookups — small, stable tables. Tabs
+// load both once via SWR and resolve the saved code (varchar 2) to the
+// readable name on display + offer them as dropdown options.
+export async function listDchTypes(
+  config: ConnectionConfig,
+): Promise<Array<{ dchtype: string; name: string }>> {
+  const sql = getQuery(DCHTYPE_LOOKUP, DEFAULT_DIALECT);
+  const r = await executeSql<{ dchtype: string; name: string }>(sql, config);
+  return r.data;
+}
+
+export async function listDchStatuses(
+  config: ConnectionConfig,
+): Promise<Array<{ dchstts: string; name: string }>> {
+  const sql = getQuery(DCHSTTS_LOOKUP, DEFAULT_DIALECT);
+  const r = await executeSql<{ dchstts: string; name: string }>(sql, config);
+  return r.data;
+}
+
 // Drug-usage typeahead — searches `drugusage.shortlist` (the Thai
 // instruction text shown in dropdowns) and `drugusage` (the 7-char code).
 // Returns { drugusage, shortlist } — caller decides whether to store the
@@ -973,17 +994,16 @@ export async function dischargePatient(
   hcode: string,
   args: DischargeArgs,
 ): Promise<void> {
-  await restUpdate(
-    'ipt',
-    args.an,
-    {
-      dchdate: args.dchdate,
-      dchtime: args.dchtime,
-      dchtype: args.dchtype,
-      dchstts: args.dchstts,
-    },
-    config,
-  );
+  const iptFields: Record<string, unknown> = {
+    dchdate: args.dchdate,
+    dchtime: args.dchtime,
+    dchtype: args.dchtype,
+    dchstts: args.dchstts,
+  };
+  if (args.dch_doctor !== undefined && args.dch_doctor !== null && args.dch_doctor !== '') {
+    iptFields.dch_doctor = args.dch_doctor;
+  }
+  await restUpdate('ipt', args.an, iptFields, config);
   await restUpdate(
     'iptadm',
     args.an,

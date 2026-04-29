@@ -697,6 +697,20 @@ export const PATIENT_INFANTS_BY_AN: SqlQueryTemplate = {
           WHERE il.an = :an`,
 };
 
+// Discharge-type / discharge-status master tables. Both are tiny lookups
+// keyed by varchar(2) code (e.g. '01' = With Approval, '04' = Normal Delivery).
+// The DischargeTab dropdowns load the active rows once via SWR and resolve
+// the saved code to its readable name on display. Active filter optional —
+// HOSxP doesn't model an "active" flag on these masters; they're stable.
+export const DCHTYPE_LOOKUP: SqlQueryTemplate = {
+  postgresql: `SELECT dchtype, name FROM dchtype`,
+  mysql: `SELECT dchtype, name FROM dchtype`,
+};
+export const DCHSTTS_LOOKUP: SqlQueryTemplate = {
+  postgresql: `SELECT dchstts, name FROM dchstts`,
+  mysql: `SELECT dchstts, name FROM dchstts`,
+};
+
 // Bed-move history for a single admission. iptbedmove records every move from
 // admit through discharge — the BedTab uses it to render an audit-trail
 // timeline. Two LEFT JOINs to `ward` resolve old/new ward codes to readable
