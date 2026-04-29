@@ -94,6 +94,21 @@ export function PatientDrawer({ open, occupant, onClose }: PatientDrawerProps) {
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  // Lock the page scroll while the drawer is open. Without this the bed-card
+  // grid behind the backdrop receives mouse-wheel events when the drawer's
+  // own scroll container reaches its top/bottom (scroll chaining). The inner
+  // <div className="...overflow-auto overscroll-contain"> below also pins
+  // wheel events to the drawer, but body lock is the belt to that suspenders.
+  useEffect(() => {
+    if (!open) return;
+    if (typeof document === 'undefined') return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
   if (!open) return null;
 
   return (
@@ -175,7 +190,7 @@ export function PatientDrawer({ open, occupant, onClose }: PatientDrawerProps) {
                   </TabsTrigger>
                 ))}
               </TabsList>
-              <div className="flex-1 overflow-auto">
+              <div className="flex-1 overflow-auto overscroll-contain">
                 {PATIENT_DRAWER_TABS.map((t) => (
                   <TabsContent key={t.value} value={t.value}>
                     {t.value === 'partograph' ? (
