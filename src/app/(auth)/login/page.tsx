@@ -30,6 +30,7 @@ function LoginForm() {
 
   const callbackUrl = searchParams.get('callbackUrl') || '/';
   const bmsSessionId = searchParams.get('bms-session-id');
+  const providerError = searchParams.get('providerError');
   const marketplaceToken =
     searchParams.get('marketplace_token') ?? searchParams.get('marketplace-token');
 
@@ -105,6 +106,7 @@ function LoginForm() {
         // only surviving channel.
         setSessionCookie(trimmed);
         if (marketplaceToken) setMarketplaceToken(marketplaceToken);
+        window.localStorage.setItem('kk-lrms:auth-provider', 'bms');
         router.push(callbackUrl);
       }
     } catch {
@@ -121,6 +123,10 @@ function LoginForm() {
       return;
     }
     doLogin(sessionId);
+  };
+
+  const handleProviderLogin = () => {
+    window.location.href = `/api/auth/provider/start?callbackUrl=${encodeURIComponent(callbackUrl)}`;
   };
 
   return (
@@ -254,9 +260,9 @@ function LoginForm() {
               </div>
             )}
 
-            {error && !accessDenied && (
+            {(error || providerError) && !accessDenied && (
               <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-600">
-                {error}
+                {error ?? providerError}
               </div>
             )}
 
@@ -295,6 +301,28 @@ function LoginForm() {
                   เข้าสู่ระบบ
                 </span>
               )}
+            </Button>
+
+            <div className="relative py-1">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-200" />
+              </div>
+              <div className="relative flex justify-center text-xs">
+                <span className="bg-white px-3 text-slate-400">หรือ</span>
+              </div>
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full h-12 rounded-xl border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-semibold"
+              disabled={loading}
+              onClick={handleProviderLogin}
+            >
+              <span className="flex items-center gap-2">
+                <Shield className="h-4 w-4" />
+                ProviderID (อ่านอย่างเดียว)
+              </span>
             </Button>
           </form>
 

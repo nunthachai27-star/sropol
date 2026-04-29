@@ -7,8 +7,15 @@ import { NextResponse } from 'next/server';
 // BmsSessionContext at the page level (no middleware-level userType check).
 
 // Public paths that don't require authentication
-const PUBLIC_PATHS = ['/login', '/about', '/api/auth', '/api/health', '/api/webhooks', '/api/referrals/check'];
+const PUBLIC_PATHS = ['/login', '/provider/complete', '/about', '/api/auth', '/api/health', '/api/webhooks', '/api/referrals/check'];
 const STATIC_PATHS = ['/_next', '/favicon.ico'];
+const READONLY_BLOCKED_API_PREFIXES = [
+  '/api/admin',
+  '/api/onboarding',
+  '/api/sync/trigger',
+  '/api/referrals',
+  '/api/hospital/audit-log',
+];
 // Dev-only API routes that are already guarded server-side by simulationGuard()
 // (which throws 404 in production). Listing them here lets local CLI tooling
 // curl them without a NextAuth cookie. No-op in prod because the guard fires first.
@@ -73,6 +80,23 @@ export default auth((req) => {
       loginUrl.searchParams.set('marketplace_token', marketplaceToken);
     }
     return addSecurityHeaders(NextResponse.redirect(loginUrl));
+  }
+
+  if (session.user.accessMode === 'readonly') {
+    if (pathname.startsWith('/admin')) {
+      return addSecurityHeaders(NextResponse.redirect(new URL('/', req.url)));
+    }
+    if (
+      req.method !== 'GET' &&
+      READONLY_BLOCKED_API_PREFIXES.some((p) => pathname.startsWith(p))
+    ) {
+      return addSecurityHeaders(
+        NextResponse.json(
+          { error: 'readonly_session', message: 'ProviderID sessions are read-only' },
+          { status: 403 },
+        ),
+      );
+    }
   }
 
   // Admin-only route protection. Two gates, both must pass:

@@ -25,6 +25,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useSession } from 'next-auth/react';
 import { useBmsSession } from '@/contexts/BmsSessionContext';
 import { executeSql, restInsert, restUpdate } from '@/lib/bms-browser-client';
 import { mintSerial } from '@/lib/bms-serial';
@@ -119,6 +120,7 @@ export interface OnboardHosxpWebhookResult {
 export function useOnboardHosxpWebhook(): {
   state: OnboardHosxpWebhookResult | null;
 } {
+  const { data: session } = useSession();
   const { config, userInfo, marketplaceToken, isReady } = useBmsSession();
   const ranRef = useRef(false);
   const stateRef = useRef<OnboardHosxpWebhookResult | null>(null);
@@ -132,6 +134,11 @@ export function useOnboardHosxpWebhook(): {
 
   useEffect(() => {
     if (ranRef.current) return;
+    if (session?.user?.authProvider === 'provider-id' || session?.user?.accessMode === 'readonly') {
+      ranRef.current = true;
+      publish({ ran: false });
+      return;
+    }
     if (!isReady || !config || !userInfo || !marketplaceToken) {
       // Key names avoid "token"/"jwt"/etc. so the PDPA redactor doesn't swap
       // these booleans for "[REDACTED]" and erase the signal we need.
@@ -328,7 +335,7 @@ export function useOnboardHosxpWebhook(): {
         publish({ ran: true, error: message });
       }
     })();
-  }, [config, userInfo, marketplaceToken, isReady]);
+  }, [config, userInfo, marketplaceToken, isReady, session?.user?.authProvider, session?.user?.accessMode]);
 
   return { state };
 }

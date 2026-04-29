@@ -25,6 +25,8 @@ import {
 } from '@/utils/bms-session-storage';
 import type { ConnectionConfig, UserInfo } from '@/types/bms-browser';
 
+const AUTH_PROVIDER_STORAGE_KEY = 'kk-lrms:auth-provider';
+
 export interface BmsSessionContextValue {
   config: ConnectionConfig | null;
   userInfo: UserInfo | null;
@@ -93,6 +95,23 @@ export function BmsSessionProvider({ children }: { children: ReactNode }) {
 
   // Bootstrap on mount: read URL session ID, persist to cookie, hydrate context.
   useEffect(() => {
+    const authProvider =
+      typeof window !== 'undefined'
+        ? window.localStorage.getItem(AUTH_PROVIDER_STORAGE_KEY)
+        : null;
+    if (authProvider === 'provider-id') {
+      removeSessionCookie();
+      removeMarketplaceToken();
+      lastSessionRef.current = null;
+      queueMicrotask(() => {
+        publishMarketplaceToken(null);
+        setConfig(null);
+        setUserInfo(null);
+        setError(null);
+      });
+      return;
+    }
+
     // Marketplace token pairing: if a NEW session arrives via URL without a
     // paired marketplace_token, drop the stale token. This matches the
     // hosxp-telemed pattern — a fresh session ID without an accompanying
@@ -114,7 +133,9 @@ export function BmsSessionProvider({ children }: { children: ReactNode }) {
     } else {
       resolvedToken = getMarketplaceToken();
     }
-    publishMarketplaceToken(resolvedToken);
+    queueMicrotask(() => {
+      publishMarketplaceToken(resolvedToken);
+    });
 
     const sid = handleUrlSession(); // reads URL, persists cookie, strips URL
     if (sid) {

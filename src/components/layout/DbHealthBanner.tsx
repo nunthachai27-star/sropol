@@ -44,7 +44,7 @@ export function DbHealthBanner() {
     try {
       const res = await fetch('/api/health', { cache: 'no-store' });
       const body = (await res.json().catch(() => null)) as HealthBody | null;
-      if (res.ok && body?.status === 'healthy') {
+      if (res.ok && body?.database === 'connected' && body.status !== 'unhealthy') {
         setState({
           ok: true,
           body,

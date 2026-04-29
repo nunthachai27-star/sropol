@@ -3,6 +3,9 @@ import 'next-auth';
 import 'next-auth/jwt';
 import type { UserRole } from '@/types/domain';
 
+type AuthProviderKind = 'bms' | 'provider-id';
+type SessionAccessMode = 'readwrite' | 'readonly';
+
 declare module 'next-auth' {
   interface User {
     id: string;
@@ -13,6 +16,12 @@ declare module 'next-auth' {
     hospitalName: string;
     tunnelUrl: string;
     databaseType: string;
+    authProvider: AuthProviderKind;
+    accessMode: SessionAccessMode;
+    providerId?: string;
+    providerCidHash?: string;
+    providerOrgHcode?: string;
+    providerScopes?: string[];
   }
 
   interface Session {
@@ -27,6 +36,12 @@ declare module 'next-auth' {
       hospitalName: string;
       tunnelUrl: string;
       databaseType: string;
+      authProvider: AuthProviderKind;
+      accessMode: SessionAccessMode;
+      providerId?: string;
+      providerCidHash?: string;
+      providerOrgHcode?: string;
+      providerScopes?: string[];
     };
   }
 }
@@ -39,5 +54,11 @@ declare module 'next-auth/jwt' {
     hospitalName: string;
     tunnelUrl: string;
     databaseType: string;
+    authProvider: AuthProviderKind;
+    accessMode: SessionAccessMode;
+    providerId?: string;
+    providerCidHash?: string;
+    providerOrgHcode?: string;
+    providerScopes?: string[];
   }
 }
