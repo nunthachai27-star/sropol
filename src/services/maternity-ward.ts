@@ -1,4 +1,6 @@
-'use client';
+// No 'use client' directive — this module is plain TS using fetch and is safe
+// to import from both client components and server routes (e.g. the dev smoke
+// endpoint that exercises the upsert*() service functions end-to-end).
 import {
   executeSql,
   restDelete,

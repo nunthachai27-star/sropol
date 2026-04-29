@@ -289,7 +289,11 @@ export function PreLabourTab({ an }: { an: string }) {
         return;
       }
       try {
-        const labourFields: Record<string, unknown> = {
+        // Forward the surrogate PK on the update path — BMS REST endpoint is
+        // /api/rest/ipt_labour/{ipt_labour_id}, not /{an}. Same constraint
+        // StageTab handles. Without this, an existing-row save fails with
+        // "upsertLabour: update path requires fields.ipt_labour_id".
+        const labourFields: Partial<LabourRecord> & { ipt_labour_id?: number } = {
           g: toIntOrNull(draft.g),
           ga: toIntOrNull(draft.ga),
           anc_count: toIntOrNull(draft.anc_count),
@@ -303,11 +307,14 @@ export function PreLabourTab({ an }: { an: string }) {
           edc: toStrOrNull(draft.edc),
           lmp_from_us: toStrOrNull(draft.lmp_from_us),
         };
+        if (labourExists && labour.data?.ipt_labour_id !== undefined) {
+          labourFields.ipt_labour_id = labour.data.ipt_labour_id;
+        }
         await upsertLabour(
           config,
           userInfo,
           an,
-          labourFields as Partial<LabourRecord>,
+          labourFields,
           hcode,
           labourExists,
         );
