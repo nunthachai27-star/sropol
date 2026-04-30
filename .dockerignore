@@ -22,6 +22,7 @@ tests/
 *.spec.ts
 present/
 postgres-data/
+redis-data/
 .pglite-data/
 *.sqlite
 *.sqlite-shm

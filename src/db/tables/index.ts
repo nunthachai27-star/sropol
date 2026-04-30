@@ -1,6 +1,7 @@
 import type { TableDefinition } from '../table-definition';
 import { hospitalsTable } from './hospitals';
 import { hospitalBmsConfigTable } from './hospital-bms-config';
+import { hospitalConsultDoctorsTable } from './hospital-consult-doctors';
 import { cachedPatientsTable } from './cached-patients';
 import { cachedPartographObservationsTable } from './cached-partograph-observations';
 import { cachedVitalSignsTable } from './cached-vital-signs';
@@ -22,6 +23,7 @@ import { systemConfigTable } from './system-config';
 export {
   hospitalsTable,
   hospitalBmsConfigTable,
+  hospitalConsultDoctorsTable,
   cachedPatientsTable,
   cachedPartographObservationsTable,
   cachedVitalSignsTable,
@@ -50,6 +52,7 @@ export const ALL_TABLES: TableDefinition[] = [
   systemConfigTable,
   hospitalsTable,
   hospitalBmsConfigTable,
+  hospitalConsultDoctorsTable,
   usersTable,
   maternalJourneysTable,
   cachedPatientsTable,

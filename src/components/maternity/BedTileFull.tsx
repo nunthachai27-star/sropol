@@ -83,6 +83,22 @@ function fmtTemp(t: number | null): string {
   return t.toFixed(1);
 }
 
+function fmtDecimal(v: number | null | undefined, digits = 1): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return '—';
+  return v.toFixed(digits).replace(/\.0+$/, '');
+}
+
+function fmtBodyMetrics(o: BedOccupancyFull): string {
+  const weight = o.last_weight ?? o.admit_bw_kg;
+  const height = o.last_height ?? o.patient_height;
+  const items = [
+    weight !== null && weight !== undefined ? `BW ${fmtDecimal(weight)} kg` : null,
+    height !== null && height !== undefined ? `Ht ${Math.round(height)} cm` : null,
+    o.last_bsa !== null && o.last_bsa !== undefined ? `BSA ${fmtDecimal(o.last_bsa, 2)}` : null,
+  ].filter(Boolean);
+  return items.length > 0 ? items.join(' · ') : '—';
+}
+
 // Hours-since-admit, formatted HH:MM. Used both for severity and the tile
 // chronology footer.
 function fmtHours(regdate: string, regtime: string | null, now: number): string {
@@ -321,6 +337,27 @@ const dataValueStyle: React.CSSProperties = {
   fontVariantNumeric: 'tabular-nums',
 };
 
+const compactKeyStyle: React.CSSProperties = {
+  fontFamily: FONT_MONO,
+  fontSize: 8.5,
+  letterSpacing: '0.16em',
+  textTransform: 'uppercase',
+  fontWeight: 800,
+  color: C.mute,
+  marginBottom: 1,
+};
+
+const compactValueStyle: React.CSSProperties = {
+  fontFamily: FONT_SANS,
+  fontSize: 11,
+  fontWeight: 700,
+  lineHeight: 1.2,
+  color: C.ink,
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
+
 // ─── main component ───────────────────────────────────────────────────────
 
 export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileFullProps) {
@@ -492,10 +529,53 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
         </div>
       </div>
 
+      {/* ADMIT CONTEXT — mirrors HOSxP's IPD admit header fields. */}
+      <div
+        style={{
+          padding: '6px 14px 7px',
+          borderBottom: `1px solid ${C.ruleSoft}`,
+          background: '#FAFBFC',
+        }}
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr 1.1fr', gap: 8 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={compactKeyStyle}>Doctor</div>
+            <div style={compactValueStyle}>{fmt(occupant.incharge_doctor_name)}</div>
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={compactKeyStyle}>Coverage</div>
+            <div style={compactValueStyle}>{fmt(occupant.pttype_name)}</div>
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={compactKeyStyle}>Body</div>
+            <div style={{ ...compactValueStyle, fontFamily: FONT_MONO, fontSize: 10.5 }}>
+              {fmtBodyMetrics(occupant)}
+            </div>
+          </div>
+        </div>
+        {occupant.prediag && (
+          <div
+            title={occupant.prediag}
+            style={{
+              marginTop: 5,
+              paddingTop: 5,
+              borderTop: `1px solid ${C.ruleSoft}`,
+              display: 'grid',
+              gridTemplateColumns: '72px minmax(0, 1fr)',
+              gap: 8,
+              alignItems: 'baseline',
+            }}
+          >
+            <div style={{ ...compactKeyStyle, marginBottom: 0, color: C.warn }}>Prediag</div>
+            <div style={compactValueStyle}>{occupant.prediag}</div>
+          </div>
+        )}
+      </div>
+
       {/* VITALS — from ipd_nurse_note latest */}
       <div style={sectionStyle(C.cVitalsBg, C.cVitals)}>
         <div style={{ ...sectionLabelStyle, color: C.cVitals }}>Vitals</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px 8px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1.35fr repeat(5, 1fr)', gap: '4px 8px' }}>
           <div>
             <div style={{ ...dataKeyStyle, color: C.cVitals }}>BP</div>
             <div style={dataValueStyle}>{fmtBp(occupant.last_bp_sys, occupant.last_bp_dia)}</div>
@@ -513,8 +593,12 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
             <div style={dataValueStyle}>{fmt(occupant.last_rr)}</div>
           </div>
           <div>
-            <div style={{ ...dataKeyStyle, color: C.cVitals }}>SpO₂</div>
+            <div style={{ ...dataKeyStyle, color: C.cVitals }}>SpO₂ RA</div>
             <div style={dataValueStyle}>{fmt(occupant.last_spo2)}</div>
+          </div>
+          <div>
+            <div style={{ ...dataKeyStyle, color: C.cVitals }}>O₂</div>
+            <div style={dataValueStyle}>{fmt(occupant.last_spo2_o2)}</div>
           </div>
         </div>
       </div>

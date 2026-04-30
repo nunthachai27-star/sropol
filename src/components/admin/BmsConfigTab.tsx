@@ -15,9 +15,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { ConnectionStatus } from '@/components/shared/ConnectionStatus';
 import { LoadingState } from '@/components/shared/LoadingState';
-import { ConnectionStatus as ConnectionStatusEnum } from '@/types/domain';
 
 interface AdminHospital {
   hcode: string;
@@ -42,6 +40,62 @@ interface TestResult {
   error?: string;
 }
 
+type TunnelStatus = 'ONLINE' | 'CONFIGURED' | 'EXPIRED' | 'NOT_CONFIGURED';
+
+function hasFutureSession(expiresAt: string | null | undefined) {
+  if (!expiresAt) return false;
+  const time = new Date(expiresAt).getTime();
+  return Number.isFinite(time) && time > Date.now();
+}
+
+function getTunnelStatus(hospital: AdminHospital): TunnelStatus {
+  if (!hospital.bmsConfig?.tunnelUrl) return 'NOT_CONFIGURED';
+  if (hospital.bmsConfig.hasSession && hasFutureSession(hospital.bmsConfig.sessionExpiresAt)) {
+    return 'ONLINE';
+  }
+  if (hospital.bmsConfig.sessionExpiresAt && !hasFutureSession(hospital.bmsConfig.sessionExpiresAt)) {
+    return 'EXPIRED';
+  }
+  return 'CONFIGURED';
+}
+
+const TUNNEL_STATUS_META: Record<TunnelStatus, {
+  label: string;
+  color: string;
+  Icon: typeof Wifi;
+}> = {
+  ONLINE: {
+    label: 'BMS tunnel online',
+    color: 'var(--risk-low)',
+    Icon: Wifi,
+  },
+  CONFIGURED: {
+    label: 'URL saved · not validated',
+    color: 'var(--risk-medium)',
+    Icon: WifiOff,
+  },
+  EXPIRED: {
+    label: 'session expired',
+    color: 'var(--risk-high)',
+    Icon: WifiOff,
+  },
+  NOT_CONFIGURED: {
+    label: 'ยังไม่ตั้งค่า Tunnel URL',
+    color: 'var(--ink-navy-muted)',
+    Icon: WifiOff,
+  },
+};
+
+function formatLastSync(value: string | null) {
+  if (!value) return 'LAST SYNC —';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'LAST SYNC —';
+  return `LAST SYNC ${date.toLocaleString('th-TH', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  })}`;
+}
+
 export function BmsConfigTab() {
   const { data, isLoading, mutate } = useSWR<{ hospitals: AdminHospital[] }>('/api/admin/hospitals');
   const [editHospital, setEditHospital] = useState<AdminHospital | null>(null);
@@ -57,7 +111,7 @@ export function BmsConfigTab() {
 
   const hospitals = data?.hospitals ?? [];
   const configuredCount = hospitals.filter((h) => h.bmsConfig?.tunnelUrl).length;
-  const connectedCount = hospitals.filter((h) => h.connectionStatus === 'ONLINE').length;
+  const connectedCount = hospitals.filter((h) => getTunnelStatus(h) === 'ONLINE').length;
 
   const handleEdit = (hospital: AdminHospital) => {
     setEditHospital(hospital);
@@ -119,7 +173,7 @@ export function BmsConfigTab() {
 
   const kpis: Array<{ k: string; v: number; color: string; label: string }> = [
     { k: 'TOTAL', v: hospitals.length, color: 'var(--accent-navy)', label: 'โรงพยาบาล' },
-    { k: 'ONLINE', v: connectedCount, color: 'var(--risk-low)', label: 'เชื่อมต่อแล้ว' },
+    { k: 'ONLINE', v: connectedCount, color: 'var(--risk-low)', label: 'BMS session active' },
     { k: 'CONFIGURED', v: configuredCount, color: 'var(--risk-medium)', label: 'มี Tunnel URL' },
   ];
 
@@ -162,6 +216,9 @@ export function BmsConfigTab() {
       >
         {hospitals.map((h) => {
           const hasConfig = !!h.bmsConfig?.tunnelUrl;
+          const tunnelStatus = getTunnelStatus(h);
+          const tunnelStatusMeta = TUNNEL_STATUS_META[tunnelStatus];
+          const TunnelIcon = tunnelStatusMeta.Icon;
           return (
             <div
               key={h.hcode}
@@ -195,11 +252,7 @@ export function BmsConfigTab() {
               </div>
 
               <div className="flex items-center gap-1.5 font-mono text-[11px]">
-                {hasConfig ? (
-                  <Wifi className="h-3 w-3" style={{ color: 'var(--risk-low)' }} />
-                ) : (
-                  <WifiOff className="h-3 w-3" style={{ color: 'var(--ink-navy-muted)' }} />
-                )}
+                <TunnelIcon className="h-3 w-3" style={{ color: tunnelStatusMeta.color }} />
                 <span
                   className={hasConfig ? 'truncate text-[var(--ink-navy-dim)]' : 'text-[var(--ink-navy-muted)]'}
                 >
@@ -208,21 +261,19 @@ export function BmsConfigTab() {
               </div>
 
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-                <ConnectionStatus
-                  status={h.connectionStatus as ConnectionStatusEnum}
-                  lastSyncAt={h.lastSyncAt}
-                />
-                {h.bmsConfig?.hasSession && (
-                  <span
-                    className="rounded-sm border px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-[0.06em]"
-                    style={{
-                      color: 'var(--risk-low)',
-                      borderColor: 'var(--risk-low)',
-                    }}
-                  >
-                    SESSION ACTIVE
-                  </span>
-                )}
+                <span
+                  className="inline-flex items-center gap-1.5 rounded-sm border px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-[0.06em]"
+                  style={{
+                    color: tunnelStatusMeta.color,
+                    borderColor: tunnelStatusMeta.color,
+                  }}
+                >
+                  <TunnelIcon className="h-3 w-3" />
+                  {tunnelStatusMeta.label}
+                </span>
+                <span className="font-mono text-[10px] text-[var(--ink-navy-muted)]">
+                  {formatLastSync(h.lastSyncAt)}
+                </span>
                 {h.bmsConfig?.databaseType && (
                   <span className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--ink-navy-muted)]">
                     <Database className="h-3 w-3" />

@@ -57,6 +57,7 @@ dev.sqlite-wal
 
 # Postgres data (bind-mounted from docker-compose)
 postgres-data/
+redis-data/
 
 # Screenshots
 screenshots/

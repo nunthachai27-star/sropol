@@ -1,0 +1,318 @@
+import type { DatabaseAdapter } from '@/db/adapter';
+import type { DatabaseDialect } from '@/config/hosxp-queries';
+import { getEncryptionKey } from '@/lib/encryption';
+import { SseManager } from '@/lib/sse';
+import { logger } from '@/lib/logger';
+import { pollHospital, type PollHospitalStats, type PollHospitalStep } from './polling';
+
+export interface OnboardingHosxpSyncStep extends PollHospitalStep {
+  at: string;
+  cycle: number;
+}
+
+interface OnboardingSyncJob {
+  interval: ReturnType<typeof setInterval>;
+  startedAt: number;
+  lastRunAt: number | null;
+  lastSuccessAt: number | null;
+  lastErrorAt: number | null;
+  lastError: string | null;
+  cycleCount: number;
+  successCount: number;
+  phase: 'scheduled' | 'querying_hosxp' | 'complete' | 'failed';
+  fingerprint: string;
+  intervalMs: number;
+  ttlMs: number;
+  lastStats: PollHospitalStats | null;
+  lastSteps: OnboardingHosxpSyncStep[];
+}
+
+export interface StartOnboardingHosxpSyncInput {
+  db: DatabaseAdapter;
+  hospitalId: string;
+  hcode: string;
+  bmsUrl: string;
+  bearerToken: string;
+  databaseType: DatabaseDialect;
+  marketplaceToken?: string | null;
+  sseManager?: SseManager;
+}
+
+export interface StartOnboardingHosxpSyncResult {
+  started: boolean;
+  alreadyRunning: boolean;
+  intervalMs: number;
+  ttlMs: number;
+}
+
+export interface OnboardingHosxpSyncRuntimeStatus {
+  running: boolean;
+  phase: 'stopped' | OnboardingSyncJob['phase'];
+  startedAt: string | null;
+  expiresAt: string | null;
+  lastRunAt: string | null;
+  lastSuccessAt: string | null;
+  lastErrorAt: string | null;
+  lastError: string | null;
+  nextRunAt: string | null;
+  cycleCount: number;
+  successCount: number;
+  intervalMs: number | null;
+  ttlMs: number | null;
+  lastStats: PollHospitalStats | null;
+  lastSteps: OnboardingHosxpSyncStep[];
+}
+
+const jobs = new Map<string, OnboardingSyncJob>();
+
+const DEFAULT_INTERVAL_MS = 30_000;
+const DEFAULT_TTL_MS = 8 * 60 * 60 * 1000;
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+function getIntervalMs(): number {
+  return Math.max(
+    10_000,
+    readPositiveIntEnv('HOSXP_ONBOARD_SYNC_INTERVAL_MS', DEFAULT_INTERVAL_MS),
+  );
+}
+
+function getTtlMs(): number {
+  return Math.max(
+    60_000,
+    readPositiveIntEnv('HOSXP_ONBOARD_SYNC_TTL_MS', DEFAULT_TTL_MS),
+  );
+}
+
+function fingerprint(input: StartOnboardingHosxpSyncInput): string {
+  const tokenPrefix = input.bearerToken.slice(0, 12);
+  const mpPrefix = input.marketplaceToken?.slice(0, 12) ?? '';
+  return [
+    input.hospitalId,
+    input.bmsUrl.replace(/\/$/, ''),
+    input.databaseType,
+    tokenPrefix,
+    mpPrefix,
+  ].join('|');
+}
+
+export function stopOnboardingHosxpSync(hospitalId: string): boolean {
+  const existing = jobs.get(hospitalId);
+  if (!existing) return false;
+  clearInterval(existing.interval);
+  jobs.delete(hospitalId);
+  return true;
+}
+
+export function getOnboardingHosxpSyncStatus(
+  hospitalId: string,
+): OnboardingHosxpSyncRuntimeStatus {
+  const job = jobs.get(hospitalId);
+  if (!job) {
+    return {
+      running: false,
+      phase: 'stopped',
+      startedAt: null,
+      expiresAt: null,
+      lastRunAt: null,
+      lastSuccessAt: null,
+      lastErrorAt: null,
+      lastError: null,
+      nextRunAt: null,
+      cycleCount: 0,
+      successCount: 0,
+      intervalMs: null,
+      ttlMs: null,
+      lastStats: null,
+      lastSteps: [],
+    };
+  }
+
+  const lastAnchor = job.lastRunAt ?? job.startedAt;
+  return {
+    running: true,
+    phase: job.phase,
+    startedAt: new Date(job.startedAt).toISOString(),
+    expiresAt: new Date(job.startedAt + job.ttlMs).toISOString(),
+    lastRunAt: job.lastRunAt ? new Date(job.lastRunAt).toISOString() : null,
+    lastSuccessAt: job.lastSuccessAt ? new Date(job.lastSuccessAt).toISOString() : null,
+    lastErrorAt: job.lastErrorAt ? new Date(job.lastErrorAt).toISOString() : null,
+    lastError: job.lastError,
+    nextRunAt: new Date(lastAnchor + job.intervalMs).toISOString(),
+    cycleCount: job.cycleCount,
+    successCount: job.successCount,
+    intervalMs: job.intervalMs,
+    ttlMs: job.ttlMs,
+    lastStats: job.lastStats,
+    lastSteps: job.lastSteps,
+  };
+}
+
+export function _resetOnboardingHosxpSyncForTesting(): void {
+  for (const job of jobs.values()) {
+    clearInterval(job.interval);
+  }
+  jobs.clear();
+}
+
+export async function startOnboardingHosxpSync(
+  input: StartOnboardingHosxpSyncInput,
+): Promise<StartOnboardingHosxpSyncResult> {
+  const intervalMs = getIntervalMs();
+  const ttlMs = getTtlMs();
+  const nextFingerprint = fingerprint(input);
+  const existing = jobs.get(input.hospitalId);
+
+  if (existing?.fingerprint === nextFingerprint) {
+    return { started: false, alreadyRunning: true, intervalMs, ttlMs };
+  }
+
+  if (existing) {
+    clearInterval(existing.interval);
+    jobs.delete(input.hospitalId);
+  }
+
+  const sseManager = input.sseManager ?? SseManager.getInstance();
+  const encryptionKey = getEncryptionKey();
+  const bmsUrl = input.bmsUrl.replace(/\/$/, '');
+  let running = false;
+  const startedAt = Date.now();
+
+  const runOnce = async () => {
+    if (running) return;
+    if (Date.now() - startedAt > ttlMs) {
+      stopOnboardingHosxpSync(input.hospitalId);
+      logger.info('onboarding_hosxp_sync_expired', {
+        hcode: input.hcode,
+        hospitalId: input.hospitalId,
+      });
+      return;
+    }
+
+    running = true;
+    const job = jobs.get(input.hospitalId);
+    if (job) {
+      job.lastRunAt = Date.now();
+      job.cycleCount += 1;
+      job.phase = 'querying_hosxp';
+      job.lastSteps = [{
+        at: new Date().toISOString(),
+        cycle: job.cycleCount,
+        name: 'cycle_start',
+        status: 'running',
+        message: `Starting HOSxP sync cycle for hcode ${input.hcode}`,
+        detail: `db=${input.databaseType}; interval=${intervalMs}ms`,
+      }];
+    }
+    try {
+      const appendStep = (step: PollHospitalStep) => {
+        const target = jobs.get(input.hospitalId);
+        if (!target) return;
+        target.lastSteps.push({
+          ...step,
+          at: new Date().toISOString(),
+          cycle: target.cycleCount,
+        });
+        if (target.lastSteps.length > 80) {
+          target.lastSteps = target.lastSteps.slice(-80);
+        }
+      };
+      const stats = await pollHospital(
+        input.db,
+        input.hospitalId,
+        bmsUrl,
+        bmsUrl,
+        input.bearerToken,
+        input.databaseType,
+        encryptionKey,
+        sseManager,
+        {
+          marketplaceToken: input.marketplaceToken,
+          onStep: appendStep,
+        },
+      );
+      logger.info('onboarding_hosxp_sync_cycle_complete', {
+        hcode: input.hcode,
+        hospitalId: input.hospitalId,
+      });
+      const done = jobs.get(input.hospitalId);
+      if (done) {
+        done.lastSuccessAt = Date.now();
+        done.successCount += 1;
+        done.lastError = null;
+        done.lastErrorAt = null;
+        done.phase = 'complete';
+        done.lastStats = stats;
+        done.lastSteps.push({
+          at: new Date().toISOString(),
+          cycle: done.cycleCount,
+          name: 'cycle_complete',
+          status: 'success',
+          message: 'Cycle completed and local cache was updated.',
+          counts: {
+            iptSynced: stats.activePatientsSynced,
+            ancSynced: stats.anc.patientsSynced,
+            ancVisits: stats.anc.servicesMapped,
+            partographUpserted: stats.partographRowsUpserted,
+          },
+        });
+      }
+    } catch (error) {
+      const failed = jobs.get(input.hospitalId);
+      if (failed) {
+        failed.lastErrorAt = Date.now();
+        failed.lastError = error instanceof Error ? error.message : String(error);
+        failed.phase = 'failed';
+        failed.lastSteps.push({
+          at: new Date().toISOString(),
+          cycle: failed.cycleCount,
+          name: 'cycle_failed',
+          status: 'error',
+          message: 'Cycle failed before local cache update completed.',
+          detail: failed.lastError,
+        });
+      }
+      logger.error('onboarding_hosxp_sync_cycle_failed', {
+        hcode: input.hcode,
+        hospitalId: input.hospitalId,
+        error,
+      });
+    } finally {
+      running = false;
+    }
+  };
+
+  const interval = setInterval(() => {
+    void runOnce();
+  }, intervalMs);
+  jobs.set(input.hospitalId, {
+    interval,
+    startedAt,
+    lastRunAt: null,
+    lastSuccessAt: null,
+    lastErrorAt: null,
+    lastError: null,
+    cycleCount: 0,
+    successCount: 0,
+    phase: 'scheduled',
+    fingerprint: nextFingerprint,
+    intervalMs,
+    ttlMs,
+    lastStats: null,
+    lastSteps: [],
+  });
+
+  void runOnce();
+  logger.info('onboarding_hosxp_sync_started', {
+    hcode: input.hcode,
+    hospitalId: input.hospitalId,
+    intervalMs,
+    ttlMs,
+    databaseType: input.databaseType,
+  });
+
+  return { started: true, alreadyRunning: false, intervalMs, ttlMs };
+}

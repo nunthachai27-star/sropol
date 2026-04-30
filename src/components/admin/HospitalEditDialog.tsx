@@ -1,8 +1,9 @@
 // HospitalEditDialog — comprehensive hospital settings modal used by the
-// admin page. Three tabs:
+// admin page. Four tabs:
 //   1. General       — name, level, province, lat/lon, active
-//   2. BMS Tunnel    — per-hospital tunnel URL + live test-connection
-//   3. Webhook Keys  — create / list / revoke API keys for this hospital
+//   2. Consult Docs  — referral consult doctor contacts for this hospital
+//   3. BMS Tunnel    — per-hospital tunnel URL + live test-connection
+//   4. Webhook Keys  — create / list / revoke API keys for this hospital
 // Each tab persists independently via its own endpoint so partial saves
 // don't clobber unrelated fields.
 'use client';
@@ -25,6 +26,14 @@ import {
   Trash2,
   Database,
   CheckCircle2,
+  Users,
+  Phone,
+  Briefcase,
+  Pencil,
+  Building2,
+  CalendarClock,
+  Activity,
+  ShieldCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -105,6 +114,19 @@ interface WebhookKey {
   revokedAt: string | null;
 }
 
+interface ConsultDoctor {
+  id: string;
+  hospitalId: string;
+  hcode: string;
+  cid: string;
+  name: string;
+  position: string | null;
+  phoneNumber: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface TestResult {
   connected: boolean;
   databaseType?: string;
@@ -115,7 +137,8 @@ interface TestResult {
 
 // ───────────────── Component ─────────────────
 
-type SectionKey = 'general' | 'tunnel' | 'webhooks';
+type SectionKey = 'general' | 'consult' | 'tunnel' | 'webhooks';
+type Tone = 'low' | 'medium' | 'high' | 'muted' | 'navy';
 
 interface Props {
   hospital: AdminHospital | null;
@@ -130,8 +153,8 @@ export function HospitalEditDialog({ hospital, onClose, onSaved }: Props) {
   return (
     <Dialog open={!!hospital} onOpenChange={(o) => !o && onClose()}>
       <DialogContent
-        className="max-w-4xl p-0"
-        style={{ width: 'min(96vw, 960px)' }}
+        className="max-h-[94vh] max-w-[calc(100vw-2rem)] overflow-hidden p-0 sm:max-w-none"
+        style={{ width: 'min(96vw, 1080px)' }}
       >
         {/* key on the inner shell re-mounts state (active section, form fields)
             when switching hospitals without a useEffect-driven reset. */}
@@ -141,91 +164,179 @@ export function HospitalEditDialog({ hospital, onClose, onSaved }: Props) {
   );
 }
 
+function serviceMeta(serviceType: string | null) {
+  return SERVICE_TYPE_META.find((s) => s.value === serviceType) ?? null;
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('th-TH', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
+function coordinatesLabel(hospital: AdminHospital) {
+  if (typeof hospital.lat !== 'number' || typeof hospital.lon !== 'number') {
+    return 'ยังไม่ได้กำหนด';
+  }
+  return `${hospital.lat.toFixed(4)}, ${hospital.lon.toFixed(4)}`;
+}
+
+function connectionTone(status: string): Tone {
+  if (status === 'CONNECTED') return 'low';
+  if (status === 'ERROR' || status === 'FAILED') return 'high';
+  return 'muted';
+}
+
+function toneColor(tone: Tone) {
+  if (tone === 'low') return 'var(--risk-low)';
+  if (tone === 'medium') return 'var(--risk-medium)';
+  if (tone === 'high') return 'var(--risk-high)';
+  if (tone === 'navy') return 'var(--accent-navy)';
+  return 'var(--ink-navy-muted)';
+}
+
 function DialogInner({ hospital, onSaved }: Props & { hospital: AdminHospital }) {
   const [section, setSection] = useState<SectionKey>('general');
+  const { data: doctorsData } = useSWR<{ doctors: ConsultDoctor[] }>(
+    `/api/admin/hospitals/${hospital.hcode}/consult-doctors`,
+  );
+  const { data: webhookData } = useSWR<{ keys: WebhookKey[] }>('/api/admin/webhooks');
+
+  const service = serviceMeta(hospital.serviceType);
+  const doctorCount = doctorsData?.doctors.length;
+  const webhookCount = useMemo(
+    () =>
+      (webhookData?.keys ?? []).filter((key) => key.hcode === hospital.hcode && key.isActive)
+        .length,
+    [hospital.hcode, webhookData],
+  );
+  const hasCoords = typeof hospital.lat === 'number' && typeof hospital.lon === 'number';
+  const bmsStatus = hospital.bmsConfig?.hasSession
+    ? 'Session active'
+    : hospital.bmsConfig?.tunnelUrl
+      ? 'URL saved'
+      : 'Not configured';
+  const tabs: Array<{
+    k: SectionKey;
+    label: string;
+    detail: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }> = [
+    {
+      k: 'general',
+      label: 'ข้อมูลทั่วไป',
+      detail: service?.labelTh ?? 'ยังไม่ระบุประเภท',
+      icon: Settings2,
+    },
+    {
+      k: 'consult',
+      label: 'Consult Doctors',
+      detail: doctorCount === undefined ? 'contacts' : `${doctorCount} contacts`,
+      icon: Users,
+    },
+    { k: 'tunnel', label: 'BMS Tunnel', detail: bmsStatus, icon: Cable },
+    {
+      k: 'webhooks',
+      label: 'Webhook Keys',
+      detail: webhookCount === 1 ? '1 active key' : `${webhookCount} active keys`,
+      icon: KeyRound,
+    },
+  ];
 
   return (
     <>
-      <DialogHeader className="border-b px-5 pt-4 pb-3"
+      <DialogHeader className="border-b bg-white px-5 pt-4 pb-4"
         style={{ borderColor: 'var(--rule-strong)' }}
       >
-        <DialogTitle className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--ink-navy-muted)]">
-              EDIT HOSPITAL · {hospital.hcode}
+        <DialogTitle className="space-y-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 font-mono text-[12px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
+                  <Building2 className="h-3.5 w-3.5" />
+                  Hospital Operations Profile
+                </span>
+                <span
+                  className="border px-2 py-0.5 font-mono text-[12px]"
+                  style={{
+                    borderColor: 'var(--rule-strong)',
+                    color: 'var(--ink-navy-dim)',
+                    background: 'var(--surface-cool)',
+                  }}
+                >
+                  HCODE {hospital.hcode}
+                </span>
+              </div>
+              <div
+                className="mt-1 truncate text-[20px] font-semibold leading-tight"
+                style={{ color: 'var(--ink-navy)' }}
+              >
+                {hospital.name}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <StatusPill
+                  tone={hospital.isActive ? 'low' : 'muted'}
+                  Icon={hospital.isActive ? CheckCircle2 : AlertTriangle}
+                  label={hospital.isActive ? 'ACTIVE' : 'INACTIVE'}
+                />
+                <StatusPill
+                  tone={connectionTone(hospital.connectionStatus)}
+                  Icon={Activity}
+                  label={`SYNC ${hospital.connectionStatus || 'UNKNOWN'}`}
+                />
+                <StatusPill
+                  tone={hospital.bmsConfig?.hasSession ? 'low' : hospital.bmsConfig?.tunnelUrl ? 'medium' : 'muted'}
+                  Icon={Database}
+                  label={bmsStatus}
+                />
+              </div>
             </div>
+
             <div
-              className="mt-0.5 truncate text-[18px] font-semibold leading-tight"
+              className="grid grid-cols-2 gap-2 text-left md:w-[360px]"
               style={{ color: 'var(--ink-navy)' }}
             >
-              {hospital.name}
+              <ProfileMetric label="LEVEL" value={hospital.level} Icon={ShieldCheck} tone="navy" />
+              <ProfileMetric
+                label="LAST SYNC"
+                value={formatDateTime(hospital.lastSyncAt)}
+                Icon={CalendarClock}
+                tone={hospital.lastSyncAt ? 'navy' : 'muted'}
+              />
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <span
-                    className="border px-1.5 py-0.5 font-mono text-[10px]"
-                    style={{
-                      borderColor: 'var(--rule-strong)',
-                      color: 'var(--ink-navy-dim)',
-                    }}
-                  >
-                    {hospital.level}
-                  </span>
-                  {hospital.serviceType ? (
-                    <span
-                      className="border px-1.5 py-0.5 font-mono text-[10px]"
-                      style={{
-                        borderColor: 'var(--accent-navy)',
-                        color: 'var(--accent-navy)',
-                        background: 'var(--accent-navy-soft)',
-                      }}
-                    >
-                      {SERVICE_TYPE_META.find((s) => s.value === hospital.serviceType)?.labelTh ??
-                        hospital.serviceType}
-                    </span>
-                  ) : null}
-                  <span
-                    className="inline-flex items-center gap-1 border px-1.5 py-0.5 font-mono text-[10px]"
-                    style={{
-                      borderColor: hospital.isActive
-                        ? 'var(--risk-low)'
-                        : 'var(--ink-navy-muted)',
-                      color: hospital.isActive
-                        ? 'var(--risk-low)'
-                        : 'var(--ink-navy-muted)',
-                    }}
-                  >
-                    {hospital.isActive ? (
-                      <CheckCircle2 className="h-3 w-3" />
-                    ) : (
-                      <AlertTriangle className="h-3 w-3" />
-                    )}
-                    {hospital.isActive ? 'ACTIVE' : 'INACTIVE'}
-                  </span>
-              <span
-                className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--ink-navy-muted)]"
-              >
-                <MapPin className="h-3 w-3" />
-                {typeof hospital.lat === 'number' && typeof hospital.lon === 'number'
-                  ? `${hospital.lat.toFixed(4)}, ${hospital.lon.toFixed(4)}`
-                  : 'no coords'}
-              </span>
-            </div>
+          </div>
+
+          <div
+            className="grid gap-2 border px-3 py-2 text-[12px] md:grid-cols-[1.2fr_1fr_1fr]"
+            style={{ borderColor: 'var(--rule-strong)', background: 'var(--surface-cool)' }}
+          >
+            <HeaderFact label="SERVICE" value={service?.labelTh ?? 'ยังไม่ระบุประเภท'} />
+            <HeaderFact
+              label="COORDINATES"
+              value={coordinatesLabel(hospital)}
+              Icon={MapPin}
+              muted={!hasCoords}
+            />
+            <HeaderFact
+              label="DATABASE"
+              value={hospital.bmsConfig?.databaseType ?? 'ยังไม่ทราบชนิดฐานข้อมูล'}
+              Icon={Database}
+              muted={!hospital.bmsConfig?.databaseType}
+            />
           </div>
         </DialogTitle>
       </DialogHeader>
 
         {/* Section tabs */}
         <div
-          className="flex border-b bg-white px-5"
+          className="flex overflow-x-auto border-b bg-white px-5"
           style={{ borderColor: 'var(--rule-strong)' }}
         >
-          {(
-            [
-              { k: 'general' as const, label: 'ข้อมูลทั่วไป', icon: Settings2 },
-              { k: 'tunnel' as const, label: 'BMS Tunnel', icon: Cable },
-              { k: 'webhooks' as const, label: 'Webhook Keys', icon: KeyRound },
-            ]
-          ).map((t) => {
+          {tabs.map((t) => {
             const active = section === t.k;
             const Icon = t.icon;
             return (
@@ -233,7 +344,7 @@ function DialogInner({ hospital, onSaved }: Props & { hospital: AdminHospital })
                 key={t.k}
                 onClick={() => setSection(t.k)}
                 className={cn(
-                  'relative -mb-px inline-flex items-center gap-1.5 px-3 py-2 font-mono text-[11px] tracking-[0.06em] transition-colors',
+                  'relative -mb-px inline-flex min-w-[160px] items-center gap-2 px-3 py-2.5 text-left transition-colors',
                   active ? 'font-semibold' : 'font-normal hover:text-[var(--accent-navy)]',
                 )}
                 style={{
@@ -244,7 +355,14 @@ function DialogInner({ hospital, onSaved }: Props & { hospital: AdminHospital })
                 }}
               >
                 <Icon className="h-3.5 w-3.5" />
-                {t.label}
+                <span className="min-w-0">
+                  <span className="block truncate font-mono text-[13px] tracking-[0.03em]">
+                    {t.label}
+                  </span>
+                  <span className="block truncate font-mono text-[12px] font-normal text-[var(--ink-navy-muted)]">
+                    {t.detail}
+                  </span>
+                </span>
               </button>
             );
           })}
@@ -252,11 +370,13 @@ function DialogInner({ hospital, onSaved }: Props & { hospital: AdminHospital })
 
         {/* Section content — fixed-ish height so switching tabs doesn't jitter */}
         <div
-          className="max-h-[70vh] overflow-y-auto px-5 py-4"
+          className="max-h-[calc(94vh-230px)] min-h-[340px] overflow-y-auto px-5 py-4"
           style={{ background: 'var(--surface-cool)' }}
         >
         {section === 'general' ? (
           <GeneralSection hospital={hospital} onSaved={onSaved} />
+        ) : section === 'consult' ? (
+          <ConsultDoctorsSection hospital={hospital} />
         ) : section === 'tunnel' ? (
           <TunnelSection hospital={hospital} />
         ) : (
@@ -341,11 +461,19 @@ function GeneralSection({
 
   return (
     <div className="space-y-4">
+      <SectionIntro
+        eyebrow="Hospital identity"
+        title="ข้อมูลหลักของโรงพยาบาล"
+        detail="ข้อมูลนี้ใช้กำหนดบทบาทบริการ สถานะการใช้งาน และตำแหน่งบนแผนที่ของระบบ"
+        Icon={Settings2}
+        meta={`Status: ${isActive ? 'ACTIVE' : 'INACTIVE'}`}
+      />
+
       {/* Service-type picker — three radio-card tiles so the ops team sees the
           consequence blurb before committing. Drives sync eligibility and
           dashboard filters, so worth surfacing above the MOPH level. */}
       <div>
-        <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
+        <div className="mb-1 font-mono text-[12px] uppercase tracking-[0.08em] text-[var(--ink-navy-muted)]">
           SERVICE TYPE · ประเภทการให้บริการ
         </div>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
@@ -365,7 +493,7 @@ function GeneralSection({
                 }}
               >
                 <div className="text-[13px] font-semibold leading-tight">{m.labelTh}</div>
-                <div className="font-mono text-[10px] leading-snug text-[var(--ink-navy-muted)]">
+                <div className="font-mono text-[12px] leading-snug text-[var(--ink-navy-muted)]">
                   {m.blurb}
                 </div>
               </button>
@@ -420,7 +548,7 @@ function GeneralSection({
       </div>
 
       <div>
-        <div className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
+        <div className="mb-1 flex items-center gap-1.5 font-mono text-[12px] uppercase tracking-[0.08em] text-[var(--ink-navy-muted)]">
           <MapPin className="h-3 w-3" />
           GEO COORDINATES · ใช้สำหรับปักหมุดบนแผนที่
         </div>
@@ -442,7 +570,7 @@ function GeneralSection({
             />
           </Field>
         </div>
-        <p className="mt-1 font-mono text-[10px] leading-snug text-[var(--ink-navy-muted)]">
+        <p className="mt-1 font-mono text-[12px] leading-snug text-[var(--ink-navy-muted)]">
           ถ้าไม่ใส่พิกัด ระบบจะใช้ centroid ของอำเภอแทน
         </p>
       </div>
@@ -465,6 +593,283 @@ function GeneralSection({
           <Save className="h-4 w-4" />
           {busy ? 'กำลังบันทึก...' : 'บันทึก'}
         </Button>
+      </div>
+    </div>
+  );
+}
+
+// ───────────────── Consult doctors section ─────────────────
+
+interface DoctorFormState {
+  id: string | null;
+  cid: string;
+  name: string;
+  position: string;
+  phoneNumber: string;
+}
+
+const EMPTY_DOCTOR_FORM: DoctorFormState = {
+  id: null,
+  cid: '',
+  name: '',
+  position: '',
+  phoneNumber: '',
+};
+
+function ConsultDoctorsSection({ hospital }: { hospital: AdminHospital }) {
+  const { data, isLoading, mutate } = useSWR<{ doctors: ConsultDoctor[] }>(
+    `/api/admin/hospitals/${hospital.hcode}/consult-doctors`,
+  );
+  const [form, setForm] = useState<DoctorFormState>(EMPTY_DOCTOR_FORM);
+  const [busy, setBusy] = useState(false);
+  const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    setForm(EMPTY_DOCTOR_FORM);
+    setMessage(null);
+    setDeleteBusyId(null);
+  }, [hospital.hcode]);
+
+  const doctors = data?.doctors ?? [];
+  const editing = !!form.id;
+  const phoneCount = doctors.filter((doctor) => !!doctor.phoneNumber).length;
+
+  const setField = (key: keyof DoctorFormState, value: string) => {
+    setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const resetForm = () => {
+    setForm(EMPTY_DOCTOR_FORM);
+    setMessage(null);
+  };
+
+  const startEdit = (doctor: ConsultDoctor) => {
+    setForm({
+      id: doctor.id,
+      cid: doctor.cid,
+      name: doctor.name,
+      position: doctor.position ?? '',
+      phoneNumber: doctor.phoneNumber ?? '',
+    });
+    setMessage(null);
+  };
+
+  const handleSave = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const cid = form.cid.trim();
+      const name = form.name.trim();
+      if (!/^\d{13}$/.test(cid)) {
+        throw new Error('CID ต้องเป็นตัวเลข 13 หลัก');
+      }
+      if (!name) {
+        throw new Error('กรุณาระบุชื่อแพทย์');
+      }
+
+      const path = editing
+        ? `/api/admin/hospitals/${hospital.hcode}/consult-doctors/${form.id}`
+        : `/api/admin/hospitals/${hospital.hcode}/consult-doctors`;
+      const res = await fetch(path, {
+        method: editing ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cid,
+          name,
+          position: form.position.trim() || null,
+          phoneNumber: form.phoneNumber.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(err?.error ?? 'บันทึกไม่สำเร็จ');
+      }
+
+      await mutate();
+      setForm(EMPTY_DOCTOR_FORM);
+      setMessage({ tone: 'ok', text: editing ? 'แก้ไขแพทย์ consult สำเร็จ' : 'เพิ่มแพทย์ consult สำเร็จ' });
+    } catch (e) {
+      setMessage({ tone: 'error', text: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDelete = async (doctor: ConsultDoctor) => {
+    if (!confirm(`ลบแพทย์ consult ${doctor.name}?`)) return;
+    setDeleteBusyId(doctor.id);
+    setMessage(null);
+    try {
+      const res = await fetch(
+        `/api/admin/hospitals/${hospital.hcode}/consult-doctors/${doctor.id}`,
+        { method: 'DELETE' },
+      );
+      if (!res.ok) {
+        const err = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(err?.error ?? 'ลบไม่สำเร็จ');
+      }
+      if (form.id === doctor.id) {
+        setForm(EMPTY_DOCTOR_FORM);
+      }
+      await mutate();
+      setMessage({ tone: 'ok', text: 'ลบแพทย์ consult สำเร็จ' });
+    } catch (e) {
+      setMessage({ tone: 'error', text: (e as Error).message });
+    } finally {
+      setDeleteBusyId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <SectionIntro
+        eyebrow="Referral contacts"
+        title="แพทย์ Consult ประจำโรงพยาบาล"
+        detail="รายชื่อแพทย์ที่ใช้สำหรับประสานงานเคสส่งต่อและการปรึกษาทางคลินิก"
+        Icon={Users}
+        meta={`${doctors.length} doctors · ${phoneCount} phone numbers`}
+      />
+
+      <div className="border bg-white p-4" style={{ borderColor: 'var(--rule-strong)' }}>
+        <div className="mb-3 flex items-center gap-1.5 font-mono text-[12px] uppercase tracking-[0.08em]">
+          <Users className="h-3 w-3" style={{ color: 'var(--accent-navy)' }} />
+          <span style={{ color: 'var(--accent-navy)' }}>
+            {editing ? 'แก้ไขแพทย์ Consult' : 'เพิ่มแพทย์ Consult'}
+          </span>
+          <span className="text-[var(--ink-navy-muted)]">· {hospital.hcode}</span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Field label="CID">
+            <Input
+              value={form.cid}
+              onChange={(e) => setField('cid', e.target.value.replace(/\D/g, '').slice(0, 13))}
+              placeholder="1234567890123"
+              className="h-9 font-mono"
+              inputMode="numeric"
+              maxLength={13}
+            />
+          </Field>
+          <Field label="ชื่อแพทย์">
+            <Input
+              value={form.name}
+              onChange={(e) => setField('name', e.target.value)}
+              placeholder="ชื่อ-สกุล"
+              className="h-9"
+            />
+          </Field>
+          <Field label="ตำแหน่ง">
+            <div className="relative">
+              <Briefcase className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-[var(--ink-navy-muted)]" />
+              <Input
+                value={form.position}
+                onChange={(e) => setField('position', e.target.value)}
+                placeholder="เช่น สูติแพทย์"
+                className="h-9 pl-8"
+              />
+            </div>
+          </Field>
+          <Field label="เบอร์โทรศัพท์">
+            <div className="relative">
+              <Phone className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-[var(--ink-navy-muted)]" />
+              <Input
+                value={form.phoneNumber}
+                onChange={(e) => setField('phoneNumber', e.target.value)}
+                placeholder="08x-xxx-xxxx"
+                className="h-9 pl-8 font-mono"
+              />
+            </div>
+          </Field>
+        </div>
+
+        {message ? (
+          <div
+            className="mt-3 border px-3 py-2 font-mono text-[11px]"
+            style={{
+              borderColor: message.tone === 'ok' ? 'var(--risk-low)' : 'var(--risk-high)',
+              color: message.tone === 'ok' ? 'var(--risk-low)' : 'var(--risk-high)',
+              background: 'white',
+            }}
+          >
+            {message.text}
+          </div>
+        ) : null}
+
+        <div className="mt-4 flex justify-end gap-2">
+          {editing ? (
+            <Button variant="ghost" onClick={resetForm} disabled={busy}>
+              ยกเลิก
+            </Button>
+          ) : null}
+          <Button onClick={handleSave} disabled={busy || !form.cid.trim() || !form.name.trim()} className="gap-1.5">
+            <Save className="h-4 w-4" />
+            {busy ? 'กำลังบันทึก...' : editing ? 'บันทึกการแก้ไข' : 'เพิ่มแพทย์'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto border bg-white" style={{ borderColor: 'var(--rule-strong)' }}>
+        <div
+          className="grid min-w-[720px] gap-2 border-b px-3 py-2 font-mono text-[12px] tracking-[0.06em] text-[var(--ink-navy-muted)]"
+          style={{
+            gridTemplateColumns: '130px minmax(180px,1fr) minmax(120px,160px) minmax(120px,150px) 90px',
+            borderColor: 'var(--rule-strong)',
+          }}
+        >
+          <div>CID</div>
+          <div>NAME</div>
+          <div>POSITION</div>
+          <div>PHONE</div>
+          <div className="text-right">ACTION</div>
+        </div>
+        {isLoading ? (
+          <div className="px-3 py-6 text-center font-mono text-[11px] text-[var(--ink-navy-muted)]">
+            กำลังโหลดรายชื่อแพทย์ consult...
+          </div>
+        ) : doctors.length === 0 ? (
+          <div className="px-3 py-6 text-center font-mono text-[11px] text-[var(--ink-navy-muted)]">
+            ยังไม่มีแพทย์ consult สำหรับโรงพยาบาลนี้
+          </div>
+        ) : (
+          doctors.map((doctor) => (
+            <div
+              key={doctor.id}
+              className="grid min-w-[720px] items-center gap-2 border-b px-3 py-2 text-[12px] last:border-b-0"
+              style={{
+                gridTemplateColumns: '130px minmax(180px,1fr) minmax(120px,160px) minmax(120px,150px) 90px',
+                borderColor: 'var(--rule-hair)',
+              }}
+            >
+              <code className="font-mono text-[12px] text-[var(--ink-navy-dim)]">{doctor.cid}</code>
+              <div className="truncate font-medium text-[var(--ink-navy)]">{doctor.name}</div>
+              <div className="truncate text-[var(--ink-navy-dim)]">{doctor.position ?? '—'}</div>
+              <div className="truncate font-mono text-[12px] text-[var(--ink-navy-dim)]">
+                {doctor.phoneNumber ?? '—'}
+              </div>
+              <div className="flex justify-end gap-1">
+                <button
+                  onClick={() => startEdit(doctor)}
+                  className="inline-flex items-center gap-1 px-1.5 py-1 font-mono text-[12px] hover:bg-[var(--accent-navy-soft)]"
+                  style={{ color: 'var(--ink-navy-dim)' }}
+                  disabled={busy || !!deleteBusyId}
+                >
+                  <Pencil className="h-3 w-3" />
+                  แก้
+                </button>
+                <button
+                  onClick={() => handleDelete(doctor)}
+                  className="inline-flex items-center gap-1 px-1.5 py-1 font-mono text-[12px] hover:bg-red-50"
+                  style={{ color: 'var(--risk-high)' }}
+                  disabled={busy || deleteBusyId === doctor.id}
+                >
+                  <Trash2 className="h-3 w-3" />
+                  ลบ
+                </button>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
@@ -533,6 +938,14 @@ function TunnelSection({ hospital }: { hospital: AdminHospital }) {
 
   return (
     <div className="space-y-4">
+      <SectionIntro
+        eyebrow="BMS connectivity"
+        title="สถานะการเชื่อมต่อฐานข้อมูลโรงพยาบาล"
+        detail="ตั้งค่า tunnel, session, และตรวจสอบชนิดฐานข้อมูลที่ใช้สำหรับ sync ข้อมูล"
+        Icon={Cable}
+        meta={hospital.bmsConfig?.databaseType ?? 'Database: —'}
+      />
+
       {/* Status strip */}
       <div
         className="grid gap-0 border bg-white"
@@ -570,7 +983,7 @@ function TunnelSection({ hospital }: { hospital: AdminHospital }) {
             className="h-9 font-mono text-[12px]"
           />
         </Field>
-        <p className="mt-1 font-mono text-[10px] leading-snug text-[var(--ink-navy-muted)]">
+        <p className="mt-1 font-mono text-[12px] leading-snug text-[var(--ink-navy-muted)]">
           ระบบจะใช้ URL นี้สำหรับดึงข้อมูลจาก BMS ของโรงพยาบาล · ต้องสามารถเข้าถึงได้จากเซิร์ฟเวอร์ของระบบ
         </p>
 
@@ -657,6 +1070,7 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
     () => (data?.keys ?? []).filter((k) => k.hcode === hospital.hcode),
     [data, hospital.hcode],
   );
+  const activeKeyCount = keys.filter((key) => key.isActive).length;
 
   const handleCreate = async () => {
     if (!label.trim()) return;
@@ -722,9 +1136,17 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
 
   return (
     <div className="space-y-4">
+      <SectionIntro
+        eyebrow="Integration access"
+        title="Webhook API Keys"
+        detail="คีย์สำหรับรับข้อมูลจากระบบภายนอกของโรงพยาบาลนี้"
+        Icon={KeyRound}
+        meta={`${activeKeyCount} active · ${keys.length - activeKeyCount} revoked`}
+      />
+
       {/* Create form */}
       <div className="border bg-white p-4" style={{ borderColor: 'var(--rule-strong)' }}>
-        <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.12em]">
+        <div className="mb-2 flex items-center gap-1.5 font-mono text-[12px] uppercase tracking-[0.08em]">
           <KeyRound className="h-3 w-3" style={{ color: 'var(--accent-navy)' }} />
           <span style={{ color: 'var(--accent-navy)' }}>สร้าง API Key ใหม่</span>
           <span className="text-[var(--ink-navy-muted)]">· {hospital.hcode}</span>
@@ -768,12 +1190,12 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
             />
             <div>
               <div
-                className="font-mono text-[11px] font-semibold uppercase tracking-[0.08em]"
+                className="font-mono text-[12px] font-semibold uppercase tracking-[0.06em]"
                 style={{ color: 'var(--risk-medium)' }}
               >
                 บันทึก API Key นี้ไว้ทันที — ระบบจะไม่แสดงอีก
               </div>
-              <div className="mt-0.5 font-mono text-[11px] text-[var(--ink-navy-dim)]">
+              <div className="mt-0.5 font-mono text-[12px] text-[var(--ink-navy-dim)]">
                 {justCreated.label}
               </div>
             </div>
@@ -785,7 +1207,7 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
             <code className="flex-1 overflow-x-auto font-mono text-[12px] text-[var(--ink-navy)]">
               {justCreated.apiKey}
             </code>
-            <Button onClick={handleCopy} variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]">
+            <Button onClick={handleCopy} variant="outline" size="sm" className="h-8 gap-1.5 text-[12px]">
               {copied ? (
                 <Check className="h-3 w-3" style={{ color: 'var(--risk-low)' }} />
               ) : (
@@ -800,7 +1222,7 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
       {/* Keys list */}
       <div className="border bg-white" style={{ borderColor: 'var(--rule-strong)' }}>
         <div
-          className="grid gap-2 border-b px-3 py-2 font-mono text-[10px] tracking-[0.1em] text-[var(--ink-navy-muted)]"
+          className="grid gap-2 border-b px-3 py-2 font-mono text-[12px] tracking-[0.06em] text-[var(--ink-navy-muted)]"
           style={{ gridTemplateColumns: '1fr 110px 120px 70px 80px', borderColor: 'var(--rule-strong)' }}
         >
           <div>LABEL</div>
@@ -826,17 +1248,17 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
             >
               <div className="truncate">{k.label}</div>
               <code
-                className="border px-1.5 py-0.5 font-mono text-[10px] text-[var(--ink-navy-dim)]"
+                className="border px-1.5 py-0.5 font-mono text-[12px] text-[var(--ink-navy-dim)]"
                 style={{ borderColor: 'var(--rule-strong)', background: 'var(--surface-cool)' }}
               >
                 {k.keyPrefix}…
               </code>
-              <div className="font-mono text-[11px] text-[var(--ink-navy-dim)]">
+              <div className="font-mono text-[12px] text-[var(--ink-navy-dim)]">
                 {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleDateString('th-TH') : '—'}
               </div>
               <div>
                 <span
-                  className="inline-block border px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-[0.06em]"
+                  className="inline-block border px-1.5 py-0.5 font-mono text-[12px] font-semibold tracking-[0.04em]"
                   style={{
                     color: k.isActive ? 'var(--risk-low)' : 'var(--ink-navy-muted)',
                     borderColor: k.isActive ? 'var(--risk-low)' : 'var(--rule-strong)',
@@ -852,7 +1274,7 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
                       setRevokeTarget(k);
                       setRevokeInput('');
                     }}
-                    className="inline-flex items-center gap-1 px-1.5 py-1 font-mono text-[10px] hover:bg-red-50"
+                    className="inline-flex items-center gap-1 px-1.5 py-1 font-mono text-[12px] hover:bg-red-50"
                     style={{ color: 'var(--risk-high)' }}
                   >
                     <Trash2 className="h-3 w-3" />
@@ -871,12 +1293,12 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
           className="border-2 bg-white p-3"
           style={{ borderColor: 'var(--risk-high)' }}
         >
-          <div className="mb-2 flex items-center gap-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.08em]"
+          <div className="mb-2 flex items-center gap-1.5 font-mono text-[12px] font-semibold uppercase tracking-[0.06em]"
             style={{ color: 'var(--risk-high)' }}>
             <AlertTriangle className="h-3.5 w-3.5" />
             ยืนยันการยกเลิก · {revokeTarget.label}
           </div>
-          <p className="mb-2 font-mono text-[10px] leading-snug text-[var(--ink-navy-dim)]">
+          <p className="mb-2 font-mono text-[12px] leading-snug text-[var(--ink-navy-dim)]">
             คีย์ที่ยกเลิกแล้วจะใช้ไม่ได้ทันที · พิมพ์ prefix <code>{revokeTarget.keyPrefix}</code> เพื่อยืนยัน
           </p>
           <div className="flex gap-2">
@@ -911,10 +1333,138 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="mb-1 block font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
+      <label className="mb-1.5 block font-mono text-[12px] uppercase tracking-[0.08em] text-[var(--ink-navy-muted)]">
         {label}
       </label>
       {children}
+    </div>
+  );
+}
+
+function StatusPill({
+  tone,
+  Icon,
+  label,
+}: {
+  tone: Tone;
+  Icon: React.ComponentType<{ className?: string }>;
+  label: string;
+}) {
+  const color = toneColor(tone);
+  return (
+    <span
+      className="inline-flex items-center gap-1 border px-2 py-1 font-mono text-[12px] font-semibold uppercase tracking-[0.06em]"
+      style={{
+        borderColor: color,
+        color,
+        background: tone === 'muted' ? 'white' : 'var(--surface-cool)',
+      }}
+    >
+      <Icon className="h-3 w-3" />
+      {label}
+    </span>
+  );
+}
+
+function ProfileMetric({
+  label,
+  value,
+  Icon,
+  tone,
+}: {
+  label: string;
+  value: string;
+  Icon: React.ComponentType<{ className?: string }>;
+  tone: Tone;
+}) {
+  const color = toneColor(tone);
+  return (
+    <div className="border bg-[var(--surface-cool)] px-3 py-2" style={{ borderColor: 'var(--rule-strong)' }}>
+      <div className="flex items-center gap-1.5 font-mono text-[12px] uppercase tracking-[0.08em] text-[var(--ink-navy-muted)]">
+        <Icon className="h-3 w-3" />
+        {label}
+      </div>
+      <div className="mt-1 truncate font-mono text-[13px] font-semibold" style={{ color }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function HeaderFact({
+  label,
+  value,
+  Icon,
+  muted = false,
+}: {
+  label: string;
+  value: string;
+  Icon?: React.ComponentType<{ className?: string }>;
+  muted?: boolean;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-1.5 font-mono text-[12px] uppercase tracking-[0.08em] text-[var(--ink-navy-muted)]">
+        {Icon ? <Icon className="h-3 w-3" /> : null}
+        {label}
+      </div>
+      <div
+        className="mt-0.5 truncate font-mono text-[13px]"
+        style={{ color: muted ? 'var(--ink-navy-muted)' : 'var(--ink-navy)' }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function SectionIntro({
+  eyebrow,
+  title,
+  detail,
+  Icon,
+  meta,
+}: {
+  eyebrow: string;
+  title: string;
+  detail: string;
+  Icon: React.ComponentType<{ className?: string }>;
+  meta?: string;
+}) {
+  return (
+    <div
+      className="flex flex-col gap-2 border bg-white px-4 py-3 md:flex-row md:items-start md:justify-between"
+      style={{ borderColor: 'var(--rule-strong)' }}
+    >
+      <div className="flex min-w-0 gap-3">
+        <div
+          className="flex h-9 w-9 shrink-0 items-center justify-center border"
+          style={{
+            borderColor: 'var(--accent-navy)',
+            color: 'var(--accent-navy)',
+            background: 'var(--accent-navy-soft)',
+          }}
+        >
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <div className="font-mono text-[12px] uppercase tracking-[0.08em] text-[var(--ink-navy-muted)]">
+            {eyebrow}
+          </div>
+          <div className="mt-0.5 text-[15px] font-semibold leading-tight text-[var(--ink-navy)]">
+            {title}
+          </div>
+          <div className="mt-1 text-[13px] leading-snug text-[var(--ink-navy-dim)]">
+            {detail}
+          </div>
+        </div>
+      </div>
+      {meta ? (
+        <div className="shrink-0 border px-2.5 py-1.5 font-mono text-[12px] text-[var(--ink-navy-dim)] md:text-right"
+          style={{ borderColor: 'var(--rule-strong)', background: 'var(--surface-cool)' }}>
+          {meta}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -938,7 +1488,7 @@ function StatBox({
         : 'var(--ink-navy-muted)';
   return (
     <div className="px-4 py-3" style={{ borderLeft: `2px solid ${color}` }}>
-      <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
+      <div className="flex items-center gap-1.5 font-mono text-[12px] uppercase tracking-[0.08em] text-[var(--ink-navy-muted)]">
         <Icon className="h-3 w-3" />
         {label}
       </div>

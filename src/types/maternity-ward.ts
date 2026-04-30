@@ -25,11 +25,31 @@ export interface BedOccupancy {
   fname: string | null;
   lname: string | null;
   birthday: string | null;
+  blood_grp?: string | null;
+  allergy_count?: number | null;
+  pttype_name?: string | null;
+  prediag?: string | null;
+  admit_bw_kg?: number | null;
+  patient_height?: number | null;
   gravida: number | null;
   ga: number | null;
   incharge_doctor_name: string | null;
   last_observation_at: string | null;
   last_cervix_cm: number | null;
+  last_bp_sys?: number | null;
+  last_bp_dia?: number | null;
+  last_temp?: number | null;
+  last_pulse?: number | null;
+  last_rr?: number | null;
+  last_spo2?: number | null;
+  last_spo2_o2?: number | null;
+  last_weight?: number | null;
+  last_height?: number | null;
+  last_bsa?: number | null;
+  last_pain?: number | null;
+  last_assess_date?: string | null;
+  last_assess_time?: string | null;
+  last_assess_staff?: string | null;
 }
 
 /**
@@ -68,6 +88,10 @@ export interface BedOccupancyFull extends BedOccupancy {
   last_pulse: number | null;
   last_rr: number | null;
   last_spo2: number | null;
+  last_spo2_o2: number | null;
+  last_weight: number | null;
+  last_height: number | null;
+  last_bsa: number | null;
   last_pain: number | null;
   last_assess_date: string | null;
   last_assess_time: string | null;

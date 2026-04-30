@@ -27,11 +27,24 @@ const occupant: BedOccupancy = {
   fname: 'ทดสอบ',
   lname: 'ระบบ',
   birthday: '1996-04-19',
+  blood_grp: 'O',
+  allergy_count: 1,
+  pttype_name: 'ประกันสุขภาพถ้วนหน้า',
+  prediag: 'เจ็บครรภ์คลอด',
+  admit_bw_kg: 58,
+  patient_height: 160,
   gravida: 2,
   ga: 38,
   incharge_doctor_name: 'ดร.X',
-  last_observation_at: null,
+  last_observation_at: '2026-04-19T11:30:00',
   last_cervix_cm: 4,
+  last_bp_sys: 120,
+  last_bp_dia: 80,
+  last_temp: 37.2,
+  last_pulse: 88,
+  last_rr: 20,
+  last_spo2: 98,
+  last_pain: 6,
 };
 
 describe('PatientDrawer', () => {
@@ -41,14 +54,24 @@ describe('PatientDrawer', () => {
     expect(screen.queryByText(/AN1/)).not.toBeInTheDocument();
   });
 
-  it('renders header with AN, name, age, GA, bedno when open + occupant', () => {
+  it('renders informative header with HOSxP admit identity, risk flags, vitals, and labour status', () => {
     render(<PatientDrawer open occupant={occupant} onClose={() => {}} />);
     expect(screen.getByText(/AN1/)).toBeInTheDocument();
+    expect(screen.getByText(/HN HN1/)).toBeInTheDocument();
     expect(screen.getByText(/นาง ทดสอบ ระบบ|ทดสอบ ระบบ/)).toBeInTheDocument();
-    expect(screen.getByText(/30/)).toBeInTheDocument(); // age
+    expect(screen.getByText(/30 ปี/)).toBeInTheDocument(); // age
     expect(screen.getByText(/G2/)).toBeInTheDocument();
-    expect(screen.getByText(/GA38/)).toBeInTheDocument();
+    expect(screen.getByText(/GA 38/)).toBeInTheDocument();
     expect(screen.getByText(/เตียง 01|bedno 01|01/)).toBeInTheDocument();
+    expect(screen.getByText('Doctor')).toBeInTheDocument();
+    expect(screen.getByText('ดร.X')).toBeInTheDocument();
+    expect(screen.getByText(/Allergy 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Blood O/i)).toBeInTheDocument();
+    expect(screen.getByText(/ประกันสุขภาพถ้วนหน้า/)).toBeInTheDocument();
+    expect(screen.getByText(/เจ็บครรภ์คลอด/)).toBeInTheDocument();
+    expect(screen.getByText('120/80')).toBeInTheDocument();
+    expect(screen.getByText('37.2 °C')).toBeInTheDocument();
+    expect(screen.getByText('4 cm')).toBeInTheDocument();
   });
 
   it('renders all 10 tab buttons', () => {

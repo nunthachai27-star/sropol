@@ -12,38 +12,77 @@ export function getQuery(template: SqlQueryTemplate, dialect: DatabaseDialect): 
   return template[dialect];
 }
 
-// Active patients (admitted, not yet discharged)
+// Active maternity-ward patients (admitted, discharge not confirmed)
 // Uses ipt as main table with LEFT JOINs to enrich with pregnancy/labour/patient data
 // ipt_pregnancy.anc_complete is CHAR(1) 'Y'/'N' flag, NOT a count
 // ipt_labour.anc_count is the actual numeric ANC visit count
+// Scope is ward.is_maternity_ward='Y' per HOSxP ward admin config.
 export const ACTIVE_LABOR_PATIENTS: SqlQueryTemplate = {
   postgresql: `
-    SELECT i.an, i.hn, i.regdate, i.regtime, i.ward,
-           p.pname, p.fname, p.lname, p.cid, p.birthday, p.sex,
+    SELECT i.an, i.hn, i.regdate, i.regtime, i.dchdate, i.ward,
+           p.pname, p.fname, p.lname,
+           CONCAT(p.pname, p.fname, ' ', p.lname) AS patient_name,
+           p.cid, p.birthday, p.sex, p.height,
+           pvs.bw AS weight,
+           COALESCE(il.g, ip.preg_number) AS gravida,
            COALESCE(il.g, ip.preg_number) AS preg_number,
+           il.p AS para, il.a AS abortion, il.l AS living_children,
+           il.preg_no,
+           COALESCE(il.ga, ip.ga) AS ga_weeks,
            COALESCE(il.ga, ip.ga) AS ga,
-           il.anc_count,
-           ip.anc_complete,
-           ip.labor_date
+           il.ga_day, il.anc_count,
+           ip.anc_complete, ip.labor_date,
+           pvs.hct,
+           pvs.bps AS bp_sys_admit, pvs.bpd AS bp_dia_admit,
+           pvs.hr AS pulse_admit, pvs.rr AS rr_admit, pvs.temperature AS temp_admit,
+           pvs.cervical_open_size, pvs.eff, pvs.station,
+           (SELECT pas.bw FROM person_anc_screen pas
+              INNER JOIN person_anc_service pasv ON pasv.person_anc_service_id = pas.person_anc_service_id
+              INNER JOIN person_anc pa ON pa.person_anc_id = pasv.person_anc_id
+              INNER JOIN person pe ON pe.person_id = pa.person_id
+             WHERE pe.cid = p.cid AND LENGTH(p.cid) = 13 AND pas.bw IS NOT NULL AND pas.bw > 0
+             ORDER BY pasv.person_anc_service_id ASC
+             LIMIT 1) AS pre_preg_weight
     FROM ipt i
+    JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
     JOIN patient p ON p.hn = i.hn
-    LEFT JOIN ipt_pregnancy ip ON i.an = ip.an
-    LEFT JOIN ipt_labour il ON i.an = il.an
-    WHERE i.dchdate IS NULL
+    LEFT JOIN ipt_labour il ON il.an = i.an
+    LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
+    LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
+    WHERE i.confirm_discharge = 'N'
     ORDER BY i.regdate DESC`,
   mysql: `
-    SELECT i.an, i.hn, i.regdate, i.regtime, i.ward,
-           p.pname, p.fname, p.lname, p.cid, p.birthday, p.sex,
+    SELECT i.an, i.hn, i.regdate, i.regtime, i.dchdate, i.ward,
+           p.pname, p.fname, p.lname,
+           CONCAT(p.pname, p.fname, ' ', p.lname) AS patient_name,
+           p.cid, p.birthday, p.sex, p.height,
+           pvs.bw AS weight,
+           COALESCE(il.g, ip.preg_number) AS gravida,
            COALESCE(il.g, ip.preg_number) AS preg_number,
+           il.p AS para, il.a AS abortion, il.l AS living_children,
+           il.preg_no,
+           COALESCE(il.ga, ip.ga) AS ga_weeks,
            COALESCE(il.ga, ip.ga) AS ga,
-           il.anc_count,
-           ip.anc_complete,
-           ip.labor_date
+           il.ga_day, il.anc_count,
+           ip.anc_complete, ip.labor_date,
+           pvs.hct,
+           pvs.bps AS bp_sys_admit, pvs.bpd AS bp_dia_admit,
+           pvs.hr AS pulse_admit, pvs.rr AS rr_admit, pvs.temperature AS temp_admit,
+           pvs.cervical_open_size, pvs.eff, pvs.station,
+           (SELECT pas.bw FROM person_anc_screen pas
+              INNER JOIN person_anc_service pasv ON pasv.person_anc_service_id = pas.person_anc_service_id
+              INNER JOIN person_anc pa ON pa.person_anc_id = pasv.person_anc_id
+              INNER JOIN person pe ON pe.person_id = pa.person_id
+             WHERE pe.cid = p.cid AND LENGTH(p.cid) = 13 AND pas.bw IS NOT NULL AND pas.bw > 0
+             ORDER BY pasv.person_anc_service_id ASC
+             LIMIT 1) AS pre_preg_weight
     FROM ipt i
+    JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
     JOIN patient p ON p.hn = i.hn
-    LEFT JOIN ipt_pregnancy ip ON i.an = ip.an
-    LEFT JOIN ipt_labour il ON i.an = il.an
-    WHERE i.dchdate IS NULL
+    LEFT JOIN ipt_labour il ON il.an = i.an
+    LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
+    LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
+    WHERE i.confirm_discharge = 'N'
     ORDER BY i.regdate DESC`,
 };
 
@@ -297,8 +336,8 @@ export const REFEROUT_PREGNANCY: SqlQueryTemplate = {
 
 // Partograph observations for currently-admitted labour patients.
 // Joins ipt_labour_partograph (raw observations) to labour_amniotic_type
-// for the human-readable amniotic-fluid label, and gates on ipt.dchdate IS NULL
-// so we only sync rows for patients still in the labour ward. Ordering by
+// for the human-readable amniotic-fluid label, and gates on confirm_discharge='N'
+// plus ward.is_maternity_ward='Y' so we only sync configured maternity wards. Ordering by
 // (an, observe_datetime) makes the subsequent CDSS analyzers' chronological
 // scan deterministic.
 export const PARTOGRAPH_OBSERVATIONS: SqlQueryTemplate = {
@@ -336,7 +375,8 @@ export const PARTOGRAPH_OBSERVATIONS: SqlQueryTemplate = {
       LEFT JOIN labour_amniotic_type lat
              ON lat.labour_amniotic_type_id = lp.labour_amniotic_type_id
       JOIN ipt i ON i.an = lp.an
-     WHERE i.dchdate IS NULL
+      JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
+     WHERE i.confirm_discharge = 'N'
      ORDER BY lp.an, lp.observe_datetime`,
   mysql: `
     SELECT lp.ipt_labour_partograph_id,
@@ -372,7 +412,8 @@ export const PARTOGRAPH_OBSERVATIONS: SqlQueryTemplate = {
       LEFT JOIN labour_amniotic_type lat
              ON lat.labour_amniotic_type_id = lp.labour_amniotic_type_id
       JOIN ipt i ON i.an = lp.an
-     WHERE i.dchdate IS NULL
+      JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
+     WHERE i.confirm_discharge = 'N'
      ORDER BY lp.an, lp.observe_datetime`,
 };
 
@@ -426,6 +467,8 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
        iptadm.bedno, iptadm.roomno, iptadm.bedtype,
        roomno.name AS roomname,
        p.pname, p.fname, p.lname, p.birthday, p.bloodgrp AS blood_grp,
+       i.prediag, i.bw / 1000.0 AS admit_bw_kg, p.height AS patient_height,
+       py.name AS pttype_name,
        il.g AS gravida, il.ga,
        di.name AS incharge_doctor_name,
        (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
@@ -438,6 +481,7 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
   LEFT JOIN patient p ON p.hn = i.hn
   LEFT JOIN ipt_labour il ON il.an = i.an
   LEFT JOIN doctor di ON di.code = i.incharge_doctor
+  LEFT JOIN pttype py ON py.pttype = i.pttype
   LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
  WHERE i.ward = :ward AND i.confirm_discharge = 'N'
  ORDER BY iptadm.bedno`,
@@ -445,6 +489,8 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
        iptadm.bedno, iptadm.roomno, iptadm.bedtype,
        roomno.name AS roomname,
        p.pname, p.fname, p.lname, p.birthday, p.bloodgrp AS blood_grp,
+       i.prediag, i.bw / 1000.0 AS admit_bw_kg, p.height AS patient_height,
+       py.name AS pttype_name,
        il.g AS gravida, il.ga,
        di.name AS incharge_doctor_name,
        (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
@@ -457,6 +503,7 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
   LEFT JOIN patient p ON p.hn = i.hn
   LEFT JOIN ipt_labour il ON il.an = i.an
   LEFT JOIN doctor di ON di.code = i.incharge_doctor
+  LEFT JOIN pttype py ON py.pttype = i.pttype
   LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
  WHERE i.ward = :ward AND i.confirm_discharge = 'N'
  ORDER BY iptadm.bedno`,
@@ -471,9 +518,14 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
 // **Source map** — confirmed against HOSxP Delphi entry forms + project memory:
 //   * `ipd_nurse_note`            → BP / T / P / RR / SpO2 / pain
 //                                   (= the floor-nurse's standard observations)
+//                                   plus latest body measurements for the
+//                                   doctor-order style patient header.
 //   * `ipt_labour_partograph`     → cervix / station / FHR / contractions /
 //                                   oxytocin / IV fluids / amniotic fluid
 //                                   (= partograph time-series)
+//   * `ipt` + `pttype`            → admit timestamp, prediagnosis, admit BW,
+//                                   and payment-right label shown in the
+//                                   HOSxP admit-information frame.
 //   * `opd_allergy`               → patient drug-allergy registry — used for
 //                                   the NKDA / ALLERGY pill on the bed tile
 //                                   (count > 0 ⇒ ALLERGY, else NKDA).
@@ -496,6 +548,8 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
        iptadm.bedno, iptadm.roomno, iptadm.bedtype,
        roomno.name AS roomname,
        p.pname, p.fname, p.lname, p.birthday, p.bloodgrp AS blood_grp,
+       i.prediag, i.bw / 1000.0 AS admit_bw_kg, p.height AS patient_height,
+       py.name AS pttype_name,
        il.g AS gravida, il.ga,
        di.name AS incharge_doctor_name,
        (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
@@ -516,6 +570,10 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
        COALESCE(latest_nn.pulse, latest_nn.heart_rate) AS last_pulse,
        latest_nn.respiratory_rate    AS last_rr,
        COALESCE(latest_nn.spo2_ra, latest_nn.spo2_o2) AS last_spo2,
+       latest_nn.spo2_o2             AS last_spo2_o2,
+       latest_nn.weight              AS last_weight,
+       latest_nn.height              AS last_height,
+       latest_nn.bsa                 AS last_bsa,
        latest_nn.pain_score          AS last_pain,
        latest_nn.note_date           AS last_assess_date,
        latest_nn.note_time           AS last_assess_time,
@@ -525,6 +583,7 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
   LEFT JOIN patient p ON p.hn = i.hn
   LEFT JOIN ipt_labour il ON il.an = i.an
   LEFT JOIN doctor di ON di.code = i.incharge_doctor
+  LEFT JOIN pttype py ON py.pttype = i.pttype
   LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
   LEFT JOIN ipt_labour_partograph latest_lp
     ON latest_lp.ipt_labour_partograph_id = (
@@ -544,6 +603,8 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
        iptadm.bedno, iptadm.roomno, iptadm.bedtype,
        roomno.name AS roomname,
        p.pname, p.fname, p.lname, p.birthday, p.bloodgrp AS blood_grp,
+       i.prediag, i.bw / 1000.0 AS admit_bw_kg, p.height AS patient_height,
+       py.name AS pttype_name,
        il.g AS gravida, il.ga,
        di.name AS incharge_doctor_name,
        (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
@@ -564,6 +625,10 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
        COALESCE(latest_nn.pulse, latest_nn.heart_rate) AS last_pulse,
        latest_nn.respiratory_rate    AS last_rr,
        COALESCE(latest_nn.spo2_ra, latest_nn.spo2_o2) AS last_spo2,
+       latest_nn.spo2_o2             AS last_spo2_o2,
+       latest_nn.weight              AS last_weight,
+       latest_nn.height              AS last_height,
+       latest_nn.bsa                 AS last_bsa,
        latest_nn.pain_score          AS last_pain,
        latest_nn.note_date           AS last_assess_date,
        latest_nn.note_time           AS last_assess_time,
@@ -573,6 +638,7 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
   LEFT JOIN patient p ON p.hn = i.hn
   LEFT JOIN ipt_labour il ON il.an = i.an
   LEFT JOIN doctor di ON di.code = i.incharge_doctor
+  LEFT JOIN pttype py ON py.pttype = i.pttype
   LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
   LEFT JOIN ipt_labour_partograph latest_lp
     ON latest_lp.ipt_labour_partograph_id = (

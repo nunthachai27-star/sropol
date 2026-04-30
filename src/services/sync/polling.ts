@@ -23,7 +23,16 @@ import {
   type PartographRow,
 } from './partograph';
 import { calculateAndStoreCpdScores } from './cpd-persist';
+import { syncAncData } from './anc';
 import { logger } from '@/lib/logger';
+import { APP_IDENTIFIER } from '@/lib/bms-browser-client';
+import type {
+  HosxpAncClassifyingRow,
+  HosxpAncRiskRow,
+  HosxpAncServiceRow,
+  HosxpPatientAddressRow,
+  HosxpPersonAncRow,
+} from '@/types/hosxp';
 
 const pollingIntervals: Map<string, ReturnType<typeof setInterval>> = new Map();
 
@@ -69,6 +78,389 @@ export interface ImmediateSyncResult {
   reason: 'ok' | 'cooldown' | 'in_progress' | 'no_config' | 'error';
   lastSyncAt: string | null;
   patientsCount?: number;
+}
+
+type ImmediateSyncJobStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed';
+
+interface ImmediateSyncJobState {
+  hospitalId: string;
+  status: ImmediateSyncJobStatus;
+  requestedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  result: ImmediateSyncResult | null;
+  error: string | null;
+  promise: Promise<void> | null;
+}
+
+export interface ImmediateSyncJobSnapshot {
+  hospitalId: string;
+  status: ImmediateSyncJobStatus;
+  running: boolean;
+  requestedAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  result: ImmediateSyncResult | null;
+  error: string | null;
+}
+
+const syncJobGlobal = globalThis as unknown as {
+  __kkLrmsImmediateSyncJobs?: Map<string, ImmediateSyncJobState>;
+};
+const immediateSyncJobs =
+  syncJobGlobal.__kkLrmsImmediateSyncJobs ?? new Map<string, ImmediateSyncJobState>();
+syncJobGlobal.__kkLrmsImmediateSyncJobs = immediateSyncJobs;
+
+function snapshotImmediateSyncJob(
+  state: ImmediateSyncJobState | undefined,
+  hospitalId: string,
+): ImmediateSyncJobSnapshot {
+  if (!state) {
+    return {
+      hospitalId,
+      status: 'idle',
+      running: false,
+      requestedAt: null,
+      startedAt: null,
+      finishedAt: null,
+      result: null,
+      error: null,
+    };
+  }
+
+  return {
+    hospitalId,
+    status: state.status,
+    running: state.status === 'queued' || state.status === 'running',
+    requestedAt: state.requestedAt,
+    startedAt: state.startedAt,
+    finishedAt: state.finishedAt,
+    result: state.result,
+    error: state.error,
+  };
+}
+
+export function getImmediateSyncJobStatus(hospitalId: string): ImmediateSyncJobSnapshot {
+  return snapshotImmediateSyncJob(immediateSyncJobs.get(hospitalId), hospitalId);
+}
+
+export function startImmediateSyncJob(
+  db: DatabaseAdapter,
+  hospitalId: string,
+  sseManager: SseManager,
+): ImmediateSyncJobSnapshot {
+  const existing = immediateSyncJobs.get(hospitalId);
+  if (existing && (existing.status === 'queued' || existing.status === 'running')) {
+    return snapshotImmediateSyncJob(existing, hospitalId);
+  }
+
+  const state: ImmediateSyncJobState = {
+    hospitalId,
+    status: 'queued',
+    requestedAt: new Date().toISOString(),
+    startedAt: null,
+    finishedAt: null,
+    result: null,
+    error: null,
+    promise: null,
+  };
+  immediateSyncJobs.set(hospitalId, state);
+
+  state.promise = Promise.resolve()
+    .then(async () => {
+      state.status = 'running';
+      state.startedAt = new Date().toISOString();
+      const result = await requestImmediateSync(db, hospitalId, sseManager);
+      state.result = result;
+      state.status = result.reason === 'error' ? 'failed' : 'completed';
+      state.finishedAt = new Date().toISOString();
+      state.error = result.reason === 'error' ? 'sync failed' : null;
+      sseManager.broadcast('sync-status', snapshotImmediateSyncJob(state, hospitalId));
+    })
+    .catch((error) => {
+      state.status = 'failed';
+      state.finishedAt = new Date().toISOString();
+      state.error = errorMessage(error);
+      logger.error('immediate_sync_job_failed', { hospitalId, error });
+      sseManager.broadcast('sync-status', snapshotImmediateSyncJob(state, hospitalId));
+    })
+    .finally(() => {
+      state.promise = null;
+    });
+
+  return snapshotImmediateSyncJob(state, hospitalId);
+}
+
+export interface PollHospitalOptions {
+  marketplaceToken?: string | null;
+  onStep?: (step: PollHospitalStep) => void;
+}
+
+export type PollHospitalStepStatus = 'running' | 'success' | 'warning' | 'error' | 'info';
+
+export interface PollHospitalStep {
+  name: string;
+  status: PollHospitalStepStatus;
+  message: string;
+  detail?: string;
+  counts?: Record<string, number>;
+}
+
+export interface AncSyncStats {
+  attempted: boolean;
+  sourcePatientsRead: number;
+  sourcePatientsMapped: number;
+  servicesRead: number;
+  servicesMapped: number;
+  risksRead: number;
+  risksMapped: number;
+  classifyingRead: number;
+  classifyingMapped: number;
+  addressesRead: number;
+  addressesMapped: number;
+  patientsSynced: number;
+  skippedReason: string | null;
+  error: string | null;
+}
+
+export interface PollHospitalStats {
+  activePatientsRead: number;
+  activePatientsSynced: number;
+  partographRowsRead: number;
+  partographRowsUpserted: number;
+  anc: AncSyncStats;
+}
+
+function emptyAncSyncStats(): AncSyncStats {
+  return {
+    attempted: false,
+    sourcePatientsRead: 0,
+    sourcePatientsMapped: 0,
+    servicesRead: 0,
+    servicesMapped: 0,
+    risksRead: 0,
+    risksMapped: 0,
+    classifyingRead: 0,
+    classifyingMapped: 0,
+    addressesRead: 0,
+    addressesMapped: 0,
+    patientsSynced: 0,
+    skippedReason: null,
+    error: null,
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function emitStep(options: PollHospitalOptions, step: PollHospitalStep): void {
+  options.onStep?.(step);
+}
+
+function stringOrNull(value: unknown): string | null {
+  if (value == null) return null;
+  const s = String(value).trim();
+  return s.length > 0 ? s : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function intOrNull(value: unknown): number | null {
+  const n = numberOrNull(value);
+  return n == null ? null : Math.round(n);
+}
+
+function isValidCid13(value: string | null): value is string {
+  return value != null && /^\d{13}$/.test(value);
+}
+
+function combineHosxpDateTime(dateValue: unknown, timeValue: unknown): string {
+  const date = stringOrNull(dateValue);
+  const time = stringOrNull(timeValue) ?? '00:00:00';
+  if (!date) return new Date().toISOString();
+  if (date.includes('T')) return date;
+  return `${date}T${time}`;
+}
+
+function sqlDateDaysAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+function activeAncWhereClause(): string {
+  const postpartumCutoff = sqlDateDaysAgo(45);
+  const lmpCutoff = sqlDateDaysAgo(330);
+  // Keep this compatible with older HOSxP schemas. The Delphi webhook reads
+  // person_anc by person_anc_id and does not depend on pa.anc_register_date;
+  // several sites do not have that column. Active batch sync therefore uses
+  // HOSxP's active ANC flags AND an EDC/LMP date window, so stale unfinished
+  // records from old years do not appear as active pregnancies.
+  return `(COALESCE(pa.discharge, 'N') <> 'Y'
+      AND pa.labor_status_id = 1
+      AND (
+        (pa.edc IS NOT NULL AND pa.edc >= '${postpartumCutoff}')
+        OR (pa.lmp IS NOT NULL AND pa.lmp >= '${lmpCutoff}')
+      ))`;
+}
+
+function activeAncIdSubquery(): string {
+  return `SELECT pa.person_anc_id FROM person_anc pa WHERE ${activeAncWhereClause()}`;
+}
+
+function activeAncPatientsSql(): string {
+  return `
+    SELECT pa.person_anc_id, pa.person_id,
+           COALESCE(pt.hn, pe.cid, CONCAT('ANC', pa.person_anc_id)) AS hn,
+           pe.pname, pe.fname, pe.lname, pe.cid,
+           pe.birthdate AS birthday,
+           pa.preg_no, pa.lmp, pa.edc,
+           COALESCE(pa.lmp, pa.edc) AS anc_register_date
+      FROM person_anc pa
+      INNER JOIN person pe ON pe.person_id = pa.person_id
+      LEFT JOIN (
+        SELECT cid, MIN(hn) AS hn, MIN(chwpart) AS chwpart, MIN(amppart) AS amppart, MIN(tmbpart) AS tmbpart
+          FROM patient
+         WHERE LENGTH(cid) = 13
+         GROUP BY cid
+      ) pt ON pt.cid = pe.cid AND LENGTH(pe.cid) = 13
+     WHERE ${activeAncWhereClause()}
+     ORDER BY pa.person_anc_id DESC
+     LIMIT 500`;
+}
+
+function activeAncServicesSql(): string {
+  return `
+    SELECT s.person_anc_service_id, s.person_anc_id,
+           s.anc_service_date AS service_date,
+           s.anc_service_number,
+           s.pa_week, s.pa_day,
+           NULL AS fundal_height, sc.bw, sc.bps, sc.bpd, sc.height,
+           sc.baby_fetal_heart_sound AS fetal_heart_rate,
+           bp.anc_baby_position_name AS baby_position,
+           bl.anc_baby_lead_name AS baby_lead,
+           s.pass_quality, NULL AS doctor_code
+      FROM person_anc_service s
+      LEFT JOIN person_anc_screen sc ON sc.person_anc_service_id = s.person_anc_service_id
+      LEFT JOIN anc_baby_position bp ON bp.anc_baby_position_id = sc.anc_baby_position_id
+      LEFT JOIN anc_baby_lead bl ON bl.anc_baby_lead_id = sc.anc_baby_lead_id
+     WHERE s.person_anc_id IN (${activeAncIdSubquery()})
+     ORDER BY s.person_anc_id, s.anc_service_number`;
+}
+
+function activeAncRisksSql(): string {
+  return `
+    SELECT par.anc_risk_id AS person_anc_risk_id, par.person_anc_id, par.anc_risk_id
+      FROM person_anc_risk par
+     WHERE par.person_anc_id IN (${activeAncIdSubquery()})`;
+}
+
+function activeAncClassifyingSql(): string {
+  return `
+    SELECT pac.person_anc_classifying_item_id AS person_anc_classifying_id, pac.person_anc_id,
+           pac.person_anc_classifying_item_id, pac.check_value
+      FROM person_anc_classifying pac
+     WHERE pac.person_anc_id IN (${activeAncIdSubquery()})`;
+}
+
+function activeAncAddressesSql(): string {
+  return `
+    SELECT COALESCE(pt.hn, pe.cid, CONCAT('ANC', pa.person_anc_id)) AS hn,
+           pt.chwpart, pt.amppart, pt.tmbpart
+      FROM person_anc pa
+      INNER JOIN person pe ON pe.person_id = pa.person_id
+      LEFT JOIN (
+        SELECT cid, MIN(hn) AS hn, MIN(chwpart) AS chwpart, MIN(amppart) AS amppart, MIN(tmbpart) AS tmbpart
+          FROM patient
+         WHERE LENGTH(cid) = 13
+         GROUP BY cid
+      ) pt ON pt.cid = pe.cid AND LENGTH(pe.cid) = 13
+     WHERE ${activeAncWhereClause()}`;
+}
+
+function mapAncPatient(row: Record<string, unknown>): HosxpPersonAncRow | null {
+  const personAncId = intOrNull(row.person_anc_id);
+  const personId = intOrNull(row.person_id);
+  const hn = stringOrNull(row.hn);
+  if (personAncId == null || personId == null || !hn) return null;
+
+  return {
+    person_anc_id: personAncId,
+    person_id: personId,
+    hn,
+    pname: stringOrNull(row.pname) ?? '',
+    fname: stringOrNull(row.fname) ?? '',
+    lname: stringOrNull(row.lname) ?? '',
+    cid: stringOrNull(row.cid) ?? '',
+    birthday: stringOrNull(row.birthday) ?? '',
+    preg_no: intOrNull(row.preg_no) ?? 0,
+    lmp: stringOrNull(row.lmp),
+    edc: stringOrNull(row.edc),
+    anc_register_date: stringOrNull(row.anc_register_date) ?? '',
+  };
+}
+
+function mapAncService(row: Record<string, unknown>): HosxpAncServiceRow | null {
+  const personAncServiceId = intOrNull(row.person_anc_service_id);
+  const personAncId = intOrNull(row.person_anc_id);
+  const serviceDate = stringOrNull(row.service_date);
+  if (personAncServiceId == null || personAncId == null || !serviceDate) return null;
+
+  return {
+    person_anc_service_id: personAncServiceId,
+    person_anc_id: personAncId,
+    service_date: serviceDate,
+    anc_service_number: intOrNull(row.anc_service_number) ?? 0,
+    pa_week: intOrNull(row.pa_week),
+    pa_day: intOrNull(row.pa_day),
+    fundal_height: numberOrNull(row.fundal_height),
+    bw: numberOrNull(row.bw),
+    bps: intOrNull(row.bps),
+    bpd: intOrNull(row.bpd),
+    height: numberOrNull(row.height),
+    fetal_heart_rate: intOrNull(row.fetal_heart_rate),
+    baby_position: stringOrNull(row.baby_position),
+    baby_lead: stringOrNull(row.baby_lead),
+    pass_quality: stringOrNull(row.pass_quality),
+    doctor_code: stringOrNull(row.doctor_code),
+  };
+}
+
+function mapAncRisk(row: Record<string, unknown>): HosxpAncRiskRow | null {
+  const riskId = intOrNull(row.person_anc_risk_id);
+  const personAncId = intOrNull(row.person_anc_id);
+  const ancRiskId = intOrNull(row.anc_risk_id);
+  if (riskId == null || personAncId == null || ancRiskId == null) return null;
+  return { person_anc_risk_id: riskId, person_anc_id: personAncId, anc_risk_id: ancRiskId };
+}
+
+function mapAncClassifying(row: Record<string, unknown>): HosxpAncClassifyingRow | null {
+  const id = intOrNull(row.person_anc_classifying_id);
+  const personAncId = intOrNull(row.person_anc_id);
+  const itemId = intOrNull(row.person_anc_classifying_item_id);
+  if (id == null || personAncId == null || itemId == null) return null;
+  return {
+    person_anc_classifying_id: id,
+    person_anc_id: personAncId,
+    person_anc_classifying_item_id: itemId,
+    check_value: stringOrNull(row.check_value) ?? '',
+  };
+}
+
+function mapAncAddress(row: Record<string, unknown>): HosxpPatientAddressRow | null {
+  const hn = stringOrNull(row.hn);
+  if (!hn) return null;
+  return {
+    hn,
+    chwpart: stringOrNull(row.chwpart),
+    amppart: stringOrNull(row.amppart),
+    tmbpart: stringOrNull(row.tmbpart),
+  };
 }
 
 /**
@@ -188,51 +580,138 @@ export async function pollHospital(
   databaseType: DatabaseDialect,
   encryptionKey: string,
   sseManager: SseManager,
-): Promise<void> {
+  options: PollHospitalOptions = {},
+): Promise<PollHospitalStats> {
+  const stats: PollHospitalStats = {
+    activePatientsRead: 0,
+    activePatientsSynced: 0,
+    partographRowsRead: 0,
+    partographRowsUpserted: 0,
+    anc: emptyAncSyncStats(),
+  };
   try {
+    emitStep(options, {
+      name: 'connect_client',
+      status: 'running',
+      message: 'Preparing BMS tunnel SQL client.',
+      detail: `databaseType=${databaseType}`,
+    });
     const client = new BmsSessionClient(tunnelUrl);
+    emitStep(options, {
+      name: 'connect_client',
+      status: 'success',
+      message: 'BMS tunnel SQL client is ready.',
+    });
 
     const sql = getQuery(ACTIVE_LABOR_PATIENTS, databaseType);
-    const result = await client.executeQuery(sql, bmsUrl, jwt);
+    emitStep(options, {
+      name: 'query_active_ipt',
+      status: 'running',
+      message: "Querying HOSxP active admissions where ipt.confirm_discharge = 'N' and ward.is_maternity_ward = 'Y'.",
+    });
+    const result = await client.executeQuery(sql, bmsUrl, jwt, undefined, {
+      appIdentifier: APP_IDENTIFIER,
+      marketplaceToken: options.marketplaceToken,
+    });
+    stats.activePatientsRead = result.data.length;
+    emitStep(options, {
+      name: 'query_active_ipt',
+      status: 'success',
+      message: `HOSxP returned ${result.data.length} active IPD rows.`,
+      counts: { rows: result.data.length },
+    });
 
-    if (result.data.length === 0) {
-      await db.execute(
-        "UPDATE hospitals SET connection_status = 'ONLINE', last_sync_at = ? WHERE id = ?",
-        [new Date().toISOString(), hospitalId],
-      );
-      return;
-    }
-
+    emitStep(options, {
+      name: 'read_local_active_patients',
+      status: 'running',
+      message: 'Reading existing active cached patients from KK-LRMS.',
+    });
     const existing = await db.query<{ an: string }>(
       "SELECT an FROM cached_patients WHERE hospital_id = ? AND labor_status = 'ACTIVE'",
       [hospitalId],
     );
     const existingAns = existing.map((r) => r.an);
+    emitStep(options, {
+      name: 'read_local_active_patients',
+      status: 'success',
+      message: `Found ${existingAns.length} active cached patients before sync.`,
+      counts: { rows: existingAns.length },
+    });
 
     const patients: SyncPatientData[] = result.data.map((row) => {
-      const rawCid = row.cid ? String(row.cid).trim() : null;
-      const fullName = [row.pname, row.fname, row.lname].filter(Boolean).join(' ').trim() || 'ไม่ระบุชื่อ';
+      const rawCid = stringOrNull(row.cid);
+      const cidForMatch = isValidCid13(rawCid) ? rawCid : null;
+      const joinedName = [row.pname, row.fname, row.lname]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      const fullName = (stringOrNull(row.patient_name) ?? joinedName) || 'ไม่ระบุชื่อ';
       const age = row.birthday ? calculateAge(String(row.birthday)) : 0;
+      const weightKg = numberOrNull(row.weight);
+      const prePregnancyWeightKg = numberOrNull(row.pre_preg_weight);
 
       return {
         hn: String(row.hn ?? ''),
         an: String(row.an ?? ''),
         name: encrypt(fullName, encryptionKey),
-        cid: rawCid ? encrypt(rawCid, encryptionKey) : null,
-        cidHash: rawCid ? createHash('sha256').update(rawCid).digest('hex') : null,
+        cid: cidForMatch ? encrypt(cidForMatch, encryptionKey) : null,
+        cidHash: cidForMatch ? createHash('sha256').update(cidForMatch).digest('hex') : null,
         age,
-        gravida: row.preg_number != null ? Number(row.preg_number) : null,
-        gaWeeks: row.ga != null ? Number(row.ga) : null,
-        ancCount: row.anc_count != null ? Number(row.anc_count) : null,
-        admitDate: `${row.regdate}T${row.regtime || '00:00:00'}`,
+        gravida: intOrNull(row.gravida ?? row.preg_number),
+        para: intOrNull(row.para),
+        abortion: intOrNull(row.abortion),
+        livingChildren: intOrNull(row.living_children),
+        pregNo: intOrNull(row.preg_no),
+        gaWeeks: intOrNull(row.ga_weeks ?? row.ga),
+        gaDay: intOrNull(row.ga_day),
+        ancCount: intOrNull(row.anc_count),
+        admitDate: combineHosxpDateTime(row.regdate, row.regtime),
+        heightCm: intOrNull(row.height),
+        weightKg,
+        prePregnancyWeightKg,
+        hematocritPct: numberOrNull(row.hct),
+        bpSystolicAdmit: intOrNull(row.bp_sys_admit),
+        bpDiastolicAdmit: intOrNull(row.bp_dia_admit),
+        pulseAdmit: intOrNull(row.pulse_admit),
+        rrAdmit: intOrNull(row.rr_admit),
+        temperatureAdmit: numberOrNull(row.temp_admit),
+        cervicalOpenCmAdmit: numberOrNull(row.cervical_open_size),
+        effacementPctAdmit: numberOrNull(row.eff),
+        stationAdmit: stringOrNull(row.station),
         laborStatus: 'ACTIVE',
         syncedAt: new Date().toISOString(),
       };
     });
 
+    emitStep(options, {
+      name: 'persist_ipt',
+      status: 'running',
+      message: `Mapping and upserting ${patients.length} active IPD rows into cached_patients.`,
+      counts: { rows: patients.length },
+    });
     const count = await upsertCachedPatients(db, hospitalId, patients);
+    stats.activePatientsSynced = count;
+    emitStep(options, {
+      name: 'persist_ipt',
+      status: 'success',
+      message: `Upserted ${count} active patient rows.`,
+      counts: { rows: count },
+    });
 
+    emitStep(options, {
+      name: 'detect_transfers',
+      status: 'running',
+      message: 'Checking cross-hospital transfer candidates by CID hash.',
+    });
     const transfers = await detectTransfers(db, hospitalId, patients);
+    emitStep(options, {
+      name: 'detect_transfers',
+      status: transfers.length > 0 ? 'warning' : 'success',
+      message: transfers.length > 0
+        ? `Detected ${transfers.length} possible transfer rows.`
+        : 'No transfer rows detected.',
+      counts: { transfers: transfers.length },
+    });
 
     const hospitalRows = await db.query<{ hcode: string }>(
       'SELECT hcode FROM hospitals WHERE id = ?',
@@ -261,13 +740,38 @@ export async function pollHospital(
       });
     }
 
+    emitStep(options, {
+      name: 'calculate_cpd',
+      status: 'running',
+      message: 'Calculating CPD risk scores for active patients.',
+    });
     await calculateAndStoreCpdScores(db, hospitalId, sseManager);
+    emitStep(options, {
+      name: 'calculate_cpd',
+      status: 'success',
+      message: 'CPD risk score calculation completed.',
+    });
 
     // Pull partograph observations for currently-admitted patients.
     // Must run AFTER upsertCachedPatients() so AN -> patient_id lookup works.
     try {
       const partographSql = getQuery(PARTOGRAPH_OBSERVATIONS, databaseType);
-      const partographResult = await client.executeQuery(partographSql, bmsUrl, jwt);
+      emitStep(options, {
+        name: 'query_partograph',
+        status: 'running',
+        message: 'Querying HOSxP partograph observations for active admissions.',
+      });
+      const partographResult = await client.executeQuery(partographSql, bmsUrl, jwt, undefined, {
+        appIdentifier: APP_IDENTIFIER,
+        marketplaceToken: options.marketplaceToken,
+      });
+      stats.partographRowsRead = partographResult.data.length;
+      emitStep(options, {
+        name: 'query_partograph',
+        status: 'success',
+        message: `HOSxP returned ${partographResult.data.length} partograph rows.`,
+        counts: { rows: partographResult.data.length },
+      });
 
       if (partographResult.data.length > 0) {
         // Resolve AN -> patient_id once for the batch.
@@ -357,6 +861,16 @@ export async function pollHospital(
           hospitalId,
           rows,
         );
+        stats.partographRowsUpserted = partographResultStats.upserted;
+        emitStep(options, {
+          name: 'persist_partograph',
+          status: 'success',
+          message: `Upserted ${partographResultStats.upserted} partograph observations.`,
+          counts: {
+            upserted: partographResultStats.upserted,
+            severityChanges: partographResultStats.severityChanges.length,
+          },
+        });
 
         // Broadcast severity transitions only — not every observation.
         for (const sc of partographResultStats.severityChanges) {
@@ -377,6 +891,12 @@ export async function pollHospital(
         });
       }
     } catch (partographError) {
+      emitStep(options, {
+        name: 'query_partograph',
+        status: 'warning',
+        message: 'Partograph sync failed, but patient and ANC sync will continue.',
+        detail: errorMessage(partographError),
+      });
       // Partograph fetch failure should not abort the rest of the polling
       // cycle (patient list, CPD scores, transfers were already persisted).
       logger.error('partograph_sync_failed', {
@@ -385,7 +905,148 @@ export async function pollHospital(
       });
     }
 
+    try {
+      stats.anc.attempted = true;
+      const queryOptions = {
+        appIdentifier: APP_IDENTIFIER,
+        marketplaceToken: options.marketplaceToken,
+      };
+      emitStep(options, {
+        name: 'query_anc',
+        status: 'running',
+        message: "Querying active ANC from person_anc using discharge <> 'Y' + labor_status_id = 1 + EDC/LMP active date window.",
+      });
+      const [ancPatientsResult, ancServicesResult, ancRisksResult, ancClassifyingResult, ancAddressesResult] =
+        await Promise.all([
+          client.executeQuery(activeAncPatientsSql(), bmsUrl, jwt, undefined, queryOptions),
+          client.executeQuery(activeAncServicesSql(), bmsUrl, jwt, undefined, queryOptions),
+          client.executeQuery(activeAncRisksSql(), bmsUrl, jwt, undefined, queryOptions),
+          client.executeQuery(activeAncClassifyingSql(), bmsUrl, jwt, undefined, queryOptions),
+          client.executeQuery(activeAncAddressesSql(), bmsUrl, jwt, undefined, queryOptions),
+        ]);
+      stats.anc.sourcePatientsRead = ancPatientsResult.data.length;
+      stats.anc.servicesRead = ancServicesResult.data.length;
+      stats.anc.risksRead = ancRisksResult.data.length;
+      stats.anc.classifyingRead = ancClassifyingResult.data.length;
+      stats.anc.addressesRead = ancAddressesResult.data.length;
+      emitStep(options, {
+        name: 'query_anc',
+        status: 'success',
+        message: `HOSxP returned ${ancPatientsResult.data.length} ANC master rows and ${ancServicesResult.data.length} visit rows.`,
+        counts: {
+          ancRows: ancPatientsResult.data.length,
+          visits: ancServicesResult.data.length,
+          risks: ancRisksResult.data.length,
+          classifying: ancClassifyingResult.data.length,
+          addresses: ancAddressesResult.data.length,
+        },
+      });
+
+      const ancPatients = ancPatientsResult.data
+        .map(mapAncPatient)
+        .filter((row): row is HosxpPersonAncRow => row !== null);
+      const ancServices = ancServicesResult.data
+        .map(mapAncService)
+        .filter((row): row is HosxpAncServiceRow => row !== null);
+      const ancRisks = ancRisksResult.data
+        .map(mapAncRisk)
+        .filter((row): row is HosxpAncRiskRow => row !== null);
+      const ancClassifying = ancClassifyingResult.data
+        .map(mapAncClassifying)
+        .filter((row): row is HosxpAncClassifyingRow => row !== null);
+      const ancAddresses = ancAddressesResult.data
+        .map(mapAncAddress)
+        .filter((row): row is HosxpPatientAddressRow => row !== null);
+      stats.anc.sourcePatientsMapped = ancPatients.length;
+      stats.anc.servicesMapped = ancServices.length;
+      stats.anc.risksMapped = ancRisks.length;
+      stats.anc.classifyingMapped = ancClassifying.length;
+      stats.anc.addressesMapped = ancAddresses.length;
+      emitStep(options, {
+        name: 'map_anc',
+        status: ancPatients.length > 0 ? 'success' : 'warning',
+        message: `Mapped ${ancPatients.length}/${ancPatientsResult.data.length} ANC master rows and ${ancServices.length}/${ancServicesResult.data.length} visit rows.`,
+        counts: {
+          ancMapped: ancPatients.length,
+          visitMapped: ancServices.length,
+          riskMapped: ancRisks.length,
+          classifyingMapped: ancClassifying.length,
+        },
+      });
+
+      if (ancPatients.length > 0) {
+        emitStep(options, {
+          name: 'persist_anc',
+          status: 'running',
+          message: `Upserting ${ancPatients.length} ANC pregnancies and ${ancServices.length} ANC visits into KK-LRMS.`,
+          counts: { pregnancies: ancPatients.length, visits: ancServices.length },
+        });
+        const ancSynced = await syncAncData(
+          db,
+          hospitalId,
+          ancPatients,
+          ancServices,
+          ancRisks,
+          ancClassifying,
+          encryptionKey,
+          ancAddresses,
+        );
+        stats.anc.patientsSynced = ancSynced;
+        emitStep(options, {
+          name: 'persist_anc',
+          status: 'success',
+          message: `Synced ${ancSynced} ANC pregnancies into maternal_journeys.`,
+          counts: { pregnancies: ancSynced, visits: ancServices.length },
+        });
+        logger.info('anc_sync_complete', {
+          hospitalId,
+          patientsSynced: ancSynced,
+          visitsRead: ancServices.length,
+          risksRead: ancRisks.length,
+          classifyingRead: ancClassifying.length,
+        });
+      } else {
+        stats.anc.skippedReason = stats.anc.sourcePatientsRead === 0
+          ? "HOSxP returned 0 active ANC rows. Filter requires discharge <> 'Y', labor_status_id = 1, and EDC >= today-45d or LMP >= today-330d."
+          : 'HOSxP returned ANC rows, but no rows had required person_anc_id/person_id/HN-or-CID fields.';
+        emitStep(options, {
+          name: 'persist_anc',
+          status: 'warning',
+          message: 'ANC persist skipped.',
+          detail: stats.anc.skippedReason,
+        });
+      }
+    } catch (ancError) {
+      // ANC sync is additive to labour monitoring. Keep the labour dashboard
+      // fresh even if an older HOSxP schema lacks one of the ANC tables/columns.
+      stats.anc.error = ancError instanceof Error ? ancError.message : String(ancError);
+      emitStep(options, {
+        name: 'query_anc',
+        status: 'warning',
+        message: 'ANC sync failed, but active patient sync can still complete.',
+        detail: stats.anc.error,
+      });
+      logger.error('anc_sync_failed', {
+        hospitalId,
+        error: ancError,
+      });
+    }
+
+    emitStep(options, {
+      name: 'detect_admission_changes',
+      status: 'running',
+      message: 'Comparing HOSxP active admissions with the previous local active set.',
+    });
     const changes = detectChanges(patients, existingAns);
+    emitStep(options, {
+      name: 'detect_admission_changes',
+      status: 'success',
+      message: `Detected ${changes.newAdmissions.length} new admissions and ${changes.discharges.length} discharges.`,
+      counts: {
+        newAdmissions: changes.newAdmissions.length,
+        discharges: changes.discharges.length,
+      },
+    });
 
     for (const an of changes.newAdmissions) {
       sseManager.broadcast('patient-update', {
@@ -414,11 +1075,28 @@ export async function pollHospital(
       });
     }
 
+    emitStep(options, {
+      name: 'mark_hospital_online',
+      status: 'running',
+      message: 'Writing hospital ONLINE status and last_sync_at.',
+    });
     await db.execute(
       "UPDATE hospitals SET connection_status = 'ONLINE', last_sync_at = ? WHERE id = ?",
       [new Date().toISOString(), hospitalId],
     );
+    emitStep(options, {
+      name: 'mark_hospital_online',
+      status: 'success',
+      message: 'Hospital marked ONLINE and last_sync_at updated.',
+    });
+    return stats;
   } catch (error) {
+    emitStep(options, {
+      name: 'poll_failed',
+      status: 'error',
+      message: 'Sync cycle stopped because a required step failed.',
+      detail: errorMessage(error),
+    });
     logger.error('polling_failed', { hospitalId, error });
     await db.execute(
       "UPDATE hospitals SET connection_status = 'OFFLINE' WHERE id = ?",
@@ -435,6 +1113,7 @@ export async function pollHospital(
       status: 'OFFLINE',
       lastSyncAt: new Date().toISOString(),
     });
+    throw error;
   }
 }
 

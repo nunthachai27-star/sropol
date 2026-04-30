@@ -11,6 +11,7 @@ import { useSSE } from '@/hooks/useSSE';
 import { useKioskMode } from '@/hooks/useKioskMode';
 import { useSyncTrigger } from '@/hooks/useSyncTrigger';
 import { useOnboardHosxpWebhook } from '@/hooks/useOnboardHosxpWebhook';
+import { useOnboardHosxpSync, type OnboardHosxpSyncState } from '@/hooks/useOnboardHosxpSync';
 import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
 import { AlertBar } from '@/components/dashboard/AlertBar';
 import { ProvinceVitalsStrip } from '@/components/dashboard/ProvinceVitalsStrip';
@@ -27,7 +28,7 @@ import { KioskHeader } from '@/components/dashboard/KioskHeader';
 import { HospitalDetailDialog } from '@/components/dashboard/HospitalDetailDialog';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { ConnectionStatus as ConnectionStatusEnum } from '@/types/domain';
-import { Monitor, RefreshCw, Maximize2, Expand } from 'lucide-react';
+import { Copy, Info, Monitor, RefreshCw, Maximize2, Expand } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   Dialog,
@@ -37,13 +38,99 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 
+function formatSyncTime(value?: string | null): string {
+  if (!value) return 'none yet';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString('th-TH', {
+    timeZone: 'Asia/Bangkok',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatCounts(counts?: Record<string, number>): string {
+  if (!counts) return '';
+  return Object.entries(counts)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(', ');
+}
+
+function buildHosxpSyncReport(
+  state: OnboardHosxpSyncState | null,
+  status: string,
+  help: string,
+): string {
+  const lines = [
+    'KK-LRMS HOSxP Sync Report',
+    `Generated: ${new Date().toISOString()}`,
+    '',
+    `STATUS: ${status}`,
+    `PHASE: ${state?.phase ?? 'unknown'}`,
+    `HCODE: ${state?.hcode ?? 'unknown'}`,
+    `CONNECTION: ${state?.connectionStatus ?? 'unknown'}`,
+    `DB TYPE: ${state?.databaseType ?? 'not detected'}`,
+    `HELP: ${help}`,
+    `LAST CYCLE: ${state?.lastRunAt ?? 'none'}`,
+    `LAST SUCCESS: ${state?.lastSuccessAt ?? 'none'}`,
+    `LAST ERROR: ${state?.lastErrorAt ?? 'none'} ${state?.lastError ?? ''}`.trim(),
+    `NEXT CYCLE: ${state?.nextRunAt ?? 'none'}`,
+    `HOSPITAL SYNC: ${state?.hospitalLastSyncAt ?? 'none'}`,
+    `CYCLES: ${state?.successCount ?? 0} successful / ${state?.cycleCount ?? 0} attempted`,
+    '',
+    'Counters:',
+    `- IPT local: active=${state?.activePatients ?? 0}, cached=${state?.cachedPatients ?? 0}, latest=${state?.latestPatientSyncedAt ?? 'none'}`,
+    `- IPT source: read=${state?.lastStats?.activePatientsRead ?? 0}, synced=${state?.lastStats?.activePatientsSynced ?? 0}`,
+    `- ANC local: pregnancies=${state?.activeAncJourneys ?? 0}, latest=${state?.latestAncSyncedAt ?? 'none'}`,
+    `- ANC source: read=${state?.lastStats?.anc.sourcePatientsRead ?? 0}, mapped=${state?.lastStats?.anc.sourcePatientsMapped ?? 0}, synced=${state?.lastStats?.anc.patientsSynced ?? 0}`,
+    `- ANC visits: read=${state?.lastStats?.anc.servicesRead ?? 0}, mapped=${state?.lastStats?.anc.servicesMapped ?? 0}`,
+    `- ANC risk: risk=${state?.lastStats?.anc.risksMapped ?? 0}, classifying=${state?.lastStats?.anc.classifyingMapped ?? 0}`,
+    `- Partograph: read=${state?.lastStats?.partographRowsRead ?? 0}, upserted=${state?.lastStats?.partographRowsUpserted ?? 0}`,
+    `- Referrals: active=${state?.activeReferrals ?? 0}, outgoing=${state?.outgoingReferrals ?? 0}, incoming=${state?.incomingReferrals ?? 0}`,
+  ];
+
+  if (state?.error || state?.detail || state?.lastError || state?.lastStats?.anc.error) {
+    lines.push(
+      '',
+      'Errors:',
+      `- error=${state?.error ?? 'none'}`,
+      `- detail=${state?.detail ?? 'none'}`,
+      `- lastError=${state?.lastError ?? 'none'}`,
+      `- ancError=${state?.lastStats?.anc.error ?? 'none'}`,
+      `- ancSkipped=${state?.lastStats?.anc.skippedReason ?? 'none'}`,
+    );
+  }
+
+  lines.push('', 'Step log:');
+  const steps = state?.lastSteps ?? [];
+  if (steps.length === 0) {
+    lines.push('- no step log recorded yet');
+  } else {
+    for (const step of steps) {
+      const counts = formatCounts(step.counts);
+      lines.push(
+        `- [${step.at}] cycle=${step.cycle} ${step.status.toUpperCase()} ${step.name}: ${step.message}${counts ? ` (${counts})` : ''}${step.detail ? ` | ${step.detail}` : ''}`,
+      );
+    }
+  }
+
+  return lines.join('\n');
+}
+
 export default function DashboardPage() {
   useSetBreadcrumbs([{ label: 'แดชบอร์ด' }]);
   // Auto-provisions the HOSxP `webhook_setting` row for module_id=3 /
   // setting_code='KK-LRMS' on first onboarding. No-op when the row already
   // exists or when the BMS session / marketplace_token isn't present.
   const { state: onboardingState } = useOnboardHosxpWebhook();
+  const { state: hosxpSyncState } = useOnboardHosxpSync();
   const [onboardingErrorDismissed, setOnboardingErrorDismissed] = useState(false);
+  const [hosxpSyncDialogOpen, setHosxpSyncDialogOpen] = useState(false);
+  const [hosxpReportCopied, setHosxpReportCopied] = useState(false);
   const { hospitals, summary, stageKPIs, alerts, trends, updatedAt, isLoading, mutate } =
     useDashboard();
   const { patients: highRiskPatients, isLoading: hrLoading, mutate: hrMutate } =
@@ -209,6 +296,47 @@ export default function DashboardPage() {
   // gains a second row again.
   const showOnboardingError =
     !!onboardingState?.error && !onboardingErrorDismissed;
+  const hosxpSyncStatus = hosxpSyncState?.error || hosxpSyncState?.lastError || hosxpSyncState?.phase === 'failed'
+    ? 'ERROR'
+    : hosxpSyncState?.phase === 'querying_hosxp'
+      ? 'QUERYING'
+    : hosxpSyncState?.started
+      ? 'RUNNING'
+    : hosxpSyncState?.alreadyRunning
+      ? 'RUNNING'
+        : hosxpSyncState?.ran === false
+          ? 'SKIPPED'
+          : 'STARTING';
+  const hosxpSyncDetail = hosxpSyncState?.error
+    ? hosxpSyncState.error
+    : hosxpSyncState?.lastError
+      ? hosxpSyncState.lastError
+    : hosxpSyncStatus === 'RUNNING' || hosxpSyncStatus === 'QUERYING'
+      ? `${hosxpSyncState?.phase ?? 'scheduled'} · ${hosxpSyncState?.successCount ?? 0}/${hosxpSyncState?.cycleCount ?? 0} cycles`
+      : hosxpSyncStatus === 'SKIPPED'
+        ? 'NO BMS SESSION'
+        : 'CONNECTING';
+  const hosxpSyncHelp = hosxpSyncState?.error === 'hospital_not_registered'
+    ? 'โรงพยาบาลนี้ยังไม่ได้เปิดใช้งานในทะเบียน KK-LRMS'
+    : hosxpSyncState?.error === 'missing_bms_session'
+      ? 'ยังไม่ได้รับ BMS session จาก HOSxP launcher'
+      : hosxpSyncState?.error === 'invalid_bms_url'
+        ? 'BMS URL จาก session ไม่ถูกต้อง'
+        : hosxpSyncState?.error
+          ? 'ตรวจสอบรายละเอียดจาก server log หากข้อความด้านล่างยังไม่พอ'
+          : hosxpSyncStatus === 'RUNNING' || hosxpSyncStatus === 'QUERYING'
+            ? 'ระบบกำลังดึงข้อมูลจาก HOSxP เป็นรอบอัตโนมัติ'
+            : 'ระบบกำลังเริ่มการเชื่อมต่อ HOSxP';
+  const copyHosxpSyncReport = async () => {
+    const report = buildHosxpSyncReport(hosxpSyncState, hosxpSyncStatus, hosxpSyncHelp);
+    try {
+      await navigator.clipboard.writeText(report);
+      setHosxpReportCopied(true);
+      window.setTimeout(() => setHosxpReportCopied(false), 1800);
+    } catch {
+      setHosxpReportCopied(false);
+    }
+  };
 
   return (
     <div
@@ -300,6 +428,46 @@ export default function DashboardPage() {
               </span>
             )}
             <span className="text-[var(--ink-navy-muted)]">· {hospitals.length} NODES</span>
+            <button
+              type="button"
+              onClick={() => setHosxpSyncDialogOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 transition-colors hover:bg-[var(--accent-navy-soft)]"
+              style={{
+                borderColor:
+                  hosxpSyncStatus === 'ERROR'
+                    ? 'var(--risk-high)'
+                    : hosxpSyncStatus === 'RUNNING' || hosxpSyncStatus === 'QUERYING'
+                      ? 'var(--risk-low)'
+                      : 'var(--rule-strong)',
+                background:
+                  hosxpSyncStatus === 'ERROR'
+                    ? 'color-mix(in srgb, var(--risk-high) 8%, white)'
+                    : hosxpSyncStatus === 'RUNNING' || hosxpSyncStatus === 'QUERYING'
+                      ? 'color-mix(in srgb, var(--risk-low) 8%, white)'
+                      : 'white',
+                color:
+                  hosxpSyncStatus === 'ERROR'
+                    ? 'var(--risk-high)'
+                    : 'var(--ink-navy-dim)',
+              }}
+              title={hosxpSyncDetail}
+            >
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{
+                  background:
+                    hosxpSyncStatus === 'ERROR'
+                      ? 'var(--risk-high)'
+                      : hosxpSyncStatus === 'RUNNING' || hosxpSyncStatus === 'QUERYING'
+                        ? 'var(--risk-low)'
+                        : 'var(--ink-navy-muted)',
+                }}
+                aria-hidden="true"
+              />
+              <span className="font-semibold text-[var(--ink-navy)]">HOSxP SYNC</span>
+              <span>{hosxpSyncStatus}</span>
+              <Info className="h-3 w-3" aria-hidden="true" />
+            </button>
 
             <div className="ml-auto flex items-center gap-1.5">
               <button
@@ -606,6 +774,221 @@ export default function DashboardPage() {
                   selected={selectedHospital}
                   onSelect={openHospitalDetail}
                 />
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={hosxpSyncDialogOpen} onOpenChange={setHosxpSyncDialogOpen}>
+        <DialogContent className="max-h-[92vh] w-[min(1120px,calc(100vw-32px))] max-w-none gap-0 overflow-hidden p-0">
+          <DialogHeader
+            className="border-b px-5 py-4"
+            style={{ borderColor: 'var(--rule-strong)', background: 'white' }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <DialogTitle className="font-mono text-[15px] uppercase tracking-[0.08em] text-[var(--ink-navy)]">
+                HOSxP sync status
+              </DialogTitle>
+              <button
+                type="button"
+                onClick={copyHosxpSyncReport}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] uppercase tracking-[0.08em] text-[var(--ink-navy-dim)] hover:bg-[var(--surface-cool)]"
+                style={{ borderColor: 'var(--rule-strong)' }}
+              >
+                <Copy className="h-3.5 w-3.5" />
+                {hosxpReportCopied ? 'Copied' : 'Copy report'}
+              </button>
+            </div>
+            <DialogDescription className="text-[13px] text-[var(--ink-navy-dim)]">
+              {hosxpSyncHelp}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[calc(92vh-96px)] space-y-3 overflow-y-auto bg-white p-5 text-[13px] text-[var(--ink-navy-dim)]">
+            <div className="grid grid-cols-[150px_1fr] gap-x-4 gap-y-2 font-mono text-[12px]">
+              <span className="text-[var(--ink-navy-muted)]">STATUS</span>
+              <span className="font-semibold text-[var(--ink-navy)]">{hosxpSyncStatus}</span>
+              <span className="text-[var(--ink-navy-muted)]">PHASE</span>
+              <span>{hosxpSyncState?.phase ?? 'unknown'}</span>
+              <span className="text-[var(--ink-navy-muted)]">HCODE</span>
+              <span>{hosxpSyncState?.hcode ?? 'unknown'}</span>
+              <span className="text-[var(--ink-navy-muted)]">CONNECTION</span>
+              <span>{hosxpSyncState?.connectionStatus ?? 'unknown'}</span>
+              <span className="text-[var(--ink-navy-muted)]">DB TYPE</span>
+              <span>{hosxpSyncState?.databaseType ?? 'not detected'}</span>
+              <span className="text-[var(--ink-navy-muted)]">INTERVAL</span>
+              <span>
+                {hosxpSyncState?.intervalMs
+                  ? `${Math.round(hosxpSyncState.intervalMs / 1000)} seconds`
+                  : 'not started'}
+              </span>
+              <span className="text-[var(--ink-navy-muted)]">LAST CYCLE</span>
+              <span>{formatSyncTime(hosxpSyncState?.lastRunAt)}</span>
+              <span className="text-[var(--ink-navy-muted)]">LAST SUCCESS</span>
+              <span>{formatSyncTime(hosxpSyncState?.lastSuccessAt)}</span>
+              <span className="text-[var(--ink-navy-muted)]">NEXT CYCLE</span>
+              <span>{formatSyncTime(hosxpSyncState?.nextRunAt)}</span>
+              <span className="text-[var(--ink-navy-muted)]">HOSPITAL SYNC</span>
+              <span>{formatSyncTime(hosxpSyncState?.hospitalLastSyncAt)}</span>
+              <span className="text-[var(--ink-navy-muted)]">PATIENTS</span>
+              <span>
+                IPT {hosxpSyncState?.activePatients ?? 0} active · {hosxpSyncState?.cachedPatients ?? 0} cached
+              </span>
+              <span className="text-[var(--ink-navy-muted)]">ACTIVE ANC</span>
+              <span>
+                {hosxpSyncState?.activeAncJourneys ?? 0} pregnancies · latest{' '}
+                {formatSyncTime(hosxpSyncState?.latestAncSyncedAt)}
+              </span>
+              <span className="text-[var(--ink-navy-muted)]">ANC SOURCE</span>
+              <span>
+                HOSxP {hosxpSyncState?.lastStats?.anc.sourcePatientsRead ?? 0} read ·{' '}
+                {hosxpSyncState?.lastStats?.anc.sourcePatientsMapped ?? 0} mapped ·{' '}
+                {hosxpSyncState?.lastStats?.anc.patientsSynced ?? 0} synced
+              </span>
+              <span className="text-[var(--ink-navy-muted)]">ANC VISITS</span>
+              <span>
+                {hosxpSyncState?.lastStats?.anc.servicesRead ?? 0} read ·{' '}
+                {hosxpSyncState?.lastStats?.anc.servicesMapped ?? 0} mapped
+              </span>
+              <span className="text-[var(--ink-navy-muted)]">ANC RISK DATA</span>
+              <span>
+                risk {hosxpSyncState?.lastStats?.anc.risksMapped ?? 0} · classifying{' '}
+                {hosxpSyncState?.lastStats?.anc.classifyingMapped ?? 0}
+              </span>
+              <span className="text-[var(--ink-navy-muted)]">HOSxP SOURCE READ</span>
+              <span>
+                IPT {hosxpSyncState?.lastStats?.activePatientsRead ?? 0} · partograph{' '}
+                {hosxpSyncState?.lastStats?.partographRowsRead ?? 0}
+              </span>
+              <span className="text-[var(--ink-navy-muted)]">REFERRALS</span>
+              <span>
+                {hosxpSyncState?.activeReferrals ?? 0} active · out{' '}
+                {hosxpSyncState?.outgoingReferrals ?? 0} · in{' '}
+                {hosxpSyncState?.incomingReferrals ?? 0}
+              </span>
+              <span className="text-[var(--ink-navy-muted)]">CYCLES</span>
+              <span>
+                {hosxpSyncState?.successCount ?? 0} successful / {hosxpSyncState?.cycleCount ?? 0} attempted
+              </span>
+              {hosxpSyncState?.statusCode && (
+                <>
+                  <span className="text-[var(--ink-navy-muted)]">HTTP</span>
+                  <span>{hosxpSyncState.statusCode}</span>
+                </>
+              )}
+              {hosxpSyncState?.stage && (
+                <>
+                  <span className="text-[var(--ink-navy-muted)]">FAILED AT</span>
+                  <span>{hosxpSyncState.stage}</span>
+                </>
+              )}
+            </div>
+
+            {(hosxpSyncState?.error || hosxpSyncState?.lastError) && (
+              <div
+                className="border px-3 py-2 font-mono text-[12px] leading-relaxed"
+                style={{
+                  borderColor: 'var(--risk-high)',
+                  background: 'color-mix(in srgb, var(--risk-high) 7%, white)',
+                  color: 'var(--ink-navy)',
+                }}
+              >
+                <div className="font-semibold text-[var(--risk-high)]">
+                  {hosxpSyncState.error ?? 'HOSxP sync cycle failed'}
+                </div>
+                {hosxpSyncState.detail && <div className="mt-1">{hosxpSyncState.detail}</div>}
+                {hosxpSyncState.lastError && <div className="mt-1">{hosxpSyncState.lastError}</div>}
+              </div>
+            )}
+
+            {!hosxpSyncState?.error && !hosxpSyncState?.lastError && (
+              <div
+                className="border px-3 py-2 font-mono text-[12px] leading-relaxed"
+                style={{
+                  borderColor: 'var(--rule-strong)',
+                  background: 'var(--surface-cool)',
+                  color: 'var(--ink-navy)',
+                }}
+              >
+                {hosxpSyncState?.lastStats?.anc.error
+                  ? `ANC sync failed: ${hosxpSyncState.lastStats.anc.error}`
+                  : hosxpSyncState?.lastStats?.anc.skippedReason
+                    ? `ANC not synced: ${hosxpSyncState.lastStats.anc.skippedReason}`
+                    : hosxpSyncState?.phase === 'querying_hosxp'
+                      ? 'กำลัง query HOSxP: active labour patients, active ANC, ANC visits และ partograph observations'
+                      : hosxpSyncState?.successCount
+                        ? `รอบล่าสุดสำเร็จ: IPT ${hosxpSyncState.lastStats?.activePatientsSynced ?? 0}, ANC ${hosxpSyncState.lastStats?.anc.patientsSynced ?? 0}, visits ${hosxpSyncState.lastStats?.anc.servicesMapped ?? 0}, partograph ${hosxpSyncState.lastStats?.partographRowsUpserted ?? 0}`
+                        : 'เริ่ม loop แล้ว กำลังรอผล sync รอบแรกจาก HOSxP'}
+              </div>
+            )}
+
+            <div
+              className="border font-mono text-[12px]"
+              style={{ borderColor: 'var(--rule-strong)' }}
+            >
+              <div
+                className="flex items-center justify-between border-b px-3 py-2"
+                style={{ borderColor: 'var(--rule-hair)', background: 'var(--surface-cool)' }}
+              >
+                <span className="font-semibold uppercase tracking-[0.08em] text-[var(--ink-navy)]">
+                  Step log
+                </span>
+                <span className="text-[var(--ink-navy-muted)]">
+                  latest cycle · {hosxpSyncState?.lastSteps?.length ?? 0} entries
+                </span>
+              </div>
+              <div className="max-h-[260px] overflow-auto divide-y" style={{ borderColor: 'var(--rule-hair)' }}>
+                {(hosxpSyncState?.lastSteps?.length ?? 0) === 0 ? (
+                  <div className="px-3 py-3 text-[var(--ink-navy-muted)]">
+                    No step log recorded yet. Wait for the next sync cycle or reload the dashboard.
+                  </div>
+                ) : (
+                  hosxpSyncState?.lastSteps?.map((step, index) => {
+                    const tone =
+                      step.status === 'error'
+                        ? 'var(--risk-high)'
+                        : step.status === 'warning'
+                          ? 'var(--risk-medium)'
+                          : step.status === 'success'
+                            ? 'var(--risk-low)'
+                            : 'var(--ink-navy-muted)';
+                    return (
+                      <div key={`${step.cycle}-${step.name}-${index}`} className="grid grid-cols-[92px_1fr] gap-3 px-3 py-2">
+                        <div className="text-[var(--ink-navy-muted)]">
+                          <div>{formatSyncTime(step.at)}</div>
+                          <div className="mt-0.5 uppercase" style={{ color: tone }}>
+                            {step.status}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="font-semibold text-[var(--ink-navy)]">{step.name}</div>
+                          <div className="mt-0.5 text-[var(--ink-navy-dim)]">{step.message}</div>
+                          {step.counts && (
+                            <div className="mt-1 text-[var(--ink-navy-muted)]">
+                              {formatCounts(step.counts)}
+                            </div>
+                          )}
+                          {step.detail && (
+                            <div className="mt-1 whitespace-pre-wrap text-[var(--risk-high)]">
+                              {step.detail}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="border-t pt-3" style={{ borderColor: 'var(--rule-hair)' }}>
+              <div className="font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--ink-navy-muted)]">
+                Checks
+              </div>
+              <div className="mt-1 leading-relaxed">
+                The sync starts only when the user opens this page from a valid HOSxP/BMS
+                session and the hospital code is active in KK-LRMS. If status is ERROR,
+                fix the item above and reload this page.
               </div>
             </div>
           </div>

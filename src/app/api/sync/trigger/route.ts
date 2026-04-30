@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
 import { auth } from '@/lib/auth';
-import { requestImmediateSync } from '@/services/sync';
+import { startImmediateSyncJob } from '@/services/sync';
 import { SseManager } from '@/lib/sse';
 import { logger } from '@/lib/logger';
 
@@ -54,8 +54,11 @@ export async function POST() {
       );
     }
 
-    const result = await requestImmediateSync(db, hospitals[0].id, sseManager);
-    return NextResponse.json({ ...result, hcode: hospitalCode });
+    const job = startImmediateSyncJob(db, hospitals[0].id, sseManager);
+    return NextResponse.json(
+      { queued: job.running, job, hcode: hospitalCode },
+      { status: job.running ? 202 : 200 },
+    );
   } catch (error) {
     logger.error('sync_trigger_failed', { error });
     return NextResponse.json(

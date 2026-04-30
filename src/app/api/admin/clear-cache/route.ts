@@ -4,6 +4,7 @@ import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
 import { auth } from '@/lib/auth';
 import { logger } from '@/lib/logger';
+import { cacheDelPattern } from '@/lib/cache';
 
 export async function POST() {
   try {
@@ -28,6 +29,7 @@ export async function POST() {
 
     // Reset hospital connection statuses to UNKNOWN
     await db.execute("UPDATE hospitals SET connection_status = 'UNKNOWN', last_sync_at = NULL");
+    const redisEntriesDeleted = await cacheDelPattern('cache:*');
 
     return NextResponse.json({
       success: true,
@@ -35,6 +37,7 @@ export async function POST() {
         cpd_scores: cpdDeleted[0]?.cnt ?? 0,
         cached_vital_signs: vitalsDeleted[0]?.cnt ?? 0,
         cached_patients: patientsDeleted[0]?.cnt ?? 0,
+        redis_cache_entries: redisEntriesDeleted,
       },
       message: 'All cached patient data cleared. Hospitals reset to UNKNOWN status.',
     });

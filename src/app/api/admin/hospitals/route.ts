@@ -9,6 +9,12 @@ import { HospitalLevel, HospitalServiceType } from '@/types/domain';
 
 const VALID_LEVELS = new Set<string>(Object.values(HospitalLevel));
 
+function hasActiveBmsSession(sessionJwt: string | null, sessionExpiresAt: string | null) {
+  if (!sessionJwt || !sessionExpiresAt) return false;
+  const expiresAt = new Date(sessionExpiresAt).getTime();
+  return Number.isFinite(expiresAt) && expiresAt > Date.now();
+}
+
 export async function GET() {
   try {
     await ensureInit();
@@ -65,7 +71,7 @@ export async function GET() {
           bmsConfig: h.tunnel_url
             ? {
                 tunnelUrl: h.tunnel_url,
-                hasSession: !!h.session_jwt,
+                hasSession: hasActiveBmsSession(h.session_jwt, h.session_expires_at),
                 sessionExpiresAt: h.session_expires_at,
                 databaseType: h.database_type,
               }

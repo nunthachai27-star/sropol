@@ -4,3 +4,4 @@ export * from './anc';
 export * from './newborn';
 export * from './cpd-persist';
 export * from './polling';
+export * from './onboarding-session';

@@ -6,6 +6,20 @@ import { auth } from '@/lib/auth';
 import { tryLogAccess } from '@/services/audit';
 import { ensureInit } from '@/lib/ensure-init';
 import { logger } from '@/lib/logger';
+import { cacheGetJson, cacheSetJson } from '@/lib/cache';
+
+interface DashboardApiPayload {
+  stageKPIs: Awaited<ReturnType<typeof getStageKPIs>>;
+  alerts: Awaited<ReturnType<typeof getDashboardAlerts>>;
+  trends: Awaited<ReturnType<typeof getTrends>>;
+  hospitals: Awaited<ReturnType<typeof getProvinceDashboard>>['hospitals'];
+  summary: Awaited<ReturnType<typeof getProvinceDashboard>>['summary'];
+  updatedAt: string;
+}
+
+const DASHBOARD_CACHE_KEY = 'cache:dashboard:province';
+const DASHBOARD_CACHE_TTL_SECONDS = 10;
+const DASHBOARD_CACHE_ENABLED = process.env.NODE_ENV !== 'test';
 
 export async function GET() {
   try {
@@ -22,13 +36,24 @@ export async function GET() {
       });
     }
 
+    if (DASHBOARD_CACHE_ENABLED) {
+      const cached = await cacheGetJson<DashboardApiPayload>(DASHBOARD_CACHE_KEY);
+      if (cached) {
+        return NextResponse.json({ ...cached, cache: { hit: true, ttlSeconds: DASHBOARD_CACHE_TTL_SECONDS } });
+      }
+    }
+
     const [result, stageKPIs, alerts, trends] = await Promise.all([
       getProvinceDashboard(db),
       getStageKPIs(db),
       getDashboardAlerts(db),
       getTrends(db),
     ]);
-    return NextResponse.json({ ...result, stageKPIs, alerts, trends });
+    const payload = { ...result, stageKPIs, alerts, trends };
+    if (DASHBOARD_CACHE_ENABLED) {
+      await cacheSetJson(DASHBOARD_CACHE_KEY, payload, DASHBOARD_CACHE_TTL_SECONDS);
+    }
+    return NextResponse.json({ ...payload, cache: { hit: false, ttlSeconds: DASHBOARD_CACHE_TTL_SECONDS } });
   } catch (error) {
     logger.error('dashboard_api_failed', { error });
     return NextResponse.json(

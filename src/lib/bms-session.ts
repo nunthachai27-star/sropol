@@ -99,16 +99,25 @@ export class BmsSessionClient {
     bmsUrl: string,
     jwt: string,
     params?: Record<string, unknown>,
+    options?: {
+      marketplaceToken?: string | null;
+      appIdentifier?: string;
+    },
   ): Promise<BmsQueryResult> {
     const url = `${bmsUrl}/api/sql`;
     try {
+      const body: Record<string, unknown> = { sql };
+      if (params) body.params = params;
+      if (options?.appIdentifier) body.app = options.appIdentifier;
+      if (options?.marketplaceToken) body['marketplace-token'] = options.marketplaceToken;
+
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${jwt}`,
         },
-        body: JSON.stringify({ sql, params }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(30000),
       });
 
