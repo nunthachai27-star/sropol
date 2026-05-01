@@ -34,6 +34,8 @@ import {
   CalendarClock,
   Activity,
   ShieldCheck,
+  ShieldAlert,
+  Eraser,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -137,7 +139,7 @@ interface TestResult {
 
 // ───────────────── Component ─────────────────
 
-type SectionKey = 'general' | 'consult' | 'tunnel' | 'webhooks';
+type SectionKey = 'general' | 'consult' | 'tunnel' | 'webhooks' | 'danger';
 type Tone = 'low' | 'medium' | 'high' | 'muted' | 'navy';
 
 interface Props {
@@ -244,6 +246,12 @@ function DialogInner({ hospital, onSaved }: Props & { hospital: AdminHospital })
       label: 'Webhook Keys',
       detail: webhookCount === 1 ? '1 active key' : `${webhookCount} active keys`,
       icon: KeyRound,
+    },
+    {
+      k: 'danger',
+      label: 'Danger Zone',
+      detail: 'ลบข้อมูลคลินิก',
+      icon: ShieldAlert,
     },
   ];
 
@@ -379,8 +387,10 @@ function DialogInner({ hospital, onSaved }: Props & { hospital: AdminHospital })
           <ConsultDoctorsSection hospital={hospital} />
         ) : section === 'tunnel' ? (
           <TunnelSection hospital={hospital} />
-        ) : (
+        ) : section === 'webhooks' ? (
           <WebhooksSection hospital={hospital} />
+        ) : (
+          <DangerZoneSection hospital={hospital} onSaved={onSaved} />
         )}
       </div>
     </>
@@ -1324,6 +1334,276 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// ───────────────── Danger Zone section ─────────────────
+
+interface PurgeCounts {
+  cpd_scores?: number;
+  cached_vital_signs?: number;
+  cached_partograph_observations?: number;
+  cached_anc_visits?: number;
+  cached_anc_risks?: number;
+  cached_newborns?: number;
+  cached_referrals?: number;
+  cached_patients?: number;
+  maternal_journeys?: number;
+}
+
+interface PurgeResult {
+  ok?: boolean;
+  stoppedSync?: boolean;
+  totalRowsDeleted?: number;
+  counts?: PurgeCounts;
+  error?: string;
+  detail?: string;
+}
+
+const PURGE_TABLE_LABELS: Array<{ key: keyof PurgeCounts; label: string }> = [
+  { key: 'cached_patients', label: 'ผู้ป่วย (cached_patients)' },
+  { key: 'maternal_journeys', label: 'Journey (maternal_journeys)' },
+  { key: 'cached_partograph_observations', label: 'Partograph observations' },
+  { key: 'cached_vital_signs', label: 'Vital signs' },
+  { key: 'cpd_scores', label: 'CPD scores' },
+  { key: 'cached_anc_visits', label: 'ANC visits' },
+  { key: 'cached_anc_risks', label: 'ANC risks' },
+  { key: 'cached_newborns', label: 'ทารกแรกเกิด' },
+  { key: 'cached_referrals', label: 'Referrals' },
+];
+
+interface CountsResponse {
+  ok?: boolean;
+  totalRows?: number;
+  counts?: PurgeCounts;
+  error?: string;
+}
+
+function DangerZoneSection({
+  hospital,
+  onSaved,
+}: {
+  hospital: AdminHospital;
+  onSaved: () => Promise<void> | void;
+}) {
+  const { data: countsData, isLoading: countsLoading, mutate: mutateCounts } =
+    useSWR<CountsResponse>(`/api/admin/hospitals/${hospital.hcode}/data`);
+  const [confirmInput, setConfirmInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<PurgeResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setConfirmInput('');
+    setResult(null);
+    setError(null);
+  }, [hospital.hcode]);
+
+  const liveCounts = countsData?.counts ?? null;
+  const liveTotal = countsData?.totalRows ?? 0;
+
+  const canSubmit = confirmInput.trim() === hospital.hcode && !busy;
+
+  const handlePurge = async () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch(`/api/admin/hospitals/${hospital.hcode}/data`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmHcode: hospital.hcode }),
+      });
+      const payload = (await res.json().catch(() => null)) as PurgeResult | null;
+      if (!res.ok || !payload?.ok) {
+        const msg = payload?.detail ?? payload?.error ?? `HTTP ${res.status}`;
+        setError(`ลบข้อมูลไม่สำเร็จ: ${msg}`);
+        return;
+      }
+      setResult(payload);
+      setConfirmInput('');
+      await mutateCounts();
+      await onSaved();
+    } catch (e) {
+      setError(`ลบข้อมูลไม่สำเร็จ: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const lines: Array<{ label: string; count: number }> = result?.counts
+    ? PURGE_TABLE_LABELS
+        .map((t) => ({ label: t.label, count: result.counts?.[t.key] ?? 0 }))
+        .filter((row) => row.count > 0)
+    : [];
+
+  return (
+    <div className="space-y-4">
+      <SectionIntro
+        eyebrow="Destructive operations"
+        title="Danger Zone — ลบข้อมูลของโรงพยาบาลนี้"
+        detail="ใช้สำหรับล้างข้อมูล cached เพื่อ re-onboard ใหม่ · จะไม่ลบ tunnel config / consult doctors / webhook keys"
+        Icon={ShieldAlert}
+        meta={
+          countsLoading
+            ? 'กำลังนับ...'
+            : `${liveTotal.toLocaleString('th-TH')} แถวในระบบ`
+        }
+      />
+
+      {/* Live counts — what's currently in kk-lrms for this hospital */}
+      <div
+        className="border bg-white"
+        style={{ borderColor: 'var(--rule-strong)' }}
+      >
+        <div
+          className="flex items-center justify-between border-b px-4 py-2"
+          style={{ borderColor: 'var(--rule-strong)', background: 'var(--surface-cool)' }}
+        >
+          <div className="flex items-center gap-1.5 font-mono text-[12px] uppercase tracking-[0.08em] text-[var(--ink-navy-muted)]">
+            <Database className="h-3 w-3" />
+            ข้อมูลปัจจุบันในระบบ · HCODE {hospital.hcode}
+          </div>
+          <div
+            className="font-mono text-[13px] font-semibold tracking-[0.04em]"
+            style={{ color: liveTotal > 0 ? 'var(--accent-navy)' : 'var(--ink-navy-muted)' }}
+          >
+            {countsLoading ? '...' : `${liveTotal.toLocaleString('th-TH')} แถวรวม`}
+          </div>
+        </div>
+        <div
+          className="grid"
+          style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}
+        >
+          {PURGE_TABLE_LABELS.map((row, idx) => {
+            const count = liveCounts?.[row.key] ?? 0;
+            const isLastRow = idx >= PURGE_TABLE_LABELS.length - (PURGE_TABLE_LABELS.length % 3 || 3);
+            const isLastCol = (idx + 1) % 3 === 0;
+            return (
+              <div
+                key={row.key}
+                className="px-3 py-2.5"
+                style={{
+                  borderRight: isLastCol ? undefined : '1px solid var(--rule-hair)',
+                  borderBottom: isLastRow ? undefined : '1px solid var(--rule-hair)',
+                }}
+              >
+                <div className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--ink-navy-muted)]">
+                  {row.label}
+                </div>
+                <div
+                  className="mt-0.5 font-mono text-[15px] font-semibold tabular-nums"
+                  style={{
+                    color: count > 0 ? 'var(--ink-navy)' : 'var(--ink-navy-muted)',
+                  }}
+                >
+                  {countsLoading ? '—' : count.toLocaleString('th-TH')}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div
+        className="border-2 bg-white p-4"
+        style={{ borderColor: 'var(--risk-high)' }}
+      >
+        <div
+          className="mb-3 flex items-center gap-2 font-mono text-[12px] font-semibold uppercase tracking-[0.06em]"
+          style={{ color: 'var(--risk-high)' }}
+        >
+          <Eraser className="h-3.5 w-3.5" />
+          ลบข้อมูล cached ของ {hospital.name}
+        </div>
+
+        <ul className="mb-3 space-y-1 font-mono text-[12px] leading-relaxed text-[var(--ink-navy-dim)]">
+          <li>· ผู้ป่วยที่ admit (cached_patients) และ partograph / vital-signs / CPD scores ที่เกี่ยวข้อง</li>
+          <li>· Maternal journeys และ ANC visits / risks / newborns ที่ผูกกับ journey</li>
+          <li>· Referrals ที่โรงพยาบาลนี้เป็นต้นทางหรือปลายทาง</li>
+          <li>· รีเซ็ต connection_status / last_sync_at เป็น UNKNOWN</li>
+        </ul>
+
+        <div
+          className="mb-3 border bg-[var(--surface-cool)] px-3 py-2 font-mono text-[12px] leading-relaxed text-[var(--ink-navy-dim)]"
+          style={{ borderColor: 'var(--rule-strong)' }}
+        >
+          <strong className="text-[var(--ink-navy)]">จะไม่ถูกลบ:</strong> tunnel URL / session,
+          consult doctors, webhook API keys, audit logs, และข้อมูลโรงพยาบาลในตาราง <code>hospitals</code>
+        </div>
+
+        <Field label={`พิมพ์รหัสโรงพยาบาล (${hospital.hcode}) เพื่อยืนยัน`}>
+          <Input
+            value={confirmInput}
+            onChange={(e) => setConfirmInput(e.target.value)}
+            placeholder={hospital.hcode}
+            className="h-9 font-mono"
+            autoComplete="off"
+            disabled={busy}
+          />
+        </Field>
+
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+          <span className="font-mono text-[12px] text-[var(--ink-navy-muted)]">
+            {confirmInput.trim() === hospital.hcode
+              ? '✓ พร้อมยืนยันการลบ'
+              : 'พิมพ์ hcode ให้ตรงเพื่อเปิดปุ่ม'}
+          </span>
+          <Button
+            variant="destructive"
+            onClick={handlePurge}
+            disabled={!canSubmit}
+            className="gap-1.5"
+          >
+            <Trash2 className="h-4 w-4" />
+            {busy ? 'กำลังลบ...' : 'ลบข้อมูลของโรงพยาบาลนี้'}
+          </Button>
+        </div>
+
+        {error ? (
+          <div
+            className="mt-3 border px-3 py-2 font-mono text-[11px]"
+            style={{ borderColor: 'var(--risk-high)', color: 'var(--risk-high)' }}
+          >
+            {error}
+          </div>
+        ) : null}
+
+        {result?.ok ? (
+          <div
+            className="mt-3 border bg-white px-3 py-2 font-mono text-[12px]"
+            style={{ borderColor: 'var(--risk-low)' }}
+          >
+            <div
+              className="mb-1 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.06em]"
+              style={{ color: 'var(--risk-low)' }}
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              ลบข้อมูลสำเร็จ · ทั้งหมด {result.totalRowsDeleted ?? 0} แถว
+            </div>
+            {result.stoppedSync ? (
+              <div className="text-[var(--ink-navy-dim)]">
+                · หยุด onboarding sync ที่กำลังทำงานอยู่แล้ว
+              </div>
+            ) : null}
+            {lines.length > 0 ? (
+              <ul className="mt-1 space-y-0.5 text-[var(--ink-navy-dim)]">
+                {lines.map((row) => (
+                  <li key={row.label}>
+                    · {row.label}: <strong className="text-[var(--ink-navy)]">{row.count}</strong>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-[var(--ink-navy-muted)]">
+                ไม่มีแถวข้อมูลให้ลบ (โรงพยาบาลยังไม่เคยถูก sync)
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

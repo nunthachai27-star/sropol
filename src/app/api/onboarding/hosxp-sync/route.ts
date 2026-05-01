@@ -164,6 +164,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Gate sync on a paired marketplace_token (or marketplace-token). Only
+    // sessions that arrived via the BMS marketplace launcher carry the scope
+    // /api/sql + /api/function need for READWRITE; without it we'd 501-loop
+    // partway through. Mirrors the client-side check in useOnboardHosxpSync
+    // and useOnboardHosxpWebhook.
+    if (!marketplaceToken) {
+      return NextResponse.json(
+        {
+          error: 'missing_marketplace_token',
+          stage: 'read_bms_session',
+          detail:
+            'Automatic HOSxP sync requires a marketplace_token. Open KK-LRMS from the BMS marketplace launcher (which embeds marketplace_token / marketplace-token in the URL).',
+        },
+        { status: 403 },
+      );
+    }
+
     try {
       new URL(apiUrl);
     } catch {

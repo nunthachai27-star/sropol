@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { Plus, Pencil, Trash2, Building2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Building2, Database } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -44,6 +44,10 @@ interface ProvincesResponse {
   provinces: Array<{ code: string; name: string }>;
 }
 
+interface DataCountsResponse {
+  counts: Record<string, { totalRows: number; perTable: Record<string, number> }>;
+}
+
 const LEVEL_OPTIONS = Object.values(HospitalLevel);
 
 // hospital_type_id → default HospitalLevel guess (admin can override).
@@ -68,6 +72,10 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
   );
   const { data: configData } = useSWR<ConfigResponse>('/api/admin/config');
   const { data: provincesData } = useSWR<ProvincesResponse>('/api/admin/provinces');
+  const { data: dataCountsData } = useSWR<DataCountsResponse>(
+    '/api/admin/hospitals/data-counts',
+    { refreshInterval: 30_000 }, // refresh every 30s so counts trail polling sync
+  );
 
   const activeProvince = configData?.config?.active_province_code ?? '40';
   const { data: mophData } = useSWR<{ hospitals: MophHospital[] }>(
@@ -216,7 +224,7 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
 
       <div className="border bg-white" style={{ borderColor: 'var(--rule-strong)' }}>
         <div
-          className="grid grid-cols-[90px,1fr,70px,130px,120px,60px,110px] items-center border-b px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]"
+          className="grid grid-cols-[90px,1fr,70px,130px,120px,60px,90px,110px] items-center border-b px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]"
           style={{ borderColor: 'var(--rule-strong)' }}
         >
           <span>HCODE</span>
@@ -225,6 +233,7 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
           <span>SERVICE</span>
           <span>PROVINCE</span>
           <span>ACTIVE</span>
+          <span className="text-right">DATA</span>
           <span className="text-right">ACTIONS</span>
         </div>
         {hospitals.length === 0 ? (
@@ -235,7 +244,7 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
           hospitals.map((h) => (
             <div
               key={h.hcode}
-              className="grid grid-cols-[90px,1fr,70px,130px,120px,60px,110px] items-center border-b px-3 py-2 text-sm last:border-b-0"
+              className="grid grid-cols-[90px,1fr,70px,130px,120px,60px,90px,110px] items-center border-b px-3 py-2 text-sm last:border-b-0"
               style={{ borderColor: 'var(--rule-hair)', color: 'var(--ink-navy)' }}
             >
               <span className="font-mono text-[12px] text-[var(--ink-navy-dim)]">{h.hcode}</span>
@@ -255,6 +264,40 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
                 style={{ color: h.isActive ? 'var(--risk-low)' : 'var(--ink-navy-muted)' }}
               >
                 {h.isActive ? 'YES' : 'NO'}
+              </span>
+              <span className="flex justify-end">
+                {(() => {
+                  const total = dataCountsData?.counts?.[h.hcode]?.totalRows;
+                  const perTable = dataCountsData?.counts?.[h.hcode]?.perTable;
+                  if (dataCountsData === undefined) {
+                    return (
+                      <span className="font-mono text-[11px] text-[var(--ink-navy-muted)]">…</span>
+                    );
+                  }
+                  const tooltip = perTable
+                    ? Object.entries(perTable)
+                        .filter(([, v]) => v > 0)
+                        .map(([k, v]) => `${k}: ${v.toLocaleString('th-TH')}`)
+                        .join('\n') || 'ไม่มีข้อมูล'
+                    : 'ไม่มีข้อมูล';
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setEditHospital(h)}
+                      title={`คลิกเพื่อจัดการข้อมูล\n${tooltip}`}
+                      className="inline-flex items-center gap-1 border px-1.5 py-0.5 font-mono text-[11px] tabular-nums hover:bg-[var(--accent-navy-soft)]"
+                      style={{
+                        borderColor: 'var(--rule-strong)',
+                        color: total && total > 0 ? 'var(--accent-navy)' : 'var(--ink-navy-muted)',
+                        background: total && total > 0 ? 'var(--surface-cool)' : 'transparent',
+                      }}
+                      disabled={busy}
+                    >
+                      <Database className="h-3 w-3" />
+                      {(total ?? 0).toLocaleString('th-TH')}
+                    </button>
+                  );
+                })()}
               </span>
               <span className="flex justify-end gap-1">
                 <button

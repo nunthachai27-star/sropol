@@ -4,9 +4,18 @@
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn } from 'next-auth/react';
-import { Building2, Activity, BarChart3, Shield, Clock } from 'lucide-react';
+import { Building2, Activity, BarChart3, Shield, Clock, AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { MIN_BMS_API_VERSION } from '@/lib/bms-version';
 import {
   setSessionCookie,
   setMarketplaceToken,
@@ -19,12 +28,21 @@ interface AccessDeniedInfo {
   message: string;
 }
 
+interface VersionRejection {
+  hospitalCode: string;
+  hospitalName: string;
+  currentVersion: string | null;
+  minVersion: string;
+  message: string;
+}
+
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [sessionId, setSessionId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [accessDenied, setAccessDenied] = useState<AccessDeniedInfo | null>(null);
+  const [versionRejection, setVersionRejection] = useState<VersionRejection | null>(null);
   const [loading, setLoading] = useState(false);
   const autoLoginAttempted = useRef(false);
 
@@ -48,6 +66,7 @@ function LoginForm() {
     setLoading(true);
     setError(null);
     setAccessDenied(null);
+    setVersionRejection(null);
 
     try {
       const trimmed = id.trim();
@@ -63,9 +82,16 @@ function LoginForm() {
       const preflight = (await preflightRes.json().catch(() => null)) as
         | {
             ok: boolean;
-            reason?: 'invalid_session' | 'not_registered' | 'deactivated' | 'invalid_request';
+            reason?:
+              | 'invalid_session'
+              | 'not_registered'
+              | 'deactivated'
+              | 'invalid_request'
+              | 'hosxp_too_old';
             hospitalCode?: string;
             hospitalName?: string;
+            currentVersion?: string;
+            minVersion?: string;
             message?: string;
           }
         | null;
@@ -83,6 +109,22 @@ function LoginForm() {
             hospitalName: preflight.hospitalName ?? '',
             message: preflight.message ?? '',
           });
+        } else if (preflight.reason === 'hosxp_too_old') {
+          // Modal blocks access until the user dismisses it; the inline
+          // error keeps the message visible after dismissal so support
+          // staff reviewing a screenshot can still see why login failed.
+          const minVersion = preflight.minVersion ?? MIN_BMS_API_VERSION;
+          const detail =
+            preflight.message ??
+            `กรุณาอัปเดต HOSxP เป็นเวอร์ชัน ${minVersion} ขึ้นไปก่อนเข้าใช้งาน`;
+          setVersionRejection({
+            hospitalCode: preflight.hospitalCode ?? '',
+            hospitalName: preflight.hospitalName ?? '',
+            currentVersion: preflight.currentVersion ?? null,
+            minVersion,
+            message: detail,
+          });
+          setError(detail);
         } else {
           setError(preflight.message ?? 'Session ID ไม่ถูกต้องหรือหมดอายุ');
         }
@@ -339,6 +381,98 @@ function LoginForm() {
           </div>
         </div>
       </div>
+
+      <Dialog
+        open={versionRejection !== null}
+        onOpenChange={(open) => {
+          if (!open) setVersionRejection(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md p-0 overflow-hidden" showCloseButton={false}>
+          <div className="bg-gradient-to-br from-red-50 to-orange-50 px-6 pt-6 pb-5 border-b border-red-100">
+            <div className="flex items-start gap-4">
+              <div className="shrink-0 rounded-full bg-red-100 p-2.5 ring-4 ring-red-50">
+                <AlertTriangle className="h-6 w-6 text-red-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <DialogHeader>
+                  <DialogTitle className="text-base font-semibold text-red-900">
+                    ต้องอัปเดต HOSxP ก่อนใช้งาน
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-red-700/80 mt-1">
+                    เวอร์ชัน HOSxP API ของโรงพยาบาลเก่ากว่าที่ระบบ KK-LRMS รองรับ
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+            </div>
+          </div>
+
+          {versionRejection && (
+            <div className="px-6 py-5 space-y-4">
+              {(versionRejection.hospitalName || versionRejection.hospitalCode) && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    โรงพยาบาล
+                  </div>
+                  <div className="mt-0.5 text-sm font-medium text-slate-800 truncate">
+                    {versionRejection.hospitalName || '—'}
+                  </div>
+                  {versionRejection.hospitalCode && (
+                    <div className="mt-0.5 font-mono text-[11px] text-slate-500">
+                      รหัส {versionRejection.hospitalCode}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg border border-red-200 bg-red-50/60 px-3 py-2.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-red-500">
+                    เวอร์ชันปัจจุบัน
+                  </div>
+                  <div className="mt-0.5 font-mono text-sm font-semibold text-red-700">
+                    {versionRejection.currentVersion ?? '—'}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600">
+                    ต้องการอย่างน้อย
+                  </div>
+                  <div className="mt-0.5 font-mono text-sm font-semibold text-emerald-700">
+                    {versionRejection.minVersion}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">
+                กรุณาติดต่อผู้ดูแลระบบ HOSxP ของโรงพยาบาลเพื่ออัปเดต HOSxP เป็นเวอร์ชัน
+                {' '}
+                <span className="font-mono font-semibold">{versionRejection.minVersion}</span>
+                {' '}
+                ขึ้นไป จากนั้นจึงเข้าใช้งาน KK-LRMS อีกครั้ง
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="px-4 py-3">
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-lg"
+              onClick={() => setVersionRejection(null)}
+            >
+              ปิด
+            </Button>
+            <Button
+              type="button"
+              className="rounded-lg bg-slate-900 hover:bg-slate-800 text-white"
+              onClick={() => setVersionRejection(null)}
+            >
+              รับทราบ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

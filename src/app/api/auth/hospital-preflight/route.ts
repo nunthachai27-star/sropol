@@ -18,6 +18,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { validateBmsSession } from '@/lib/auth-utils';
 import { checkHospitalAccess } from '@/lib/hospital-access-guard';
+import {
+  buildVersionRejectionMessage,
+  checkBmsApiVersion,
+  MIN_BMS_API_VERSION,
+} from '@/lib/bms-version';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
@@ -67,6 +72,37 @@ export async function POST(request: NextRequest) {
           ? `โรงพยาบาล "${identity.hospitalName}" (${identity.hospitalCode}) ถูกปิดการใช้งาน — กรุณาติดต่อผู้ดูแลระบบ`
           : `โรงพยาบาล "${identity.hospitalName}" (${identity.hospitalCode}) ยังไม่ได้รับสิทธิ์ใช้งานระบบ — กรุณาติดต่อผู้ดูแลระบบเพื่อขอลงทะเบียน หากท่านคิดว่าเป็นความผิดพลาด`,
     });
+  }
+
+  // Gate onboarding on the per-hospital HOSxP API version. The user's tunnel
+  // must expose `get_server_api_version` and report >= MIN_BMS_API_VERSION;
+  // otherwise downstream features (partograph schema, /api/function calls
+  // like `get_serialnumber`) won't behave as the rest of kk-lrms expects.
+  //
+  // Bearer for /api/function is the session code (UUID), NOT identity.jwt
+  // (which holds `auth_key` and is used elsewhere as the marketplace-token).
+  if (identity.tunnelUrl) {
+    const versionCheck = await checkBmsApiVersion(identity.tunnelUrl, sessionId);
+    if (!versionCheck.ok) {
+      logger.info('hospital_preflight_hosxp_version_rejected', {
+        hospitalCode: identity.hospitalCode,
+        hospitalName: identity.hospitalName,
+        version: versionCheck.version,
+        versionNumber: versionCheck.versionNumber,
+        reason: versionCheck.reason,
+        httpStatus: versionCheck.httpStatus,
+        minVersion: MIN_BMS_API_VERSION,
+      });
+      return NextResponse.json({
+        ok: false,
+        reason: 'hosxp_too_old',
+        hospitalCode: identity.hospitalCode,
+        hospitalName: identity.hospitalName,
+        currentVersion: versionCheck.version,
+        minVersion: MIN_BMS_API_VERSION,
+        message: buildVersionRejectionMessage(versionCheck),
+      });
+    }
   }
 
   return NextResponse.json({

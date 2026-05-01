@@ -91,6 +91,12 @@ export function useOnboardHosxpSync(): {
       return;
     }
     if (!isReady || !config || !userInfo) return;
+    // Gate auto-sync on a paired marketplace_token. Sessions launched without
+    // one (direct paste of bms-session-id) lack the marketplace scope that
+    // /api/sql + /api/function rely on for READWRITE, and silently failing
+    // half-way through onboarding is worse than not starting. Mirrors the
+    // existing precondition in useOnboardHosxpWebhook.
+    if (!marketplaceToken) return;
     if (!userInfo.hospcode) {
       ranRef.current = true;
       queueMicrotask(() => {
