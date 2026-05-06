@@ -41,10 +41,13 @@ export async function GET() {
       last_authenticity_check_at: string | null;
       last_authenticity_reason: string | null;
     }>(
-      // Filter out soft-deleted (is_active=false) hospitals — DELETE handler
-      // flips is_active rather than dropping the row (FK constraints from 6
-      // child tables block hard delete), so the registered-hospitals list
-      // would otherwise keep showing deactivated rows after a trash click.
+      // Include deactivated rows so the admin can find and re-enable them
+      // (or fully purge their data). is_active is returned as a column so
+      // the UI can render a "ปิดใช้งาน" badge and mute the row. The DELETE
+      // handler flips is_active rather than dropping the row (FK constraints
+      // from 6 child tables block hard delete), so without showing them the
+      // admin had no way to manage a hospital after a soft-delete.
+      // Active rows sort first; inactive rows fall to the bottom.
       `SELECT h.hcode, h.name, h.level, h.service_type, h.province_code, h.district_code,
               h.lat, h.lon, h.is_active, h.connection_status, h.last_sync_at,
               hbc.tunnel_url, hbc.session_jwt, hbc.session_expires_at, hbc.database_type,
@@ -52,8 +55,7 @@ export async function GET() {
               hbc.last_authenticity_check_at, hbc.last_authenticity_reason
        FROM hospitals h
        LEFT JOIN hospital_bms_config hbc ON hbc.hospital_id = h.id
-       WHERE h.is_active = true
-       ORDER BY h.name`,
+       ORDER BY h.is_active DESC, h.name`,
     );
 
     return NextResponse.json({

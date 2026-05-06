@@ -1,4 +1,17 @@
 // T048: Dashboard service — province dashboard data from local cache
+//
+// Every aggregate query in this module filters by hospitals.is_active so that
+// disabling a hospital from /admin (or a soft-delete via the trash button)
+// removes it from every dashboard widget — labor KPI, ANC alert count,
+// referral inbox, trends, high-risk list. Without this filter, a deactivated
+// hospital's stale cached_patients / maternal_journeys rows continue to
+// inflate the province totals (which is why hcode 00000 contributed 132
+// "active labor" cases even after the admin disabled it).
+//
+// We don't physically delete those cached rows when a hospital is
+// deactivated (FK cascade is non-trivial across 9 tables, and a re-enable
+// must be lossless), so the dashboard layer is the right place to honor the
+// flag — one subquery, applied everywhere.
 import type { DatabaseAdapter } from '@/db/adapter';
 import type {
   DashboardHospital,
@@ -12,6 +25,12 @@ import type {
 } from '@/types/api';
 import type { ConnectionStatus, HospitalLevel } from '@/types/domain';
 import { decryptSafe } from '@/lib/encryption';
+
+// Reusable subquery — every cached_*/maternal_journeys aggregate joins this
+// against the relevant hospital_id column to honor the operational
+// is_active flag. Inlined as a literal so we don't need parameterized IN
+// lists (PGlite + node-postgres handle the planner-cached subquery well).
+const ACTIVE_HOSPITAL_IDS_SQL = '(SELECT id FROM hospitals WHERE is_active = true)';
 
 interface DashboardRow {
   hcode: string;
@@ -166,6 +185,7 @@ export async function getHighRiskPatients(
     INNER JOIN hospitals h ON h.id = cp.hospital_id
     WHERE cp.labor_status = 'ACTIVE'
       AND cs.risk_level IN ('HIGH', 'MEDIUM')
+      AND h.is_active = true
     ORDER BY cs.score DESC
     LIMIT ?
   `, [limit]);
@@ -304,7 +324,11 @@ export async function getHospitalPatientList(
 export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageKPIs> {
   // Pregnancy counts by ANC risk level
   const pregnancyCounts = await db.query<{ anc_risk_level: string; count: number }>(
-    `SELECT anc_risk_level, COUNT(*) as count FROM maternal_journeys WHERE care_stage = 'PREGNANCY' GROUP BY anc_risk_level`,
+    `SELECT anc_risk_level, COUNT(*) as count FROM maternal_journeys
+     WHERE care_stage = 'PREGNANCY'
+       AND (hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
+            OR current_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})
+     GROUP BY anc_risk_level`,
   );
 
   const pregnancy = { total: 0, low: 0, hr1: 0, hr2: 0, hr3: 0 };
@@ -324,6 +348,7 @@ export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageK
      JOIN cpd_scores cs ON cs.patient_id = cp.id
        AND cs.id = (SELECT cs2.id FROM cpd_scores cs2 WHERE cs2.patient_id = cp.id ORDER BY cs2.calculated_at DESC LIMIT 1)
      WHERE cp.labor_status = 'ACTIVE'
+       AND cp.hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
      GROUP BY cs.risk_level`,
   );
 
@@ -349,7 +374,10 @@ export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageK
             SUM(CASE WHEN cn.birth_weight_g < 2500 THEN 1 ELSE 0 END) as lbw
      FROM cached_newborns cn
      JOIN maternal_journeys mj ON mj.id = cn.journey_id
-     WHERE mj.care_stage = 'DELIVERED' AND cn.born_at >= ?`,
+     WHERE mj.care_stage = 'DELIVERED'
+       AND cn.born_at >= ?
+       AND (mj.hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
+            OR mj.current_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})`,
     [monthStart],
   );
 
@@ -375,7 +403,10 @@ export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageK
 export async function getDashboardAlerts(db: DatabaseAdapter): Promise<DashboardAlerts> {
   // Referral alerts: pending referrals (INITIATED or ACCEPTED)
   const refAlerts = await db.query<{ count: number }>(
-    `SELECT COUNT(*) as count FROM cached_referrals WHERE status IN ('INITIATED', 'ACCEPTED')`,
+    `SELECT COUNT(*) as count FROM cached_referrals
+     WHERE status IN ('INITIATED', 'ACCEPTED')
+       AND (from_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
+            OR to_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})`,
   );
 
   // Overdue ANC: pregnancies where last_anc_date is > 28 days ago
@@ -385,13 +416,18 @@ export async function getDashboardAlerts(db: DatabaseAdapter): Promise<Dashboard
     `SELECT COUNT(*) as count FROM maternal_journeys
      WHERE care_stage = 'PREGNANCY'
        AND last_anc_date IS NOT NULL
-       AND last_anc_date < ?`,
+       AND last_anc_date < ?
+       AND (hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
+            OR current_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})`,
     [twentyEightDaysAgo],
   );
 
   // In-transit referrals
   const inTransit = await db.query<{ count: number }>(
-    `SELECT COUNT(*) as count FROM cached_referrals WHERE status = 'IN_TRANSIT'`,
+    `SELECT COUNT(*) as count FROM cached_referrals
+     WHERE status = 'IN_TRANSIT'
+       AND (from_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
+            OR to_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})`,
   );
 
   return {
@@ -507,7 +543,9 @@ async function countAdmitsInWindow(
   endIso: string,
 ): Promise<number> {
   const r = await db.query<{ count: number }>(
-    `SELECT COUNT(*) as count FROM cached_patients WHERE admit_date >= ? AND admit_date < ?`,
+    `SELECT COUNT(*) as count FROM cached_patients
+     WHERE admit_date >= ? AND admit_date < ?
+       AND hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}`,
     [startIso, endIso],
   );
   return Number(r[0]?.count) || 0;
@@ -520,7 +558,8 @@ async function countDeliveredInWindow(
 ): Promise<number> {
   const r = await db.query<{ count: number }>(
     `SELECT COUNT(*) as count FROM cached_patients
-     WHERE delivered_at IS NOT NULL AND delivered_at >= ? AND delivered_at < ?`,
+     WHERE delivered_at IS NOT NULL AND delivered_at >= ? AND delivered_at < ?
+       AND hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}`,
     [startIso, endIso],
   );
   return Number(r[0]?.count) || 0;
@@ -536,7 +575,9 @@ async function countReferralsInWindow(
   // within the window as the "referred this shift" signal.
   const r = await db.query<{ count: number }>(
     `SELECT COUNT(*) as count FROM cached_referrals
-     WHERE initiated_at IS NOT NULL AND initiated_at >= ? AND initiated_at < ?`,
+     WHERE initiated_at IS NOT NULL AND initiated_at >= ? AND initiated_at < ?
+       AND (from_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
+            OR to_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})`,
     [startIso, endIso],
   );
   return Number(r[0]?.count) || 0;
@@ -550,7 +591,9 @@ export async function getTrends(
   const nowHour = bangkokHourFloor(now);
   const start24h = new Date(nowHour.getTime() - 23 * 3600_000);
   const admitsLast24h = await db.query<{ admit_date: string }>(
-    `SELECT admit_date FROM cached_patients WHERE admit_date >= ?`,
+    `SELECT admit_date FROM cached_patients
+     WHERE admit_date >= ?
+       AND hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}`,
     [start24h.toISOString()],
   );
   const bucket = Array<number>(24).fill(0);
@@ -586,6 +629,7 @@ export async function getTrends(
        COUNT(*) as count
      FROM cached_patients cp
      WHERE cp.admit_date >= ?
+       AND cp.hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
      GROUP BY risk_level`,
     [start24h.toISOString()],
   );

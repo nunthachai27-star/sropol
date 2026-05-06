@@ -220,6 +220,14 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
       <div className="flex items-center justify-between">
         <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--ink-navy-muted)]">
           REGISTERED HOSPITALS · {hospitals.length}
+          {(() => {
+            const inactive = hospitals.filter((h) => !h.isActive).length;
+            return inactive > 0 ? (
+              <span className="ml-2 normal-case tracking-normal text-[var(--ink-navy-dim)]">
+                ({hospitals.length - inactive} active · {inactive} ปิดใช้งาน)
+              </span>
+            ) : null;
+          })()}
         </div>
         <Button onClick={openAdd} className="gap-1.5">
           <Plus className="h-4 w-4" />
@@ -250,12 +258,30 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
             <div
               key={h.hcode}
               className="grid grid-cols-[90px,1fr,70px,130px,120px,60px,90px,110px] items-center border-b px-3 py-2 text-sm last:border-b-0"
-              style={{ borderColor: 'var(--rule-hair)', color: 'var(--ink-navy)' }}
+              style={{
+                borderColor: 'var(--rule-hair)',
+                color: 'var(--ink-navy)',
+                opacity: h.isActive ? 1 : 0.6,
+                background: h.isActive ? undefined : 'var(--surface-cool, #f8fafc)',
+              }}
             >
               <span className="font-mono text-[12px] text-[var(--ink-navy-dim)]">{h.hcode}</span>
               <span className="flex items-center gap-2">
                 <Building2 className="h-3.5 w-3.5 text-[var(--ink-navy-muted)]" />
                 <span className="truncate">{h.name}</span>
+                {!h.isActive && (
+                  <span
+                    title="โรงพยาบาลถูกปิดการใช้งาน — กดปุ่ม &quot;แก้&quot; เพื่อเปิดใช้งานอีกครั้งหรือลบข้อมูล"
+                    className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                    style={{
+                      borderColor: 'var(--rule-strong)',
+                      background: 'transparent',
+                      color: 'var(--ink-navy-muted)',
+                    }}
+                  >
+                    ปิดใช้งาน
+                  </span>
+                )}
                 {isHospitalAuthenticityFailure(h) && (
                   <span
                     title={describeAuthenticityFailure(h)}
