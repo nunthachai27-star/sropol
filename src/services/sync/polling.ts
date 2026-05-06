@@ -26,6 +26,7 @@ import { calculateAndStoreCpdScores } from './cpd-persist';
 import { syncAncData } from './anc';
 import { logger } from '@/lib/logger';
 import { APP_IDENTIFIER } from '@/lib/bms-browser-client';
+import { decryptSafe } from '@/lib/encryption';
 import type {
   HosxpAncClassifyingRow,
   HosxpAncRiskRow,
@@ -71,6 +72,137 @@ export function getSyncState(hospitalId: string): SyncState {
 // don't pollute each other. Underscore-prefixed to discourage prod use.
 export function _resetSyncStatesForTesting(): void {
   syncStates.clear();
+}
+
+// ─── Authenticity gate ───
+// HOSxP returns randomized CID/HN values when the marketplace_token isn't
+// supplied (or is invalid). The polling worker fingerprints the upstream by
+// re-looking-up the first row's CID — if it doesn't round-trip, the data is
+// junk and the cycle is aborted before any writes touch cached_patients.
+//
+// Verdict is persisted on hospital_bms_config so the admin UI can flag the
+// hospital and the next cycle can short-circuit during the cooldown window.
+
+const AUTHENTICITY_COOLDOWN_MS = 60 * 60 * 1000; // 1h after a transient failure
+const AUTHENTICITY_FAILURE_STATUSES = new Set([
+  'cid_unstable',
+  'hn_unstable',
+  'no_id_field',
+  'probe_failed',
+  'missing_marketplace_token',
+]);
+// Permanent suspension — only cleared by an explicit admin re-onboard
+// (POST /api/onboarding/hosxp-sync with confirmReonboard=true). Time-based
+// cooldown does NOT apply here; the row stays suspended forever otherwise.
+const PERMANENT_SKIP_STATUSES = new Set(['purged_pending_reonboard']);
+
+function isAuthenticityFailureStatus(status: string | null | undefined): boolean {
+  return Boolean(
+    status &&
+      (AUTHENTICITY_FAILURE_STATUSES.has(status) || PERMANENT_SKIP_STATUSES.has(status)),
+  );
+}
+
+function isWithinAuthenticityCooldown(
+  checkedAt: string | null | undefined,
+  status: string | null | undefined = null,
+): boolean {
+  if (status && PERMANENT_SKIP_STATUSES.has(status)) return true;
+  if (!checkedAt) return false;
+  const t = new Date(checkedAt).getTime();
+  if (!Number.isFinite(t)) return false;
+  return Date.now() - t < AUTHENTICITY_COOLDOWN_MS;
+}
+
+async function recordAuthenticityVerdict(
+  db: DatabaseAdapter,
+  hospitalId: string,
+  status: 'authentic' | 'cid_unstable' | 'hn_unstable' | 'no_id_field' | 'probe_failed' | 'missing_marketplace_token' | 'no_data',
+  reason: string | null,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.execute(
+    `UPDATE hospital_bms_config
+     SET last_authenticity_check_at = ?, last_authenticity_status = ?,
+         last_authenticity_reason = ?, updated_at = ?
+     WHERE hospital_id = ?`,
+    [now, status, reason, now, hospitalId],
+  );
+}
+
+// Whitelist of characters allowed in a CID/HN before we inline it into the
+// probe SQL. Real Thai CIDs are 13 digits; HNs are short alphanumeric. Anything
+// outside this set is either an encrypted blob (which we want to reject) or
+// unsafe to interpolate — both reasons to skip rather than escape.
+const SAFE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+class HospitalDataUnauthenticError extends Error {
+  status: 'cid_unstable' | 'hn_unstable' | 'no_id_field' | 'probe_failed';
+  constructor(status: 'cid_unstable' | 'hn_unstable' | 'no_id_field' | 'probe_failed') {
+    super(`Hospital sync aborted — authenticity status=${status}`);
+    this.name = 'HospitalDataUnauthenticError';
+    this.status = status;
+  }
+}
+
+async function fingerprintFirstRow(
+  client: BmsSessionClient,
+  bmsUrl: string,
+  jwt: string,
+  marketplaceToken: string | null | undefined,
+  firstRow: Record<string, unknown>,
+): Promise<
+  | { ok: true; idField: 'cid' | 'hn'; idValue: string }
+  | { ok: false; status: 'cid_unstable' | 'hn_unstable' | 'no_id_field' | 'probe_failed'; detail: string }
+> {
+  const queryOptions = {
+    appIdentifier: APP_IDENTIFIER,
+    marketplaceToken: marketplaceToken ?? null,
+  };
+  const rawCid = typeof firstRow.cid === 'string' ? firstRow.cid.trim() : '';
+  const rawHn = typeof firstRow.hn === 'string' ? firstRow.hn.trim() : '';
+
+  if (rawCid && SAFE_ID_RE.test(rawCid)) {
+    try {
+      const r = await client.executeQuery(
+        `SELECT 1 AS one FROM patient WHERE cid = '${rawCid}' LIMIT 1`,
+        bmsUrl,
+        jwt,
+        undefined,
+        queryOptions,
+      );
+      if (r.data.length === 0) {
+        return { ok: false, status: 'cid_unstable', detail: `cid=${rawCid} did not round-trip` };
+      }
+      return { ok: true, idField: 'cid', idValue: rawCid };
+    } catch (error) {
+      return { ok: false, status: 'probe_failed', detail: errorMessage(error) };
+    }
+  }
+
+  if (rawHn && SAFE_ID_RE.test(rawHn)) {
+    try {
+      const r = await client.executeQuery(
+        `SELECT 1 AS one FROM patient WHERE hn = '${rawHn}' LIMIT 1`,
+        bmsUrl,
+        jwt,
+        undefined,
+        queryOptions,
+      );
+      if (r.data.length === 0) {
+        return { ok: false, status: 'hn_unstable', detail: `hn=${rawHn} did not round-trip` };
+      }
+      return { ok: true, idField: 'hn', idValue: rawHn };
+    } catch (error) {
+      return { ok: false, status: 'probe_failed', detail: errorMessage(error) };
+    }
+  }
+
+  return {
+    ok: false,
+    status: 'no_id_field',
+    detail: `first row had no usable cid/hn (cid=${JSON.stringify(rawCid)}, hn=${JSON.stringify(rawHn)})`,
+  };
 }
 
 export interface ImmediateSyncResult {
@@ -501,8 +633,13 @@ export async function requestImmediateSync(
     session_jwt: string | null;
     session_expires_at: string | null;
     database_type: string | null;
+    marketplace_token: string | null;
+    last_authenticity_status: string | null;
+    last_authenticity_check_at: string | null;
   }>(
-    'SELECT tunnel_url, session_jwt, session_expires_at, database_type FROM hospital_bms_config WHERE hospital_id = ?',
+    `SELECT tunnel_url, session_jwt, session_expires_at, database_type,
+            marketplace_token, last_authenticity_status, last_authenticity_check_at
+     FROM hospital_bms_config WHERE hospital_id = ?`,
     [hospitalId],
   );
 
@@ -511,6 +648,24 @@ export async function requestImmediateSync(
   }
 
   const config = configs[0];
+
+  // Suppress polling for hospitals that recently failed the authenticity probe
+  // — we'd just re-fetch corrupt data otherwise. Re-onboarding clears this by
+  // updating last_authenticity_check_at via a fresh probe.
+  if (
+    isAuthenticityFailureStatus(config.last_authenticity_status) &&
+    isWithinAuthenticityCooldown(
+      config.last_authenticity_check_at,
+      config.last_authenticity_status,
+    )
+  ) {
+    logger.info('immediate_sync_skipped_authenticity_cooldown', {
+      hospitalId,
+      status: config.last_authenticity_status,
+      checkedAt: config.last_authenticity_check_at,
+    });
+    return { synced: false, reason: 'no_config', lastSyncAt: null };
+  }
 
   state.inProgress = true;
   state.syncStartedAt = Date.now();
@@ -548,7 +703,21 @@ export async function requestImmediateSync(
       }
     }
 
-    await pollHospital(db, hospitalId, config.tunnel_url, bmsUrl, jwt, dbType, encryptionKey, sseManager);
+    const marketplaceToken = config.marketplace_token
+      ? decryptSafe(config.marketplace_token)
+      : '';
+
+    await pollHospital(
+      db,
+      hospitalId,
+      config.tunnel_url,
+      bmsUrl,
+      jwt,
+      dbType,
+      encryptionKey,
+      sseManager,
+      { marketplaceToken: marketplaceToken || null },
+    );
 
     state.lastSyncAt = Date.now();
 
@@ -603,6 +772,26 @@ export async function pollHospital(
       message: 'BMS tunnel SQL client is ready.',
     });
 
+    // Fail fast when the marketplace token is absent — HOSxP would silently
+    // randomize CID/HN columns, and the fingerprint probe below would catch
+    // it anyway, but the explicit gate spares a wasted round-trip and makes
+    // the admin UI message more actionable.
+    if (!options.marketplaceToken) {
+      await recordAuthenticityVerdict(
+        db,
+        hospitalId,
+        'missing_marketplace_token',
+        'hospital_bms_config has no marketplace_token; re-onboard from a real HOSxP launch to capture one',
+      );
+      logger.warn('sync_skipped_missing_marketplace_token', { hospitalId });
+      emitStep(options, {
+        name: 'authenticity_check',
+        status: 'error',
+        message: 'ไม่มี marketplace_token สำหรับโรงพยาบาลนี้ — กรุณา onboard ใหม่จาก HOSxP จริง',
+      });
+      return stats;
+    }
+
     const sql = getQuery(ACTIVE_LABOR_PATIENTS, databaseType);
     emitStep(options, {
       name: 'query_active_ipt',
@@ -620,6 +809,56 @@ export async function pollHospital(
       message: `HOSxP returned ${result.data.length} active IPD rows.`,
       counts: { rows: result.data.length },
     });
+
+    // Authenticity probe — re-look-up the first row's CID/HN. A randomized
+    // (per-request) encryption from HOSxP makes this round-trip return zero
+    // rows; a real plaintext value returns at least one. We bail with NO
+    // writes so corrupt data never reaches cached_patients / cached_referrals.
+    if (result.data.length > 0) {
+      emitStep(options, {
+        name: 'authenticity_check',
+        status: 'running',
+        message: 'Verifying upstream returned real CID/HN values (round-trip lookup).',
+      });
+      const firstRow = result.data[0] as Record<string, unknown>;
+      const fp = await fingerprintFirstRow(
+        client,
+        bmsUrl,
+        jwt,
+        options.marketplaceToken,
+        firstRow,
+      );
+      if (!fp.ok) {
+        await recordAuthenticityVerdict(db, hospitalId, fp.status, fp.detail);
+        logger.warn('sync_aborted_data_unauthentic', {
+          hospitalId,
+          status: fp.status,
+          detail: fp.detail,
+        });
+        emitStep(options, {
+          name: 'authenticity_check',
+          status: 'error',
+          message: `ข้อมูลที่ได้จาก HOSxP ไม่ผ่านการตรวจสอบ (${fp.status}) — ระงับการ sync จนกว่าจะ onboard ใหม่`,
+          detail: fp.detail,
+        });
+        throw new HospitalDataUnauthenticError(fp.status);
+      }
+      await recordAuthenticityVerdict(db, hospitalId, 'authentic', null);
+      emitStep(options, {
+        name: 'authenticity_check',
+        status: 'success',
+        message: `Authenticity OK (round-trip on ${fp.idField}).`,
+      });
+    } else {
+      // No active patients to fingerprint — neither prove nor disprove. Don't
+      // mark unauthentic; just skip recording a positive verdict so the
+      // status reflects the last real probe result.
+      emitStep(options, {
+        name: 'authenticity_check',
+        status: 'info',
+        message: 'No active labor rows to fingerprint — authenticity unchanged.',
+      });
+    }
 
     emitStep(options, {
       name: 'read_local_active_patients',
@@ -1091,6 +1330,13 @@ export async function pollHospital(
     });
     return stats;
   } catch (error) {
+    // Authenticity-probe failure means the tunnel is up but returning junk —
+    // don't flip connection_status to OFFLINE (that would mislead the dashboard
+    // into showing a tunnel/network issue). The verdict was already persisted
+    // on hospital_bms_config; the admin banner reads it from there.
+    if (error instanceof HospitalDataUnauthenticError) {
+      return stats;
+    }
     emitStep(options, {
       name: 'poll_failed',
       status: 'error',
@@ -1127,7 +1373,8 @@ export async function startPolling(db: DatabaseAdapter, sseManager: SseManager):
     session_jwt: string | null;
     database_type: string | null;
   }>(
-    'SELECT hbc.hospital_id, hbc.tunnel_url, hbc.session_jwt, hbc.database_type FROM hospital_bms_config hbc',
+    `SELECT hbc.hospital_id, hbc.tunnel_url, hbc.session_jwt, hbc.database_type
+     FROM hospital_bms_config hbc`,
   );
 
   const numHospitals = configs.length;
@@ -1160,11 +1407,33 @@ export async function startPolling(db: DatabaseAdapter, sseManager: SseManager):
             session_jwt: string | null;
             session_expires_at: string | null;
             database_type: string | null;
+            marketplace_token: string | null;
+            last_authenticity_status: string | null;
+            last_authenticity_check_at: string | null;
           }>(
-            'SELECT session_jwt, session_expires_at, database_type FROM hospital_bms_config WHERE hospital_id = ?',
+            `SELECT session_jwt, session_expires_at, database_type, marketplace_token,
+                    last_authenticity_status, last_authenticity_check_at
+             FROM hospital_bms_config WHERE hospital_id = ?`,
             [config.hospital_id],
           );
           if (freshConfig.length > 0) {
+            // Authenticity cooldown: skip the cycle entirely if a recent probe
+            // failed. The hospital has to be re-onboarded to refresh the
+            // marketplace_token before polling will resume.
+            if (
+              isAuthenticityFailureStatus(freshConfig[0].last_authenticity_status) &&
+              isWithinAuthenticityCooldown(
+                freshConfig[0].last_authenticity_check_at,
+                freshConfig[0].last_authenticity_status,
+              )
+            ) {
+              logger.info('poll_cycle_skipped_authenticity_cooldown', {
+                hospitalId: config.hospital_id,
+                status: freshConfig[0].last_authenticity_status,
+                checkedAt: freshConfig[0].last_authenticity_check_at,
+              });
+              return;
+            }
             jwt = freshConfig[0].session_jwt;
             dbType = (freshConfig[0].database_type ?? 'postgresql') as DatabaseDialect;
 
@@ -1187,7 +1456,22 @@ export async function startPolling(db: DatabaseAdapter, sseManager: SseManager):
             }
           }
 
-          await pollHospital(db, config.hospital_id, config.tunnel_url, bmsUrl, jwt!, dbType, encryptionKey, sseManager);
+          const marketplaceToken =
+            freshConfig[0]?.marketplace_token
+              ? decryptSafe(freshConfig[0].marketplace_token)
+              : '';
+
+          await pollHospital(
+            db,
+            config.hospital_id,
+            config.tunnel_url,
+            bmsUrl,
+            jwt!,
+            dbType,
+            encryptionKey,
+            sseManager,
+            { marketplaceToken: marketplaceToken || null },
+          );
           state.lastSyncAt = Date.now();
         } catch (error) {
           logger.error('poll_cycle_failed', { hospitalId: config.hospital_id, error });

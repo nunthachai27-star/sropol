@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { Plus, Pencil, Trash2, Building2, Database } from 'lucide-react';
+import { Plus, Pencil, Trash2, Building2, Database, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -17,7 +17,12 @@ import {
 } from '@/components/ui/dialog';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { HospitalLevel, HospitalServiceType } from '@/types/domain';
-import { HospitalEditDialog, type AdminHospital } from './HospitalEditDialog';
+import {
+  HospitalEditDialog,
+  type AdminHospital,
+  isHospitalAuthenticityFailure,
+  describeAuthenticityFailure,
+} from './HospitalEditDialog';
 
 // Short Thai abbreviations for the compact list row — the full label lives
 // in the edit dialog's radio-card tiles.
@@ -250,7 +255,21 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
               <span className="font-mono text-[12px] text-[var(--ink-navy-dim)]">{h.hcode}</span>
               <span className="flex items-center gap-2">
                 <Building2 className="h-3.5 w-3.5 text-[var(--ink-navy-muted)]" />
-                {h.name}
+                <span className="truncate">{h.name}</span>
+                {isHospitalAuthenticityFailure(h) && (
+                  <span
+                    title={describeAuthenticityFailure(h)}
+                    className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                    style={{
+                      borderColor: '#fecaca',
+                      background: '#fef2f2',
+                      color: '#b91c1c',
+                    }}
+                  >
+                    <AlertTriangle className="h-3 w-3" />
+                    ข้อมูลไม่ผ่านตรวจสอบ
+                  </span>
+                )}
               </span>
               <span className="font-mono text-[11px]">{h.level}</span>
               <span className="font-mono text-[10px] text-[var(--ink-navy-dim)]">

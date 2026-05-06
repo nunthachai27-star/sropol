@@ -36,6 +36,10 @@ export async function GET() {
       session_jwt: string | null;
       session_expires_at: string | null;
       database_type: string | null;
+      marketplace_token: string | null;
+      last_authenticity_status: string | null;
+      last_authenticity_check_at: string | null;
+      last_authenticity_reason: string | null;
     }>(
       // Filter out soft-deleted (is_active=false) hospitals — DELETE handler
       // flips is_active rather than dropping the row (FK constraints from 6
@@ -43,7 +47,9 @@ export async function GET() {
       // would otherwise keep showing deactivated rows after a trash click.
       `SELECT h.hcode, h.name, h.level, h.service_type, h.province_code, h.district_code,
               h.lat, h.lon, h.is_active, h.connection_status, h.last_sync_at,
-              hbc.tunnel_url, hbc.session_jwt, hbc.session_expires_at, hbc.database_type
+              hbc.tunnel_url, hbc.session_jwt, hbc.session_expires_at, hbc.database_type,
+              hbc.marketplace_token, hbc.last_authenticity_status,
+              hbc.last_authenticity_check_at, hbc.last_authenticity_reason
        FROM hospitals h
        LEFT JOIN hospital_bms_config hbc ON hbc.hospital_id = h.id
        WHERE h.is_active = true
@@ -74,6 +80,15 @@ export async function GET() {
                 hasSession: hasActiveBmsSession(h.session_jwt, h.session_expires_at),
                 sessionExpiresAt: h.session_expires_at,
                 databaseType: h.database_type,
+                hasMarketplaceToken: Boolean(h.marketplace_token),
+                authenticity: {
+                  // 'authentic' | 'cid_unstable' | 'hn_unstable' |
+                  // 'no_id_field' | 'probe_failed' |
+                  // 'missing_marketplace_token' | 'no_data' | null
+                  status: h.last_authenticity_status,
+                  checkedAt: h.last_authenticity_check_at,
+                  reason: h.last_authenticity_reason,
+                },
               }
             : null,
         };

@@ -5,6 +5,8 @@ import { ensureInit } from '@/lib/ensure-init';
 import {
   validateApiKey,
   validatePayload,
+  validateAncPayload,
+  validateReferralCid,
   validatePartographPayload,
   processWebhookPayload,
   processAncWebhook,
@@ -13,7 +15,6 @@ import {
   processPartographWebhook,
 } from '@/services/webhook';
 import type {
-  WebhookAncPayload,
   WebhookReferralCreatePayload,
   WebhookReferralUpdatePayload,
 } from '@/services/webhook';
@@ -66,11 +67,19 @@ export async function POST(request: NextRequest) {
 
     // Route to the appropriate handler based on payload type
     if (payloadType === 'anc_data') {
-      const ancPayload = body as WebhookAncPayload;
-      if (!Array.isArray(ancPayload.patients) || ancPayload.patients.length === 0) {
-        return NextResponse.json(apiError('PATIENTS_REQUIRED'), { status: 400 });
+      const ancValidation = validateAncPayload(body);
+      if (!ancValidation.valid || !ancValidation.payload) {
+        return NextResponse.json(
+          apiError('VALIDATION_FAILED', ancValidation.error ?? 'unknown validation error'),
+          { status: 400 },
+        );
       }
-      const result = await processAncWebhook(db, keyInfo.hospitalId, ancPayload, sseManager);
+      const result = await processAncWebhook(
+        db,
+        keyInfo.hospitalId,
+        ancValidation.payload,
+        sseManager,
+      );
       return NextResponse.json({
         success: true,
         ...result,
@@ -90,6 +99,16 @@ export async function POST(request: NextRequest) {
       if (referralPayload.action !== 'delete' && (!referralPayload.reason || typeof referralPayload.reason !== 'string')) missing.push('reason');
       if (missing.length > 0) {
         return NextResponse.json(apiError('REFERRAL_FIELD_REQUIRED', { missing }), { status: 400 });
+      }
+      // Format check is separate from missing-check so an old client gets a
+      // precise "wrong_length" / "non_digits" hint rather than a generic
+      // "missing field" error.
+      const cidCheck = validateReferralCid(referralPayload.cid);
+      if (!cidCheck.ok) {
+        return NextResponse.json(
+          apiError('VALIDATION_FAILED', cidCheck.message),
+          { status: 400 },
+        );
       }
       const result = await processReferralCreate(db, keyInfo.hospitalId, referralPayload, sseManager);
       return NextResponse.json({

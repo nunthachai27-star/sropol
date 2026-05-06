@@ -36,6 +36,11 @@ export interface StartOnboardingHosxpSyncInput {
   databaseType: DatabaseDialect;
   marketplaceToken?: string | null;
   sseManager?: SseManager;
+  /** When true, the call is treated as an explicit admin re-onboard: any
+   *  prior `data_purged_at` flag on hospital_bms_config is cleared before
+   *  the sync starts. Default false so a stray heartbeat from a stale
+   *  browser tab can't undo a purge. */
+  confirmReonboard?: boolean;
 }
 
 export interface StartOnboardingHosxpSyncResult {
@@ -43,6 +48,12 @@ export interface StartOnboardingHosxpSyncResult {
   alreadyRunning: boolean;
   intervalMs: number;
   ttlMs: number;
+  /** Set when the hospital was purged via /api/admin/hospitals/[hcode]/data
+   *  and the caller didn't pass confirmReonboard=true. The sync stays
+   *  suspended; the UI should show "ข้อมูลถูกลบ — กรุณายืนยันเชื่อมต่อใหม่"
+   *  with a button that POSTs again with confirmReonboard=true. */
+  purgedPendingReonboard?: boolean;
+  purgedAt?: string | null;
 }
 
 export interface OnboardingHosxpSyncRuntimeStatus {
@@ -163,6 +174,48 @@ export async function startOnboardingHosxpSync(
 ): Promise<StartOnboardingHosxpSyncResult> {
   const intervalMs = getIntervalMs();
   const ttlMs = getTtlMs();
+
+  // Purge guard. /api/admin/hospitals/[hcode]/data sets data_purged_at when
+  // the admin wipes a hospital's cached data; until an admin re-onboards
+  // explicitly (confirmReonboard=true), every heartbeat from a still-open
+  // admin tab must NOT restart the sync — otherwise the data we just
+  // deleted reappears within seconds.
+  const purgeRows = await input.db.query<{ data_purged_at: string | null }>(
+    'SELECT data_purged_at FROM hospital_bms_config WHERE hospital_id = ?',
+    [input.hospitalId],
+  );
+  const purgedAt = purgeRows[0]?.data_purged_at ?? null;
+  if (purgedAt && !input.confirmReonboard) {
+    logger.info('onboarding_hosxp_sync_blocked_purged_pending_reonboard', {
+      hcode: input.hcode,
+      hospitalId: input.hospitalId,
+      purgedAt,
+    });
+    return {
+      started: false,
+      alreadyRunning: false,
+      intervalMs,
+      ttlMs,
+      purgedPendingReonboard: true,
+      purgedAt,
+    };
+  }
+  if (purgedAt && input.confirmReonboard) {
+    await input.db.execute(
+      `UPDATE hospital_bms_config
+          SET data_purged_at = NULL,
+              last_authenticity_status = NULL,
+              last_authenticity_reason = NULL,
+              updated_at = ?
+        WHERE hospital_id = ?`,
+      [new Date().toISOString(), input.hospitalId],
+    );
+    logger.info('onboarding_hosxp_sync_purge_flag_cleared', {
+      hcode: input.hcode,
+      hospitalId: input.hospitalId,
+    });
+  }
+
   const nextFingerprint = fingerprint(input);
   const existing = jobs.get(input.hospitalId);
 

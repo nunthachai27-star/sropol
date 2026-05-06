@@ -14,12 +14,17 @@ import {
 import { logger } from '@/lib/logger';
 import { EXEMPT_HCODES } from '@/lib/hospital-access-guard';
 import { HospitalLevel, HospitalServiceType } from '@/types/domain';
+import { encrypt, getEncryptionKey } from '@/lib/encryption';
 
 interface Body {
   apiUrl?: unknown;
   bearerToken?: unknown;
   marketplaceToken?: unknown;
   databaseType?: unknown;
+  /** Set to true by the admin's "ยืนยันเชื่อมต่อใหม่" UI action after a
+   *  data purge — clears the data_purged_at flag and lets the sync run. A
+   *  passive useOnboardHosxpSync heartbeat MUST NOT set this. */
+  confirmReonboard?: unknown;
 }
 
 const EXEMPT_HOSPITAL_DEFAULTS: Record<string, { name: string }> = {
@@ -107,6 +112,12 @@ async function resolveOrCreateExemptHospital(
     return { hospitalId, createdOrReactivated: true };
   }
 
+  // Hospital exists. Respect the admin's is_active toggle — even for exempt
+  // codes, a deactivated row stays deactivated on re-onboarding. The auto-
+  // activate path only fires on the FIRST onboard (the INSERT branch above);
+  // subsequent onboardings refresh the BMS config without flipping the
+  // visibility flag, so an admin who explicitly turned a hospital off doesn't
+  // see it silently come back the next time someone opens HOSxP.
   if (!hospitals[0].is_active) {
     if (!EXEMPT_HCODES.has(hcode)) {
       return NextResponse.json(
@@ -120,16 +131,11 @@ async function resolveOrCreateExemptHospital(
         { status: 403 },
       );
     }
-
-    await db.execute(
-      'UPDATE hospitals SET is_active = ?, updated_at = ? WHERE id = ?',
-      [true, now, hospitals[0].id],
-    );
-    logger.warn('onboarding_hosxp_sync_exempt_hospital_reactivated', {
+    logger.info('onboarding_hosxp_sync_exempt_hospital_inactive_preserved', {
       hcode,
       hospitalId: hospitals[0].id,
     });
-    return { hospitalId: hospitals[0].id, createdOrReactivated: true };
+    return { hospitalId: hospitals[0].id, createdOrReactivated: false };
   }
 
   return { hospitalId: hospitals[0].id, createdOrReactivated: false };
@@ -211,20 +217,36 @@ export async function POST(request: NextRequest) {
       [hospitalId],
     );
 
+    // Encrypt the marketplace_token at rest. Without this token replayed on
+    // every /api/sql call, HOSxP returns randomized CID/HN values — the
+    // polling worker reads it back, decrypts, and replays per cycle.
+    const encryptedMarketplaceToken = marketplaceToken
+      ? encrypt(marketplaceToken, getEncryptionKey())
+      : null;
+
     if (existingConfig.length > 0) {
       await db.execute(
         `UPDATE hospital_bms_config
             SET tunnel_url = ?, session_jwt = ?, session_expires_at = ?,
-                database_type = ?, updated_at = ?
+                database_type = ?, marketplace_token = COALESCE(?, marketplace_token),
+                updated_at = ?
           WHERE hospital_id = ?`,
-        [apiUrl, bearerToken, sessionExpiresAt, databaseType, now, hospitalId],
+        [
+          apiUrl,
+          bearerToken,
+          sessionExpiresAt,
+          databaseType,
+          encryptedMarketplaceToken,
+          now,
+          hospitalId,
+        ],
       );
     } else {
       await db.execute(
         `INSERT INTO hospital_bms_config
            (id, hospital_id, tunnel_url, session_jwt, session_expires_at,
-            database_type, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            database_type, marketplace_token, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           uuidv4(),
           hospitalId,
@@ -232,6 +254,7 @@ export async function POST(request: NextRequest) {
           bearerToken,
           sessionExpiresAt,
           databaseType,
+          encryptedMarketplaceToken,
           now,
           now,
         ],
@@ -246,6 +269,7 @@ export async function POST(request: NextRequest) {
       bearerToken,
       databaseType,
       marketplaceToken,
+      confirmReonboard: body.confirmReonboard === true,
       sseManager: SseManager.getInstance(),
     });
 

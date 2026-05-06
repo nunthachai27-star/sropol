@@ -96,7 +96,51 @@ export interface AdminHospital {
     hasSession: boolean;
     sessionExpiresAt: string | null;
     databaseType: string | null;
+    hasMarketplaceToken?: boolean;
+    authenticity?: {
+      // null = never probed; 'authentic' = OK;
+      // anything else = sync is suppressed for this hospital until re-onboard
+      status:
+        | 'authentic'
+        | 'cid_unstable'
+        | 'hn_unstable'
+        | 'no_id_field'
+        | 'probe_failed'
+        | 'missing_marketplace_token'
+        | 'no_data'
+        | null;
+      checkedAt: string | null;
+      reason: string | null;
+    };
   } | null;
+}
+
+export function isHospitalAuthenticityFailure(
+  hospital: AdminHospital,
+): boolean {
+  const status = hospital.bmsConfig?.authenticity?.status;
+  if (!status) return false;
+  return status !== 'authentic' && status !== 'no_data';
+}
+
+export function describeAuthenticityFailure(
+  hospital: AdminHospital,
+): string {
+  const a = hospital.bmsConfig?.authenticity;
+  if (!a?.status) return '';
+  switch (a.status) {
+    case 'missing_marketplace_token':
+      return 'ไม่มี marketplace_token — กรุณา onboard ใหม่จากหน้า HOSxP จริงเพื่อบันทึก token ที่ถูกต้อง';
+    case 'cid_unstable':
+    case 'hn_unstable':
+      return 'ข้อมูลที่ได้จาก HOSxP ไม่ผ่านการตรวจสอบ (CID/HN ไม่ตรงกับฐานข้อมูล) — กรุณา onboard ใหม่ผ่าน HOSxP จริงเพื่อขอ marketplace_token ใหม่';
+    case 'no_id_field':
+      return 'ข้อมูลที่ได้จาก HOSxP ไม่มี CID/HN ที่อ่านได้ — กรุณาตรวจสอบ HOSxP API';
+    case 'probe_failed':
+      return 'ตรวจสอบความถูกต้องของข้อมูลไม่สำเร็จ — กรุณาตรวจสอบสถานะ BMS Tunnel';
+    default:
+      return '';
+  }
 }
 
 interface ProvincesResponse {

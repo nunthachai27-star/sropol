@@ -10,6 +10,7 @@ import { SseManager } from '@/lib/sse';
 import { getActiveJourneyByCid, getJourneyByHn, createJourney } from '@/services/journey';
 import { AncRiskLevel } from '@/types/domain';
 import { logger } from '@/lib/logger';
+import { diagnoseCid, describeCidFailure } from '@/lib/cid';
 
 // ─── Webhook payload types ───
 
@@ -436,12 +437,9 @@ export function validatePayload(body: unknown): {
     if (!p.hn || typeof p.hn !== 'string') errors.push(`patients[${i}].hn is required (string)`);
     if (!p.an || typeof p.an !== 'string') errors.push(`patients[${i}].an is required (string)`);
     if (!p.name || typeof p.name !== 'string') errors.push(`patients[${i}].name is required (string)`);
-    if (!p.cid || typeof p.cid !== 'string') {
-      errors.push(`patients[${i}].cid is required (string) — เลขบัตรประชาชน 13 หลัก`);
-    } else if (!/^\d{13}$/.test(p.cid)) {
-      // Strict 13-digit check — required for cross-hospital cidHash matching.
-      // A 12- or 14-char CID silently breaks transfer detection in production.
-      errors.push(`patients[${i}].cid must be exactly 13 digits (got "${p.cid}")`);
+    const cidCheck = diagnoseCid(p.cid);
+    if (!cidCheck.ok) {
+      errors.push(`patients[${i}].cid ${describeCidFailure(cidCheck.failure)}`);
     }
     if (p.age == null || typeof p.age !== 'number') errors.push(`patients[${i}].age is required (number)`);
     if (!p.admit_date || typeof p.admit_date !== 'string') {
@@ -462,6 +460,63 @@ export function validatePayload(body: unknown): {
   }
 
   return { valid: true, payload: obj as unknown as WebhookPayload };
+}
+
+// Per-patient CID checks for ANC. A bad CID here corrupts cross-hospital
+// matching just like the labor path — a phantom maternal_journey gets created
+// because cidHash never collides with the real one. Old hospital-side clients
+// occasionally send the encrypted blob from HOSxP (when marketplace_token
+// was missing), or a 12-digit truncation, so reject both cleanly.
+export function validateAncPayload(body: unknown): {
+  valid: boolean;
+  error?: string;
+  payload?: WebhookAncPayload;
+} {
+  if (!body || typeof body !== 'object') {
+    return { valid: false, error: 'Request body must be a JSON object' };
+  }
+  const obj = body as Record<string, unknown>;
+  if (!Array.isArray(obj.patients)) {
+    return { valid: false, error: '"patients" must be an array' };
+  }
+  if (obj.patients.length === 0) {
+    return { valid: false, error: '"patients" array must not be empty' };
+  }
+  if (obj.patients.length > 500) {
+    return { valid: false, error: '"patients" array must not exceed 500 items per request' };
+  }
+
+  const errors: string[] = [];
+  for (let i = 0; i < obj.patients.length; i++) {
+    const p = obj.patients[i] as Record<string, unknown>;
+    if (!p.name || typeof p.name !== 'string') errors.push(`patients[${i}].name is required (string)`);
+    const cidCheck = diagnoseCid(p.cid);
+    if (!cidCheck.ok) {
+      errors.push(`patients[${i}].cid ${describeCidFailure(cidCheck.failure)}`);
+    }
+    // hn is nullable for community ANC patients (see WebhookAncPatient.hn doc)
+    if (p.hn !== null && p.hn !== undefined && typeof p.hn !== 'string') {
+      errors.push(`patients[${i}].hn must be string or null`);
+    }
+    if (p.pregNo == null || typeof p.pregNo !== 'number') {
+      errors.push(`patients[${i}].pregNo is required (number)`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { valid: false, error: `Validation errors: ${errors.join('; ')}` };
+  }
+  return { valid: true, payload: obj as unknown as WebhookAncPayload };
+}
+
+// CID guard for the referral CREATE webhook. The route handler already
+// checks that `cid` is a non-empty string; this elevates it to the same
+// 13-digit standard the labor + ANC paths enforce, so an old client can't
+// poison the cross-hospital cidHash by posting a malformed referral.
+export function validateReferralCid(value: unknown): { ok: true; cid: string } | { ok: false; message: string } {
+  const result = diagnoseCid(value);
+  if (result.ok) return { ok: true, cid: result.cid };
+  return { ok: false, message: `cid ${describeCidFailure(result.failure)}` };
 }
 
 // ─── Main webhook processing ───

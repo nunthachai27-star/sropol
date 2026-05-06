@@ -216,13 +216,32 @@ export async function DELETE(
 
     // Reset header so the dashboard shows "not yet synced" instead of stale
     // last-sync timestamps that no longer correspond to any cached rows.
+    const purgedAt = new Date().toISOString();
     await db.execute(
       `UPDATE hospitals
           SET connection_status = 'UNKNOWN',
               last_sync_at = NULL,
               updated_at = ?
         WHERE id = ?`,
-      [new Date().toISOString(), hospitalId],
+      [purgedAt, hospitalId],
+    );
+
+    // Block every sync path from re-ingesting until an admin explicitly
+    // re-onboards the hospital. Without this, the user's open admin tab
+    // (running useOnboardHosxpSync) reposts to /api/onboarding/hosxp-sync
+    // every 30s and the data we just deleted reappears within seconds.
+    // Also blank session_jwt so any cached server session is forced to
+    // re-validate via a fresh onboarding flow, not a heartbeat tick.
+    await db.execute(
+      `UPDATE hospital_bms_config
+          SET data_purged_at = ?, session_jwt = NULL,
+              session_expires_at = NULL,
+              last_authenticity_status = 'purged_pending_reonboard',
+              last_authenticity_reason = 'admin purged hospital data — sync suspended until re-onboarding',
+              last_authenticity_check_at = ?,
+              updated_at = ?
+        WHERE hospital_id = ?`,
+      [purgedAt, purgedAt, purgedAt, hospitalId],
     );
 
     const totalRowsDeleted = Object.values(counts).reduce((a, b) => a + b, 0);
