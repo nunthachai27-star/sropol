@@ -11,6 +11,7 @@
 import { use, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import useSWR from 'swr';
+import { maskName } from '@/lib/pii-mask';
 import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { ConnectionStatus } from '@/components/shared/ConnectionStatus';
@@ -304,7 +305,7 @@ function LaborRow({ p, isSelected, onSelect, onOpen }: LaborRowProps) {
       <div style={{ height: '100%', alignSelf: 'stretch', background: tierColor(tier) }} />
       <div>
         <div className="text-[13px] font-medium text-[var(--ink-navy)] leading-tight">
-          {p.name}
+          {maskName(p.name)}
           {concerns.slice(0, 2).map((c) => (
             <ConcernChip key={c.label} label={c.label} warn={c.warn} />
           ))}
@@ -493,7 +494,7 @@ function LaborPreview({ patient, hcode }: { patient: LaborPatient; hcode: string
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[18px] font-bold leading-tight text-[var(--ink-navy)]">
-              {patient.name}
+              {maskName(patient.name)}
             </div>
             <div className="mt-1 font-mono text-[12px] text-[var(--ink-navy-muted)]">
               {patient.age}y · G{patient.gravida ?? '-'} · HN {patient.hn} · AN {patient.an}

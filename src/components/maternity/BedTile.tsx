@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { Lock, Clock, Stethoscope, Activity } from 'lucide-react';
 import { cn, calculateAge, formatRelativeTime } from '@/lib/utils';
+import { maskName } from '@/lib/pii-mask';
 import type { BedOccupancy } from '@/types/maternity-ward';
 
 export interface BedTileProps {
@@ -46,7 +47,9 @@ function safeAge(birthday: string | null): number | null {
 }
 
 function fullName(o: BedOccupancy): string {
-  return [o.pname, o.fname, o.lname].filter(Boolean).join(' ').trim() || 'ไม่ระบุชื่อ';
+  const raw = [o.pname, o.fname, o.lname].filter(Boolean).join(' ').trim();
+  if (!raw) return 'ไม่ระบุชื่อ';
+  return maskName(raw);
 }
 
 // Parse HOSxP's separate regdate (YYYY-MM-DD) + regtime (HH:mm:ss) into an ISO

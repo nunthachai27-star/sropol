@@ -18,6 +18,7 @@ import { ContractionTable } from '@/components/patient/ContractionTable';
 import { PrintForm } from '@/components/patient/PrintForm';
 import { HighRiskAlert } from '@/components/shared/HighRiskAlert';
 import { LoadingState } from '@/components/shared/LoadingState';
+import { maskName } from '@/lib/pii-mask';
 import { VitalTrendCharts } from '@/components/charts/VitalTrendCharts';
 import { PartographForm } from '@/components/maternity/partograph/PartographForm';
 import { AlertSummaryPanel } from '@/components/patient/AlertSummaryPanel';
@@ -401,7 +402,7 @@ export default function PatientDetailPage({
               const header = {
                 an: patient.an,
                 hn: patient.hn,
-                patientName: patient.name,
+                patientName: maskName(patient.name),
                 gpal: gpalParts.length > 0 ? gpalParts.join(' ') : undefined,
                 age: patient.age != null ? String(patient.age) : undefined,
                 admitAt: patient.admitDate,

@@ -19,6 +19,7 @@
 'use client';
 
 import type { BedOccupancyFull } from '@/types/maternity-ward';
+import { maskName } from '@/lib/pii-mask';
 
 export interface BedTileFullProps {
   bedno: string;
@@ -134,7 +135,9 @@ function classify(o: BedOccupancyFull, now: number): Stage {
 }
 
 function thaiName(o: BedOccupancyFull): string {
-  return [o.pname, o.fname, o.lname].filter(Boolean).join(' ').trim() || 'ไม่ระบุชื่อ';
+  const raw = [o.pname, o.fname, o.lname].filter(Boolean).join(' ').trim();
+  if (!raw) return 'ไม่ระบุชื่อ';
+  return maskName(raw);
 }
 
 function calcAge(birthday: string | null, now: number): number | null {

@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { cn, calculateAge } from '@/lib/utils';
+import { maskName } from '@/lib/pii-mask';
 import type { BedOccupancy } from '@/types/maternity-ward';
 import { PartographTab } from '@/components/maternity/tabs/PartographTab';
 import { VitalsTab } from '@/components/maternity/tabs/VitalsTab';
@@ -58,7 +59,9 @@ function safeAge(birthday: string | null): number | null {
 }
 
 function fullName(o: BedOccupancy): string {
-  return [o.pname, o.fname, o.lname].filter(Boolean).join(' ').trim() || 'ไม่ระบุชื่อ';
+  const raw = [o.pname, o.fname, o.lname].filter(Boolean).join(' ').trim();
+  if (!raw) return 'ไม่ระบุชื่อ';
+  return maskName(raw);
 }
 
 function hasValue<T>(value: T | null | undefined): value is T {

@@ -12,6 +12,7 @@ import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { SectionLabel } from '@/components/dashboard/shared';
 import { cn, formatRelativeTime } from '@/lib/utils';
+import { maskName } from '@/lib/pii-mask';
 import {
   ArrowLeft,
   Baby,
@@ -1258,7 +1259,7 @@ export default function JourneyDetailPage({
             className="text-[26px] font-bold leading-tight"
             style={{ color: 'var(--ink-navy)', letterSpacing: '-0.01em' }}
           >
-            {journey.name}
+            {maskName(journey.name)}
           </h1>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[12px] text-[var(--ink-navy-dim)]">
             <span className="inline-flex items-center gap-1">

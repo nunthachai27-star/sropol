@@ -6,6 +6,7 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn, formatRelativeTime, buildPatientId } from '@/lib/utils';
+import { maskName } from '@/lib/pii-mask';
 import { RiskLevel } from '@/types/domain';
 import type { CdssSeverity } from '@/types/api';
 import { PartographCell, SectionLabel } from './shared';
@@ -292,7 +293,7 @@ export function HighRiskPatientList({
                 {!isKiosk && (
                   <div style={{ color: ink, fontSize: 13 }}>
                     <div className="truncate">
-                      {p.name || <span style={{ color: inkMuted }}>ไม่ระบุ</span>}
+                      {p.name ? maskName(p.name) : <span style={{ color: inkMuted }}>ไม่ระบุ</span>}
                     </div>
                     <div
                       className="font-mono"

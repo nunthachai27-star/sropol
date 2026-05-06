@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Building2 } from 'lucide-react';
+import { maskName } from '@/lib/pii-mask';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -202,7 +203,7 @@ export default function HospitalPregnanciesPage({
                       href={`/pregnancies/${j.id}`}
                       className="hover:text-teal-600"
                     >
-                      {j.name}
+                      {maskName(j.name)}
                     </Link>
                   </TableCell>
                   <TableCell>{j.age} ปี</TableCell>

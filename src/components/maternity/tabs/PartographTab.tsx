@@ -19,6 +19,7 @@ import {
 import type { BedOccupancy, PartographRow } from '@/types/maternity-ward';
 import type { PartographObservationDto } from '@/types/api';
 import { calculateAge } from '@/lib/utils';
+import { maskName } from '@/lib/pii-mask';
 import { analyzePartograph, countBySeverity } from '@/services/partogram';
 import { PartographEntryDialog } from '@/components/maternity/PartographEntryDialog';
 import { PartographForm } from '@/components/maternity/partograph/PartographForm';
@@ -90,7 +91,7 @@ function buildFormHeader(an: string, occupant: BedOccupancy | null | undefined) 
   return {
     an,
     hn: occupant.hn,
-    patientName: patientName || undefined,
+    patientName: patientName ? maskName(patientName) : undefined,
     gpal: gpalParts.length > 0 ? gpalParts.join(' ') : undefined,
     age,
     admitAt,

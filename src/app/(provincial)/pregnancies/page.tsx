@@ -11,6 +11,7 @@ import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { SectionLabel, RiskBar } from '@/components/dashboard/shared';
 import { cn, formatThaiDate, formatRelativeTime } from '@/lib/utils';
+import { maskName } from '@/lib/pii-mask';
 import { Baby, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { JourneyListResponse } from '@/types/api';
 
@@ -327,7 +328,7 @@ export default function PregnanciesPage() {
                   {j.hn}
                 </div>
                 <div className="min-w-0">
-                  <div className="truncate text-[13px] text-[var(--ink-navy)]">{j.name}</div>
+                  <div className="truncate text-[13px] text-[var(--ink-navy)]">{maskName(j.name)}</div>
                 </div>
                 <div className="font-mono text-[12px] tabular-nums text-[var(--ink-navy-dim)]">
                   {j.age}

@@ -6,6 +6,7 @@
 
 import { ConnectionStatus } from '@/components/shared/ConnectionStatus';
 import { formatThaiDate } from '@/lib/utils';
+import { maskName } from '@/lib/pii-mask';
 import { RiskLevel } from '@/types/domain';
 import type { ConnectionStatus as ConnectionStatusEnum } from '@/types/domain';
 import {
@@ -176,7 +177,7 @@ export function PatientHeader({
               className="truncate text-[24px] font-bold leading-tight"
               style={{ letterSpacing: '-0.015em', textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
             >
-              {name || 'ไม่ทราบชื่อ'}
+              {name ? maskName(name) : 'ไม่ทราบชื่อ'}
             </h1>
             <span
               className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2 py-0.5 font-mono text-[10px] font-semibold tracking-[0.08em]"
