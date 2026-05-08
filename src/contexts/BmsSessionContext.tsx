@@ -12,6 +12,7 @@ import {
 import {
   extractConnectionConfig,
   extractUserInfo,
+  probeLocalApi,
   retrieveBmsSession,
   setActiveMarketplaceToken,
 } from '@/lib/bms-browser-client';
@@ -75,6 +76,20 @@ export function BmsSessionProvider({ children }: { children: ReactNode }) {
       setConfig(cfg);
       setUserInfo(ui);
       lastSessionRef.current = sessionId;
+
+      // Background local-API probe. The user's session is "ready" the
+      // moment we set cfg above; the probe runs after and swaps the
+      // apiUrl to http://127.0.0.1:45011 if the local HOSxP gateway is
+      // reachable. Saves the Cloudflare-tunnel hop on every browser-side
+      // call (live ward view, partograph save, vital-sign save).
+      // Guarded against stale promises: only apply the swap if the
+      // session that started this probe is still the active one.
+      void (async () => {
+        const { config: localCfg, isLocal } = await probeLocalApi(cfg);
+        if (isLocal && lastSessionRef.current === sessionId) {
+          setConfig(localCfg);
+        }
+      })();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);

@@ -114,8 +114,17 @@ export async function cacheKeys(pattern: string): Promise<string[]> {
   const redis = await getRedisClient();
   if (redis) {
     const keys: string[] = [];
-    for await (const key of redis.scanIterator({ MATCH: fullPattern, COUNT: 100 })) {
-      keys.push(String(key).slice(prefix.length));
+    // redis v5+ scanIterator yields ARRAYS of keys (one batch per iteration),
+    // not individual keys like v4 did. Without this flatten, the loop wraps
+    // a whole batch in String(...) → CSV blob → slice → garbage → every
+    // downstream cacheGetJson lookup misses. That's why /admin "Online
+    // Users" was empty despite Redis having live presence rows, and why
+    // the Sync Log tab couldn't list its own runs.
+    for await (const batch of redis.scanIterator({ MATCH: fullPattern, COUNT: 100 })) {
+      const items = Array.isArray(batch) ? batch : [batch];
+      for (const key of items) {
+        keys.push(String(key).slice(prefix.length));
+      }
     }
     return keys;
   }

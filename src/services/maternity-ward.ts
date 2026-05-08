@@ -267,6 +267,12 @@ interface AuditPayload {
  * Never throws — the audit sink is best-effort by design (see route handler).
  * Intentionally NOT exported: every CRUD service call site must funnel through
  * upsert/delete so the audit trail stays uniform.
+ *
+ * Server-side polling is disabled (browser-only mode), so we no longer
+ * trigger an immediate server pull after each edit. The browser's own
+ * useBrowserPoll hook fires every 30 s and re-reads the just-written row
+ * from HOSxP via the local 127.0.0.1 gateway, then POSTs to
+ * /api/sync/browser-push. Acceptable lag for the central cache.
  */
 function fireAudit(payload: AuditPayload): void {
   void fetch('/api/hospital/audit-log', {

@@ -9,9 +9,9 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useHighRiskPatients } from '@/hooks/useHighRiskPatients';
 import { useSSE } from '@/hooks/useSSE';
 import { useKioskMode } from '@/hooks/useKioskMode';
-import { useSyncTrigger } from '@/hooks/useSyncTrigger';
 import { useOnboardHosxpWebhook } from '@/hooks/useOnboardHosxpWebhook';
 import { useOnboardHosxpSync, type OnboardHosxpSyncState } from '@/hooks/useOnboardHosxpSync';
+import { useBrowserPoll } from '@/hooks/useBrowserPoll';
 import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
 import { AlertBar } from '@/components/dashboard/AlertBar';
 import { ProvinceVitalsStrip } from '@/components/dashboard/ProvinceVitalsStrip';
@@ -22,6 +22,7 @@ import { StageKPICards } from '@/components/dashboard/StageKPICards';
 import { ShiftSummary } from '@/components/dashboard/ShiftSummary';
 import { SectionLabel } from '@/components/dashboard/shared';
 import { KioskHeader } from '@/components/dashboard/KioskHeader';
+import { OnlineUsersBadge } from '@/components/dashboard/OnlineUsersBadge';
 // SimulationControl was moved to /admin (Simulation tab) on 2026-04-22 so
 // the dashboard header stays compact for clinical users. Still dev/admin-
 // gated by the server-side simulationGuard.
@@ -128,6 +129,13 @@ export default function DashboardPage() {
   // exists or when the BMS session / marketplace_token isn't present.
   const { state: onboardingState } = useOnboardHosxpWebhook();
   const { state: hosxpSyncState } = useOnboardHosxpSync();
+  // Drives the browser-side HOSxP poll. Server-side scheduled polling is
+  // disabled, so this hook is the only thing keeping cached_patients fresh
+  // for this user's hospital. UI updates flow through the SSE broadcast
+  // emitted by /api/sync/browser-push → processWebhookPayload (already
+  // subscribed via useSSE). `runNow` lets the manual "ดึงข้อมูล" button kick
+  // off a cycle on demand instead of waiting for the 60s timer.
+  const { state: browserPollState, runNow: runBrowserPollNow } = useBrowserPoll();
   const [onboardingErrorDismissed, setOnboardingErrorDismissed] = useState(false);
   const [hosxpSyncDialogOpen, setHosxpSyncDialogOpen] = useState(false);
   const [hosxpReportCopied, setHosxpReportCopied] = useState(false);
@@ -149,7 +157,16 @@ export default function DashboardPage() {
     mutate();
     hrMutate();
   };
-  const { syncing, triggerSync } = useSyncTrigger(refreshAll);
+  // Manual refresh fires a browser-poll cycle then revalidates SWR. The
+  // SSE fan-out from /api/sync/browser-push will also trigger refreshAll
+  // (via useSSE.onPatientUpdate / onSyncComplete below); calling refreshAll
+  // again here is a fallback for the no-rows-changed case where SSE stays
+  // silent but the user still expects "ดึงข้อมูล" to feel responsive.
+  const triggerSync = async () => {
+    await runBrowserPollNow();
+    refreshAll();
+  };
+  const syncing = browserPollState.isRunning;
 
   useSSE({
     onPatientUpdate: refreshAll,
@@ -414,6 +431,7 @@ export default function DashboardPage() {
               <span className="font-semibold text-[var(--ink-navy)]">{onlineCount}</span>
               <span className="text-[var(--ink-navy-muted)]">/{hospitals.length}</span> ONLINE
             </span>
+            <OnlineUsersBadge />
             {updatedAt && (
               <span className="tabular-nums">
                 UPDATED{' '}
@@ -681,6 +699,7 @@ export default function DashboardPage() {
           <span>
             {onlineCount}/{hospitals.length} NODES LIVE
           </span>
+          <OnlineUsersBadge />
           <button
             onClick={toggleKiosk}
             className="hidden items-center gap-1 rounded-sm border border-[var(--rule-strong)] bg-white px-2 py-0.5 text-[var(--ink-navy-dim)] hover:bg-[var(--accent-navy-soft)] hover:text-[var(--accent-navy)] md:inline-flex"

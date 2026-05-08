@@ -87,7 +87,7 @@ export function AlertBar({ alerts }: AlertBarProps) {
         label="OVERDUE ANC"
         value={alerts.overdueAnc}
         zeroLabel="ANC ครบทุกราย"
-        detail="เข้าห้องคลอดโดยไม่มี ANC ครบ"
+        detail="ขาดนัด ANC เกิน 28 วัน"
       />
       <AlertTile
         label="IN-TRANSIT REFERRAL"

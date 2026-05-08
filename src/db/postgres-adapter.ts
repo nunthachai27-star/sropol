@@ -10,6 +10,17 @@ import { DatabaseAdapter, type ColumnInfo } from './adapter';
 // caused dashboard aggregations to string-concat ("0" + "0" + ... → "000...").
 pgTypes.setTypeParser(20, (val: string) => parseInt(val, 10));
 
+// Same treatment for numeric/decimal (OID 1700). `pg` returns these as
+// strings to preserve arbitrary precision, but every decimal column in
+// kk-lrms is a clinical measurement with ≤2 decimal places (temperature,
+// hematocrit, cervical dilation, weight, partograph BP/temp, etc.) — all
+// safely within Number precision. The string default broke patient detail
+// views with "ex.toFixed is not a function" the moment any of those fields
+// landed populated. Type definitions across the codebase already declare
+// these columns as `number | null`, so coercing here aligns runtime with
+// the static contract.
+pgTypes.setTypeParser(1700, (val: string) => parseFloat(val));
+
 // The codebase writes SQL with `?` placeholders (SQLite dialect). `pg` only
 // understands `$1, $2, …` so every query arriving at this adapter must be
 // rewritten. We walk the string instead of a global replace so `?` inside a

@@ -115,6 +115,14 @@ export function useOnboardHosxpSync(): {
             apiUrl: config.apiUrl,
             bearerToken: config.bearerToken,
             marketplaceToken,
+            // A user opening / or /hospital-maternity-ward with a valid
+            // BMS+marketplace session is an explicit re-onboard signal —
+            // the hook is ref-guarded (fires at most once per tab) and is
+            // NOT mounted on /admin, so this can't accidentally undo an
+            // admin's mid-purge action from their own tab. If a permanent
+            // block is needed, admins should also flip the hospital to
+            // is_active=false rather than relying on the purge flag.
+            confirmReonboard: true,
           }),
           keepalive: true,
         });

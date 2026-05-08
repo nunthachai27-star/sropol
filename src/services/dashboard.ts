@@ -25,6 +25,7 @@ import type {
 } from '@/types/api';
 import type { ConnectionStatus, HospitalLevel } from '@/types/domain';
 import { decryptSafe } from '@/lib/encryption';
+import { SYNC_FAILURE_STATUSES } from '@/config/sync-status';
 
 // Reusable subquery — every cached_*/maternal_journeys aggregate joins this
 // against the relevant hospital_id column to honor the operational
@@ -49,15 +50,10 @@ interface DashboardRow {
   data_purged_at: string | null;
 }
 
-const SYNC_FAILURE_STATUSES = new Set([
-  'cid_unstable',
-  'hn_unstable',
-  'cid_invalid_checksum',
-  'no_id_field',
-  'probe_failed',
-  'missing_marketplace_token',
-  'purged_pending_reonboard',
-]);
+// SYNC_FAILURE_STATUSES is now defined in src/config/sync-status.ts so the
+// admin map (`/admin`) and the dashboard map (`/`) share the same BLOCKED
+// rule set — preventing the "same hospital shows two different dot colors
+// on the two pages" inconsistency.
 
 interface PatientCountRow {
   hospital_id: string;
@@ -144,9 +140,33 @@ export async function getProvinceDashboard(db: DatabaseAdapter): Promise<Dashboa
       lat: lat !== null && Number.isFinite(lat) ? lat : null,
       lon: lon !== null && Number.isFinite(lon) ? lon : null,
       counts: { low: 0, medium: 0, high: 0, total: 0 },
+      ancCounts: { total: 0, hr3: 0 },
       syncStatus,
       syncBlockedReason,
     });
+  }
+
+  // ANC registry counts — pregnancy-stage journeys per current hospital, with
+  // HR3 broken out. Honors is_active via the JOIN on hospitals.
+  const ancRows = await db.query<{
+    hcode: string;
+    total: number;
+    hr3: number;
+  }>(`
+    SELECT h.hcode,
+           COUNT(*) AS total,
+           SUM(CASE WHEN mj.anc_risk_level = 'HR3' THEN 1 ELSE 0 END) AS hr3
+    FROM maternal_journeys mj
+    JOIN hospitals h ON h.id = mj.current_hospital_id
+    WHERE h.is_active = true
+      AND mj.care_stage = 'PREGNANCY'
+    GROUP BY h.hcode
+  `);
+  for (const r of ancRows) {
+    const hospital = hospitalMap.get(r.hcode);
+    if (!hospital) continue;
+    hospital.ancCounts.total = Number(r.total) || 0;
+    hospital.ancCounts.hr3 = Number(r.hr3) || 0;
   }
 
   for (const row of counts) {

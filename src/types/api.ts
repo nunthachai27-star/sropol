@@ -29,6 +29,13 @@ export interface DashboardHospital {
     high: number;
     total: number;
   };
+  /** Pregnancy-stage registry size + high-risk subset, per current hospital.
+   *  Surfaces upstream demand alongside labor floor numbers so coordinators
+   *  can see who is *coming* without leaving the dashboard. */
+  ancCounts: {
+    total: number;
+    hr3: number;
+  };
   syncStatus: DashboardSyncStatus;
   /** When syncStatus is BLOCKED, this carries the underlying reason
    *  (e.g. 'purged_pending_reonboard', 'missing_marketplace_token') so

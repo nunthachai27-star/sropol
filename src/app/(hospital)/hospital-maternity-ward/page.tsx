@@ -19,6 +19,8 @@ import { useEffect, useState } from 'react';
 import { useBmsSession } from '@/hooks/useBmsSession';
 import { useMaternityWardStateFull } from '@/hooks/useMaternityWardStateFull';
 import { useOnboardHosxpWebhook } from '@/hooks/useOnboardHosxpWebhook';
+import { useOnboardHosxpSync } from '@/hooks/useOnboardHosxpSync';
+import { useBrowserPoll } from '@/hooks/useBrowserPoll';
 import {
   WardLayoutViewFull,
   type BedMovePayload,
@@ -49,6 +51,18 @@ function Skeleton({ className = '' }: { className?: string }) {
 export default function HospitalMaternityWardPage() {
   const { isReady, error: sessionError, config, userInfo } = useBmsSession();
   const { state: onboardingState } = useOnboardHosxpWebhook();
+  // Provision the polling pipeline alongside the webhook. Without this,
+  // a nurse who only ever lands on /hospital-maternity-ward never gets
+  // their hospital onto the 30s server-side poll rotation, so the
+  // provincial dashboard, cached_patients, and the new "Sync Log" tab
+  // stay empty for that hospital. Same gate as the provincial dashboard
+  // (`/`) — runs at most once per tab and only with a marketplace_token.
+  useOnboardHosxpSync();
+  // Browser-side HOSxP poll — same skip-conditions and 60s cadence as the
+  // provincial dashboard. Without this, the nurse's tab would never push
+  // ipt_labour / partograph updates to the central cache after server-side
+  // polling was disabled.
+  useBrowserPoll();
   const [onboardingErrorDismissed, setOnboardingErrorDismissed] = useState(false);
   const showOnboardingError =
     !!onboardingState?.error && !onboardingErrorDismissed;

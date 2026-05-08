@@ -75,3 +75,5 @@ present/
 # Misc
 *.tmp
 *.bak
+# Added by code-review-graph
+.code-review-graph/

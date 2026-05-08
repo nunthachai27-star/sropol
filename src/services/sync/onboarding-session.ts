@@ -206,10 +206,20 @@ export async function startOnboardingHosxpSync(
   }
 
   // Purge guard. /api/admin/hospitals/[hcode]/data sets data_purged_at when
-  // the admin wipes a hospital's cached data; until an admin re-onboards
-  // explicitly (confirmReonboard=true), every heartbeat from a still-open
-  // admin tab must NOT restart the sync — otherwise the data we just
-  // deleted reappears within seconds.
+  // the admin wipes a hospital's cached data; the request must arrive with
+  // confirmReonboard=true to clear it.
+  //
+  // Callers that explicitly intend to re-onboard:
+  //   - Admin click "เปิดใช้งาน Sync อีกครั้ง" → POST /api/admin/.../clear-purge
+  //     (server-only flag clear; sync resumes on next user open of /).
+  //   - User opens / or /hospital-maternity-ward → useOnboardHosxpSync hook
+  //     posts here with confirmReonboard=true (the hook is ref-guarded so
+  //     it fires at most once per tab, and is NOT mounted on /admin, so an
+  //     admin mid-purge can't accidentally undo via their own tab).
+  //
+  // For permanent blocks, admins should also set is_active=false on the
+  // hospital — the purge flag alone is "clean and let next user re-sync",
+  // not "stay off forever".
   const purgeRows = await input.db.query<{ data_purged_at: string | null }>(
     'SELECT data_purged_at FROM hospital_bms_config WHERE hospital_id = ?',
     [input.hospitalId],
@@ -315,6 +325,7 @@ export async function startOnboardingHosxpSync(
         {
           marketplaceToken: input.marketplaceToken,
           onStep: appendStep,
+          trigger: 'onboarding',
         },
       );
       logger.info('onboarding_hosxp_sync_cycle_complete', {
@@ -368,8 +379,17 @@ export async function startOnboardingHosxpSync(
     }
   };
 
+  // Server-side periodic pollHospital is DISABLED — the browser hook
+  // useBrowserPoll handles all ongoing HOSxP pulls via the local
+  // 127.0.0.1:45011 gateway. The onboarding endpoint still establishes
+  // the BMS session config / marketplace_token / purge-clear above; we
+  // just don't run the interval here. We also skip the initial runOnce()
+  // because the browser will fire its first poll within 30 s anyway.
+  // `runOnce` is preserved (referenced via no-op timer) so the existing
+  // status-reporting machinery keeps compiling without change.
+  void runOnce; // explicit no-op reference — silences unused-var lint
   const interval = setInterval(() => {
-    void runOnce();
+    /* polling disabled — browser-only mode */
   }, intervalMs);
   jobs.set(input.hospitalId, {
     interval,
@@ -388,11 +408,9 @@ export async function startOnboardingHosxpSync(
     lastSteps: [],
   });
 
-  void runOnce();
-  logger.info('onboarding_hosxp_sync_started', {
+  logger.info('onboarding_hosxp_sync_started_browser_only', {
     hcode: input.hcode,
     hospitalId: input.hospitalId,
-    intervalMs,
     ttlMs,
     databaseType: input.databaseType,
   });

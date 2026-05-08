@@ -18,6 +18,7 @@ import {
   getActiveJourneyByCid,
   getJourneyByHn,
   transitionToLabor,
+  transitionToDelivered,
 } from '@/services/journey';
 import { evaluateAncRisk } from '@/services/anc-risk';
 import type { AncRiskInput } from '@/config/anc-risk-rules';
@@ -110,6 +111,16 @@ export async function syncAncData(
     const shouldCreateNew = !journey || isNewPregnancy;
 
     if (shouldCreateNew) {
+      // If the old journey is still in PREGNANCY/LABOR for this hospital,
+      // transition it to DELIVERED first. A new preg_no on the same HN
+      // means the previous pregnancy has ended in HOSxP — without this
+      // step the unique partial index uq_mj_hospital_hn_active rejects
+      // the INSERT below and the whole ANC sync cycle fails for the
+      // hospital. Skip when there's no existing journey or it's already
+      // past DELIVERED.
+      if (isNewPregnancy && existingIsActive && journey) {
+        await transitionToDelivered(db, journey.id);
+      }
       journey = await createJourney(db, {
         hospitalId,
         hn: anc.hn,

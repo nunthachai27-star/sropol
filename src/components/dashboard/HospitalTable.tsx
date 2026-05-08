@@ -9,6 +9,7 @@ import type { DashboardHospital } from '@/types/api';
 import { ConnectionStatus as ConnectionStatusEnum } from '@/types/domain';
 import { RiskBar } from './shared';
 import { cn } from '@/lib/utils';
+import { formatRelativeAge } from '@/lib/relative-time';
 
 interface HospitalTableProps {
   hospitals: DashboardHospital[];
@@ -104,6 +105,15 @@ export function HospitalTable({ hospitals, selected, onSelect, variant = 'light'
   const accent = isKiosk ? 'var(--kiosk-accent)' : 'var(--accent-navy)';
   const accentSoft = isKiosk ? 'rgba(107,167,229,0.08)' : 'var(--accent-navy-soft)';
 
+  // Two-line row layout — Thai hospital names like
+  // "โรงพยาบาลสมเด็จพระยุพราชกระนวน" are too long to share a single row
+  // with the level pill and status badge without truncation, so the row
+  // is now stacked: line 1 = identity (full name + level + status),
+  // line 2 = metrics (LABOR / ANC / SYNC). The metrics row uses an
+  // indented grid so operators still get a stable left-aligned numeric
+  // column without a separate header strip.
+  const metricsGrid = '18px 1fr 110px 44px 78px 50px';
+
   return (
     <div className="border" style={{ borderColor: ruleStrong }}>
       {/* Sort chips */}
@@ -196,38 +206,44 @@ export function HospitalTable({ hospitals, selected, onSelect, variant = 'light'
               aria-label={`${h.name} — ${h.counts.total} ราย${
                 h.counts.high > 0 ? ` เสี่ยงสูง ${h.counts.high}` : ''
               }`}
-              className="grid cursor-pointer items-center gap-2.5 border-b px-3 py-1.5 transition-colors hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-navy)]"
+              className="cursor-pointer border-b px-3 py-2 transition-colors hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-navy)]"
               style={{
-                gridTemplateColumns: '10px 1fr 120px 56px',
                 borderColor: ruleHair,
                 background: isSel ? accentSoft : 'transparent',
               }}
               data-testid="hospital-row"
             >
-              <div
-                style={{
-                  width: 8,
-                  height: 8,
-                  background: sev,
-                  borderRadius: isOffline ? '50%' : 0,
-                }}
-                aria-hidden="true"
-              />
-              <div className="flex min-w-0 items-baseline gap-2">
+              {/* Line 1 — identity: severity dot, full hospital name (no
+                  truncate), level pill, sync/connection status badge. */}
+              <div className="flex min-w-0 items-center gap-2">
+                <div
+                  style={{
+                    width: 8,
+                    height: 8,
+                    background: sev,
+                    borderRadius: isOffline ? '50%' : 0,
+                    flexShrink: 0,
+                  }}
+                  aria-hidden="true"
+                />
                 <span
-                  className="truncate"
-                  style={{ color: ink, fontSize: isKiosk ? 14 : 13 }}
+                  className="min-w-0 flex-1 break-words"
+                  style={{
+                    color: ink,
+                    fontSize: isKiosk ? 14 : 13,
+                    lineHeight: 1.25,
+                  }}
                 >
                   {h.name}
                 </span>
                 <span
-                  className="border px-1 font-mono text-[9px]"
+                  className="shrink-0 border px-1 font-mono text-[9px]"
                   style={{ color: inkMuted, borderColor: ruleHair }}
                 >
                   {h.level}
                 </span>
                 <span
-                  className="inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-wide"
+                  className="inline-flex shrink-0 items-center gap-1 font-mono text-[9px] uppercase tracking-wide"
                   style={{ color: statusColor }}
                   aria-label={`สถานะ: ${statusLabel}`}
                   title={statusTitle || undefined}
@@ -239,9 +255,6 @@ export function HospitalTable({ hospitals, selected, onSelect, variant = 'light'
                       height: 6,
                       borderRadius: '50%',
                       background: statusColor,
-                      // Hollow ring for OFFLINE, solid dot for ONLINE/UNKNOWN
-                      // — matches the existing risk-dot conventions on this
-                      // table (offline rows already use a circular shape).
                       boxShadow: isOffline ? `inset 0 0 0 1px ${statusColor}` : undefined,
                       opacity: isOffline ? 0.85 : 1,
                     }}
@@ -249,21 +262,82 @@ export function HospitalTable({ hospitals, selected, onSelect, variant = 'light'
                   {statusLabel}
                 </span>
               </div>
-              <div>
-                <RiskBar
-                  low={h.counts.low}
-                  medium={h.counts.medium}
-                  high={h.counts.high}
-                  height={6}
-                  variant={variant}
-                />
-              </div>
+
+              {/* Line 2 — metrics: LABOR risk-mix bar + active count, ANC
+                  registry + HR3 chip, sync freshness. Indented past the
+                  severity-dot column so it visually nests under the name. */}
               <div
-                className="text-right font-mono tabular-nums"
-                style={{ color: ink, fontSize: isKiosk ? 14 : 12 }}
+                className="mt-1.5 grid items-center gap-2.5"
+                style={{ gridTemplateColumns: metricsGrid }}
               >
-                {h.counts.total || '-'}{' '}
-                <span style={{ color: inkMuted }}>{h.counts.total ? 'act' : ''}</span>
+                <div /> {/* indent placeholder — aligns with severity dot */}
+                <div className="min-w-0">
+                  <RiskBar
+                    low={h.counts.low}
+                    medium={h.counts.medium}
+                    high={h.counts.high}
+                    height={6}
+                    variant={variant}
+                  />
+                </div>
+                <div
+                  className="text-left font-mono tabular-nums"
+                  style={{ color: ink, fontSize: isKiosk ? 13 : 11 }}
+                  title={`Active labor: ${h.counts.total} ราย`}
+                >
+                  <span
+                    className="font-mono text-[9px] uppercase tracking-[0.08em]"
+                    style={{ color: inkMuted }}
+                  >
+                    LB
+                  </span>{' '}
+                  {h.counts.total || '–'}
+                </div>
+                <div
+                  className="flex items-baseline gap-1 font-mono tabular-nums"
+                  style={{ color: ink, fontSize: isKiosk ? 13 : 11 }}
+                  title={`ANC registry: ${h.ancCounts.total} · HR3: ${h.ancCounts.hr3}`}
+                >
+                  <span
+                    className="font-mono text-[9px] uppercase tracking-[0.08em]"
+                    style={{ color: inkMuted }}
+                  >
+                    ANC
+                  </span>
+                  <span>{h.ancCounts.total || '–'}</span>
+                  {h.ancCounts.hr3 > 0 && (
+                    <span
+                      className="rounded-sm px-1 text-[9px] font-bold"
+                      style={{
+                        background: '#fde2dc',
+                        color: '#9b2c1c',
+                      }}
+                    >
+                      HR3 {h.ancCounts.hr3}
+                    </span>
+                  )}
+                </div>
+                {/* Sync freshness — amber ≥24h, red ≥72h. */}
+                <div
+                  className="text-right font-mono tabular-nums"
+                  style={{
+                    fontSize: isKiosk ? 11 : 10,
+                    color: (() => {
+                      if (!h.lastSyncAt) return inkMuted;
+                      const ageH = (Date.now() - new Date(h.lastSyncAt).getTime()) / 3600000;
+                      if (ageH >= 72) return 'var(--risk-high)';
+                      if (ageH >= 24) return 'var(--risk-medium)';
+                      return inkMuted;
+                    })(),
+                  }}
+                  title={
+                    h.lastSyncAt
+                      ? `Last sync: ${new Date(h.lastSyncAt).toLocaleString('th-TH')}`
+                      : 'ยังไม่เคย sync'
+                  }
+                >
+                  {formatRelativeAge(h.lastSyncAt, 'short')}
+                </div>
               </div>
             </div>
           );

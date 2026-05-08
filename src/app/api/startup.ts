@@ -4,7 +4,7 @@ import { SchemaSync } from '@/db/schema-sync';
 import { ALL_TABLES } from '@/db/tables/index';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import { SseManager } from '@/lib/sse';
-import { startPolling, stopPolling } from '@/services/sync';
+import { stopPolling } from '@/services/sync';
 import { logger } from '@/lib/logger';
 
 // HMR- and bundle-safe init flag (pair with ensure-init.ts singleton).
@@ -59,11 +59,13 @@ export async function initializeApp(): Promise<void> {
       await seedDemoData(db);
     }
 
-    // 5. Start polling (if not in test mode — works with both SQLite and PostgreSQL)
+    // 5. Server-side scheduled polling is DISABLED. Pulls now happen in the
+    //    user's browser via the local 127.0.0.1:45011 HOSxP gateway and are
+    //    POSTed to /api/sync/browser-push. The webhook receiver
+    //    (/api/webhooks/patient-data) still handles HOSxP-pushed data.
+    //    See useBrowserPoll + browser-poll.ts.
     if (process.env.NODE_ENV !== 'test') {
-      const sseManager = SseManager.getInstance();
-      await startPolling(db, sseManager);
-      logger.info('hosxp_polling_started', {});
+      logger.info('hosxp_polling_disabled_browser_only_mode', {});
     }
 
     _flag.done = true;

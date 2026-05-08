@@ -7,7 +7,12 @@ import { upsertCachedPatients, detectChanges, detectTransfers, markPatientsDeliv
 import type { SyncPatientData } from '@/services/sync';
 import { upsertPartographObservations, type PartographRow } from '@/services/sync/partograph';
 import { SseManager } from '@/lib/sse';
-import { getActiveJourneyByCid, getJourneyByHn, createJourney } from '@/services/journey';
+import {
+  getActiveJourneyByCid,
+  getJourneyByHn,
+  createJourney,
+  transitionToDelivered,
+} from '@/services/journey';
 import { AncRiskLevel } from '@/types/domain';
 import { logger } from '@/lib/logger';
 import { diagnoseCid, describeCidFailure } from '@/lib/cid';
@@ -819,6 +824,15 @@ export async function processAncWebhook(
       });
       updated++;
     } else {
+      // If the prior journey is still PREGNANCY/LABOR for this hospital,
+      // close it before inserting the new pregnancy. Same reasoning as in
+      // services/sync/anc.ts: a new preg_no on the same HN means the old
+      // pregnancy ended in HOSxP, and without this transition the unique
+      // partial index uq_mj_hospital_hn_active rejects the INSERT below
+      // and the webhook returns a 500 to HOSxP.
+      if (isNewPregnancy && existingIsActive && existing) {
+        await transitionToDelivered(db, existing.id);
+      }
       // Create new journey (first pregnancy, or new pregnancy after previous)
       const age = patient.birthday ? Math.floor((Date.now() - new Date(patient.birthday).getTime()) / (365.25 * 24 * 60 * 60 * 1000)) : 0;
       const journey = await createJourney(db, {

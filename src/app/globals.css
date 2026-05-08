@@ -316,6 +316,35 @@
       transparent calc(50% + 1.2px)
     );
 }
+/* Province-map hover tooltip — dark navy backdrop matches the air-traffic-
+ * control aesthetic and gives the rich KPI tooltip enough contrast for the
+ * white-on-navy color tokens it uses. Override Leaflet's default white. */
+.kk-map-tooltip,
+.leaflet-tooltip.kk-map-tooltip {
+  background: #0b1b2e;
+  color: #e6ecf5;
+  border: 1px solid rgba(107, 167, 229, 0.3);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  padding: 6px 8px;
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.leaflet-tooltip.kk-map-tooltip::before {
+  border-top-color: #0b1b2e;
+}
+.leaflet-tooltip-top.kk-map-tooltip::before {
+  border-top-color: #0b1b2e;
+}
+.leaflet-tooltip-bottom.kk-map-tooltip::before {
+  border-bottom-color: #0b1b2e;
+}
+.leaflet-tooltip-left.kk-map-tooltip::before {
+  border-left-color: #0b1b2e;
+}
+.leaflet-tooltip-right.kk-map-tooltip::before {
+  border-right-color: #0b1b2e;
+}
+
 /* Connection-status dot anchored to the top-right corner of the pin body.
  * Sized in calc() relative to the pin so it scales with zoom-driven pin
  * size. White ring keeps the dot visible against any body color. */
@@ -343,10 +372,12 @@
   background: #94a3b8;
 }
 /* BLOCKED — sync suspended (authenticity probe failed or admin purged).
- * Orange so it reads as "needs attention" without being mistaken for the
- * red OFFLINE state (tunnel down) or green ONLINE state (sync healthy). */
+ * Amber so it reads as "needs attention" and stays clearly distinct from
+ * the red OFFLINE dot at 6–9 px. Earlier orange (#f97316) was too close
+ * to the red (#ef4444) at small sizes and operators misread BLOCKED as
+ * OFFLINE. */
 .kk-pin__status--blocked {
-  background: #f97316;
+  background: #eab308;
 }
 @keyframes kk-pin-pulse {
   0% {

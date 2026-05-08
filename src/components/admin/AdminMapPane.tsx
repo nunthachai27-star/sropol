@@ -11,11 +11,12 @@ import useSWR from 'swr';
 import { MapPin } from 'lucide-react';
 import { ProvinceMap } from '@/components/dashboard/ProvinceMap';
 import { LoadingState } from '@/components/shared/LoadingState';
-import type { DashboardHospital } from '@/types/api';
+import type { DashboardHospital, DashboardSyncStatus } from '@/types/api';
 import {
   ConnectionStatus as ConnectionStatusEnum,
   HospitalLevel,
 } from '@/types/domain';
+import { isSyncFailureStatus } from '@/config/sync-status';
 
 interface AdminHospital {
   hcode: string;
@@ -28,6 +29,13 @@ interface AdminHospital {
   isActive: boolean;
   connectionStatus: string;
   lastSyncAt: string | null;
+  // Subset of /api/admin/hospitals' bmsConfig — only what the map needs
+  // to derive the BLOCKED corner-dot color in lockstep with the dashboard.
+  bmsConfig?: {
+    authenticity?: {
+      status: string | null;
+    };
+  } | null;
 }
 
 interface ProvinceRow {
@@ -72,27 +80,45 @@ export function AdminMapPane({ onSelectHospital }: AdminMapPaneProps = {}) {
   // The map component expects DashboardHospital objects (with risk counts).
   // Admin context has no live counts — zero them so pins render in the "idle"
   // gray tone and the tooltip shows "ยังไม่มีข้อมูล".
+  //
+  // syncStatus IS derived (not forced to 'OK') so the BLOCKED amber dot is
+  // visible on /admin too — admins manage the very hospitals that get
+  // blocked, so they need the same signal the dashboard shows. Rule mirrors
+  // src/services/dashboard.ts via SYNC_FAILURE_STATUSES.
   const mapHospitals: DashboardHospital[] = useMemo(() => {
     const rows = hospitalsData?.hospitals ?? [];
     return rows
       .filter((h) => h.isActive)
-      .map((h) => ({
-        hcode: h.hcode,
-        name: h.name,
-        level: coerceLevel(h.level),
-        connectionStatus: coerceConn(h.connectionStatus),
-        lastSyncAt: h.lastSyncAt,
-        provinceCode: h.provinceCode,
-        districtCode: h.districtCode,
-        lat: h.lat,
-        lon: h.lon,
-        counts: { low: 0, medium: 0, high: 0, total: 0 },
-        // Admin tab doesn't gate on sync verdict — it just renders pin
-        // positions. Treat every active hospital as OK so the corner dot
-        // reflects connectionStatus alone.
-        syncStatus: 'OK' as const,
-        syncBlockedReason: null,
-      }));
+      .map((h) => {
+        const authStatus = h.bmsConfig?.authenticity?.status ?? null;
+        let syncStatus: DashboardSyncStatus;
+        let syncBlockedReason: string | null = null;
+        if (isSyncFailureStatus(authStatus)) {
+          syncStatus = 'BLOCKED';
+          syncBlockedReason = authStatus;
+        } else if (!h.bmsConfig) {
+          syncStatus = 'NEVER_SYNCED';
+        } else if (!h.lastSyncAt) {
+          syncStatus = 'NEVER_SYNCED';
+        } else {
+          syncStatus = 'OK';
+        }
+        return {
+          hcode: h.hcode,
+          name: h.name,
+          level: coerceLevel(h.level),
+          connectionStatus: coerceConn(h.connectionStatus),
+          lastSyncAt: h.lastSyncAt,
+          provinceCode: h.provinceCode,
+          districtCode: h.districtCode,
+          lat: h.lat,
+          lon: h.lon,
+          counts: { low: 0, medium: 0, high: 0, total: 0 },
+          ancCounts: { total: 0, hr3: 0 },
+          syncStatus,
+          syncBlockedReason,
+        };
+      });
   }, [hospitalsData]);
 
   const pinnedCount = mapHospitals.filter(

@@ -13,6 +13,22 @@ export const APP_IDENTIFIER = 'KK-LRMS.Web';
 export const SESSION_TIMEOUT_MS = 30_000;
 export const QUERY_TIMEOUT_MS = 60_000;
 
+/**
+ * Local HOSxP API gateway URL. The HOSxP marketplace gateway commonly runs
+ * on the same workstation that the user opens KK-LRMS from (the BMS bundle
+ * binds 127.0.0.1:45011 by default). When reachable, we swap the remote
+ * tunnel URL out for the local one to avoid the Cloudflare-tunnel hop —
+ * cuts ~50–300 ms off every browser-initiated SQL/REST call (live ward
+ * view, partograph save, vital-sign save, etc.).
+ *
+ * Ported from bms-session-id-blank-template/src/services/bmsSession.ts.
+ */
+export const LOCAL_API_URL = 'http://127.0.0.1:45011';
+
+/** Fast-fail timeout for the local-API probe so we don't block session
+ *  ready when the gateway isn't running locally. */
+export const LOCAL_PROBE_TIMEOUT_MS = 3_000;
+
 // ---------------------------------------------------------------------------
 // Active marketplace-token singleton
 // ---------------------------------------------------------------------------
@@ -544,4 +560,70 @@ export async function restDelete(
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+/**
+ * Probe the local HOSxP API gateway at {@link LOCAL_API_URL}. When reachable,
+ * returns a new {@link ConnectionConfig} pointing at the local URL so
+ * subsequent SQL/REST calls bypass the remote tunnel.
+ *
+ * The probe POSTs `SELECT 1` with the same auth headers the real
+ * {@link executeSql} uses — same shape, same MessageCode contract — so a
+ * 200 success here proves the local gateway can also serve real queries.
+ *
+ * Timeout is short (3s) and any error path (network, CORS preflight,
+ * abort, body parse) silently falls back to the remote config. Callers
+ * can ignore the `isLocal` boolean if they only care about the URL swap.
+ *
+ * Ported from bms-session-id-blank-template/src/services/bmsSession.ts.
+ */
+export async function probeLocalApi(
+  config: ConnectionConfig,
+  marketplaceToken?: string | null,
+): Promise<{ config: ConnectionConfig; isLocal: boolean }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), LOCAL_PROBE_TIMEOUT_MS);
+  try {
+    const body: {
+      sql: string;
+      app: string;
+      'marketplace-token'?: string;
+    } = {
+      sql: 'SELECT 1 as test',
+      app: config.appIdentifier,
+    };
+    const mkt = resolveMarketplaceToken(marketplaceToken);
+    if (mkt) body['marketplace-token'] = mkt;
+
+    const response = await fetch(`${LOCAL_API_URL}/api/sql`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.bearerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (response.ok) {
+      const data = (await response.json()) as SqlApiResponse;
+      if (data.MessageCode === 200) {
+        // eslint-disable-next-line no-console
+        console.info(
+          `[bms-browser-client] Local API detected at ${LOCAL_API_URL} — swapping apiUrl for browser-side calls`,
+        );
+        return {
+          config: { ...config, apiUrl: LOCAL_API_URL },
+          isLocal: true,
+        };
+      }
+    }
+  } catch {
+    // Local API not available (network error, timeout, CORS preflight
+    // failure, or body parse). Fall through to remote-tunnel fallback.
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  return { config, isLocal: false };
 }

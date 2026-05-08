@@ -28,6 +28,13 @@ import { logger } from '@/lib/logger';
 import { APP_IDENTIFIER } from '@/lib/bms-browser-client';
 import { decryptSafe } from '@/lib/encryption';
 import { isValidThaiCidChecksum } from '@/lib/cid';
+import {
+  startSyncRun,
+  appendSyncStep,
+  finalizeSyncRun,
+  recordSkippedSyncRun,
+  type SyncRunTrigger,
+} from './progress-store';
 import type {
   HosxpAncClassifyingRow,
   HosxpAncRiskRow,
@@ -349,6 +356,10 @@ export function startImmediateSyncJob(
 export interface PollHospitalOptions {
   marketplaceToken?: string | null;
   onStep?: (step: PollHospitalStep) => void;
+  /** What kicked off this poll cycle. Recorded with the progress run so
+   *  admins can tell scheduled background polls from immediate user-clicks
+   *  and onboarding heartbeats. Defaults to 'scheduled'. */
+  trigger?: SyncRunTrigger;
 }
 
 export type PollHospitalStepStatus = 'running' | 'success' | 'warning' | 'error' | 'info';
@@ -659,10 +670,15 @@ export async function requestImmediateSync(
     marketplace_token: string | null;
     last_authenticity_status: string | null;
     last_authenticity_check_at: string | null;
+    hcode: string;
   }>(
-    `SELECT tunnel_url, session_jwt, session_expires_at, database_type,
-            marketplace_token, last_authenticity_status, last_authenticity_check_at
-     FROM hospital_bms_config WHERE hospital_id = ?`,
+    `SELECT hbc.tunnel_url, hbc.session_jwt, hbc.session_expires_at,
+            hbc.database_type, hbc.marketplace_token,
+            hbc.last_authenticity_status, hbc.last_authenticity_check_at,
+            h.hcode
+     FROM hospital_bms_config hbc
+     JOIN hospitals h ON h.id = hbc.hospital_id
+     WHERE hbc.hospital_id = ?`,
     [hospitalId],
   );
 
@@ -687,6 +703,13 @@ export async function requestImmediateSync(
       status: config.last_authenticity_status,
       checkedAt: config.last_authenticity_check_at,
     });
+    void recordSkippedSyncRun(
+      hospitalId,
+      config.hcode,
+      'immediate',
+      config.last_authenticity_status ?? 'authenticity_cooldown',
+      'Sync ถูกระงับ — รอ cooldown หลังตรวจสอบความถูกต้องไม่ผ่าน',
+    );
     return { synced: false, reason: 'no_config', lastSyncAt: null };
   }
 
@@ -739,7 +762,7 @@ export async function requestImmediateSync(
       dbType,
       encryptionKey,
       sseManager,
-      { marketplaceToken: marketplaceToken || null },
+      { marketplaceToken: marketplaceToken || null, trigger: 'immediate' },
     );
 
     state.lastSyncAt = Date.now();
@@ -781,6 +804,34 @@ export async function pollHospital(
     partographRowsUpserted: 0,
     anc: emptyAncSyncStats(),
   };
+
+  // Lifted from later in the function — we need hcode up front so the
+  // progress run can record it (and we save a duplicate query later in the
+  // try block by reusing this lookup).
+  const hospitalRowsForRun = await db.query<{ hcode: string }>(
+    'SELECT hcode FROM hospitals WHERE id = ?',
+    [hospitalId],
+  );
+  const hcode = hospitalRowsForRun[0]?.hcode ?? '';
+
+  // Per-cycle progress run. Steps from emitStep() get appended via the
+  // wrapped onStep below. The run is finalized at every exit point —
+  // success, authenticity-fail, error, or no-marketplace-token short-circuit.
+  const trigger: SyncRunTrigger = options.trigger ?? 'scheduled';
+  const runId = await startSyncRun(hospitalId, hcode, trigger);
+  const callerOnStep = options.onStep;
+  let hadWarningStep = false;
+  options = {
+    ...options,
+    onStep: (step) => {
+      if (step.status === 'warning' || step.status === 'error') {
+        hadWarningStep = true;
+      }
+      callerOnStep?.(step);
+      void appendSyncStep(hospitalId, runId, step);
+    },
+  };
+
   try {
     emitStep(options, {
       name: 'connect_client',
@@ -812,6 +863,13 @@ export async function pollHospital(
         status: 'error',
         message: 'ไม่มี marketplace_token สำหรับโรงพยาบาลนี้ — กรุณา onboard ใหม่จาก HOSxP จริง',
       });
+      void finalizeSyncRun(
+        hospitalId,
+        runId,
+        'failed',
+        'Sync ระงับ — ไม่มี marketplace_token',
+        'missing_marketplace_token',
+      );
       return stats;
     }
 
@@ -975,12 +1033,9 @@ export async function pollHospital(
       counts: { transfers: transfers.length },
     });
 
-    const hospitalRows = await db.query<{ hcode: string }>(
-      'SELECT hcode FROM hospitals WHERE id = ?',
-      [hospitalId],
-    );
-    const hcode = hospitalRows[0]?.hcode ?? '';
-
+    // hcode was looked up at function entry and is reused here — the
+    // earlier duplicate query was removed when progress recording was
+    // added so the value flows through from the run setup.
     for (const transfer of transfers) {
       await db.execute(
         `UPDATE cached_patients SET labor_status = 'TRANSFERRED', updated_at = ?
@@ -1351,6 +1406,19 @@ export async function pollHospital(
       status: 'success',
       message: 'Hospital marked ONLINE and last_sync_at updated.',
     });
+    // Success path: 'partial' if any step warned/errored along the way
+    // (e.g. ANC sub-query failed but main labor sync succeeded), else
+    // 'success'. Operators care about this distinction to triage which
+    // hospitals need attention even if data did flow.
+    void finalizeSyncRun(
+      hospitalId,
+      runId,
+      hadWarningStep ? 'partial' : 'success',
+      hadWarningStep
+        ? 'Sync เสร็จแต่มีบางขั้นตอนเตือน'
+        : 'Sync เสร็จสมบูรณ์',
+      null,
+    );
     return stats;
   } catch (error) {
     // Authenticity-probe failure means the tunnel is up but returning junk —
@@ -1358,6 +1426,13 @@ export async function pollHospital(
     // into showing a tunnel/network issue). The verdict was already persisted
     // on hospital_bms_config; the admin banner reads it from there.
     if (error instanceof HospitalDataUnauthenticError) {
+      void finalizeSyncRun(
+        hospitalId,
+        runId,
+        'failed',
+        'Sync ถูกระงับ — ข้อมูลจาก HOSxP ไม่ผ่านการตรวจสอบความถูกต้อง',
+        `authenticity:${error.status}`,
+      );
       return stats;
     }
     emitStep(options, {
@@ -1372,16 +1447,18 @@ export async function pollHospital(
       [hospitalId],
     );
 
-    const hospitalRows = await db.query<{ hcode: string }>(
-      'SELECT hcode FROM hospitals WHERE id = ?',
-      [hospitalId],
-    );
-    const hcode = hospitalRows[0]?.hcode ?? '';
     sseManager.broadcast('connection-status', {
       hcode,
       status: 'OFFLINE',
       lastSyncAt: new Date().toISOString(),
     });
+    void finalizeSyncRun(
+      hospitalId,
+      runId,
+      'failed',
+      'Sync ล้มเหลว',
+      errorMessage(error),
+    );
     throw error;
   }
 }
@@ -1437,10 +1514,11 @@ export async function startPolling(db: DatabaseAdapter, sseManager: SseManager):
             last_authenticity_status: string | null;
             last_authenticity_check_at: string | null;
             is_active: boolean | number;
+            hcode: string;
           }>(
             `SELECT hbc.session_jwt, hbc.session_expires_at, hbc.database_type,
                     hbc.marketplace_token, hbc.last_authenticity_status,
-                    hbc.last_authenticity_check_at, h.is_active
+                    hbc.last_authenticity_check_at, h.is_active, h.hcode
              FROM hospital_bms_config hbc
              JOIN hospitals h ON h.id = hbc.hospital_id
              WHERE hbc.hospital_id = ?`,
@@ -1472,6 +1550,13 @@ export async function startPolling(db: DatabaseAdapter, sseManager: SseManager):
                 status: freshConfig[0].last_authenticity_status,
                 checkedAt: freshConfig[0].last_authenticity_check_at,
               });
+              void recordSkippedSyncRun(
+                config.hospital_id,
+                freshConfig[0].hcode,
+                'scheduled',
+                freshConfig[0].last_authenticity_status ?? 'authenticity_cooldown',
+                'Sync ถูกระงับ — รอ cooldown หลังตรวจสอบความถูกต้องไม่ผ่าน',
+              );
               return;
             }
             jwt = freshConfig[0].session_jwt;
@@ -1510,7 +1595,7 @@ export async function startPolling(db: DatabaseAdapter, sseManager: SseManager):
             dbType,
             encryptionKey,
             sseManager,
-            { marketplaceToken: marketplaceToken || null },
+            { marketplaceToken: marketplaceToken || null, trigger: 'scheduled' },
           );
           state.lastSyncAt = Date.now();
         } catch (error) {

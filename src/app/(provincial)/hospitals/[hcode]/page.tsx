@@ -12,6 +12,7 @@ import { use, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import { maskName } from '@/lib/pii-mask';
+import { formatRelativeAge } from '@/lib/relative-time';
 import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { ConnectionStatus } from '@/components/shared/ConnectionStatus';
@@ -102,22 +103,6 @@ function hoursSince(iso: string | null): number | null {
 function daysSince(iso: string | null): number | null {
   if (!iso) return null;
   return (Date.now() - new Date(iso).getTime()) / 86400000;
-}
-
-function formatRelativeAge(iso: string | null, lang: 'short' | 'th' = 'th'): string {
-  if (!iso) return '—';
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  const hrs = Math.floor(mins / 60);
-  const days = Math.floor(hrs / 24);
-  if (lang === 'short') {
-    if (mins < 60) return `${Math.max(1, mins)}m`;
-    if (hrs < 24) return `${hrs}h`;
-    return `${days}d`;
-  }
-  if (mins < 60) return `${Math.max(1, mins)} นาที`;
-  if (hrs < 24) return `${hrs} ชม.`;
-  return `${days} วัน`;
 }
 
 function formatEdc(edcIso: string | null, gaWeeks: number | null): { daysToEdc: number | null; edcText: string } {
@@ -374,7 +359,7 @@ function AncRow({ j, isSelected, onSelect, onOpen }: AncRowProps) {
       <div style={{ height: '100%', alignSelf: 'stretch', background: tierColor(tier) }} />
       <div>
         <div className="text-[13px] font-medium text-[var(--ink-navy)] leading-tight">
-          {j.name}
+          {maskName(j.name)}
           {concerns.slice(0, 2).map((c) => (
             <ConcernChip key={c.label} label={c.label} warn={c.warn} />
           ))}
@@ -658,7 +643,7 @@ function AncPreview({ journeyId, hcode }: { journeyId: string; hcode: string }) 
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[18px] font-bold leading-tight text-[var(--ink-navy)]">
-              {journey.name}
+              {maskName(journey.name)}
             </div>
             <div className="mt-1 font-mono text-[12px] text-[var(--ink-navy-muted)]">
               {journey.age}y · G{journey.gravida ?? '-'}P{journey.para ?? 0} · HN {journey.hn}

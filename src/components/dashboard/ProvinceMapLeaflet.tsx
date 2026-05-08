@@ -8,10 +8,18 @@
 // imports this with `ssr: false` to satisfy Next.js SSR boundaries.
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import useSWR from 'swr';
-import { MapContainer, TileLayer, GeoJSON, Marker, Tooltip, ZoomControl } from 'react-leaflet';
+import {
+  MapContainer,
+  TileLayer,
+  GeoJSON,
+  Marker,
+  Tooltip,
+  ZoomControl,
+  useMap,
+} from 'react-leaflet';
 import L, { type LatLngExpression, type LatLngBoundsExpression, type DivIcon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { FeatureCollection } from 'geojson';
@@ -92,10 +100,12 @@ function buildHospitalIcon(params: {
     .filter(Boolean)
     .join(' ');
   // Corner status dot priority:
-  //   BLOCKED  → orange (sync suspended; tunnel may still be ONLINE)
-  //   OFFLINE  → red    (tunnel unreachable)
+  //   BLOCKED  → amber (sync suspended; tunnel may still be ONLINE)
+  //   OFFLINE  → red   (tunnel unreachable)
   //   ONLINE   → green
   //   UNKNOWN / NEVER_SYNCED → gray
+  // Amber (not orange) for BLOCKED so it stays distinguishable from the
+  // red OFFLINE dot at 6–9 px — orange-vs-red at that size was confusing.
   // BLOCKED takes priority over ONLINE so the operator doesn't read a
   // healthy tunnel as a healthy sync. NEVER_SYNCED falls under UNKNOWN
   // visually since it's a similar "no data flowing" message.
@@ -475,34 +485,404 @@ export default function ProvinceMapLeaflet({
         />
 
         {/* Hospital markers — rendered as hospital-sign divIcons (risk-colored
-             square with a medical cross). Pulse halo on HIGH risk via CSS. */}
+             square with a medical cross). Pulse halo on HIGH risk via CSS.
+             Tooltip direction is picked dynamically per pin so the popup
+             never gets clipped by the map div edge — see HospitalMarker. */}
         {hospitalPins.map((pin) => (
-          <Marker
+          <HospitalMarker
             key={pin.hcode}
-            position={[pin.coord.lat, pin.coord.lon]}
-            icon={pin.icon}
-            eventHandlers={{
-              click: () => handleMarkerClick(pin.hcode),
-            }}
-          >
-            <Tooltip direction="top" offset={[0, -pin.sizePx / 2]} sticky>
-              <div className="text-[12px]" style={{ color: palette.tooltipInk }}>
-                <strong>{pin.name}</strong>
-                <div>
-                  {pin.level} ·{' '}
-                  {pin.live ? `รวม ${pin.live.counts.total} ราย` : 'ยังไม่มีข้อมูล'}
-                </div>
-                {pin.live && pin.live.counts.high > 0 && (
-                  <div style={{ color: palette.high }}>เสี่ยงสูง {pin.live.counts.high}</div>
-                )}
-                {!pin.isOnline && <div style={{ color: palette.high }}>OFFLINE</div>}
-              </div>
-            </Tooltip>
-          </Marker>
+            pin={pin}
+            onClick={handleMarkerClick}
+          />
         ))}
 
         <ZoomControl position="bottomright" />
       </MapContainer>
+
+      {/* Status legend — top-left overlay, dense single column. Sits above
+          the Leaflet pane via z-index so it stays interactive even though
+          the map captures pointer events. Theme adapts to light vs kiosk. */}
+      <MapStatusLegend mode={mode} />
+    </div>
+  );
+}
+
+// Wraps Marker + Tooltip with direction-aware placement so the rich
+// HospitalTooltip never gets clipped by the map container edges. The
+// tooltip is ~280 × ~150 px, so we estimate the half-extents below and
+// re-pick a direction whenever the pointer enters the marker. Re-picking
+// on hover (not on every map move) keeps the cost trivial.
+function HospitalMarker({
+  pin,
+  onClick,
+}: {
+  pin: PinEntry;
+  onClick: (hcode: string) => void;
+}) {
+  const map = useMap();
+  const [direction, setDirection] = useState<
+    'top' | 'bottom' | 'left' | 'right'
+  >('top');
+
+  // Approx tooltip extents — keep generous so we err on the side of safety
+  // and pick a different direction even if the pin is moderately close to
+  // the edge. Real tooltip min-width is 220, max-width 280, body height
+  // varies with content (~110 px when no risks, up to ~170 with HR3 chip
+  // + sync footer). Padding + arrow add ~12 px on the anchor side.
+  const TT_HALF_W = 150;
+  const TT_HEIGHT = 180;
+
+  const recompute = () => {
+    if (!map) return;
+    const cp = map.latLngToContainerPoint([pin.coord.lat, pin.coord.lon]);
+    const size = map.getSize();
+    const room = {
+      top: cp.y,
+      bottom: size.y - cp.y,
+      left: cp.x,
+      right: size.x - cp.x,
+    };
+    // Prefer vertical (top/bottom) — feels more natural for map pins.
+    // Switch to a horizontal direction only when neither vertical fits.
+    if (room.top >= TT_HEIGHT) {
+      setDirection('top');
+      return;
+    }
+    if (room.bottom >= TT_HEIGHT) {
+      setDirection('bottom');
+      return;
+    }
+    if (room.right >= TT_HALF_W * 2) {
+      setDirection('right');
+      return;
+    }
+    setDirection('left');
+  };
+
+  // Direction-dependent offset so the tooltip clears the pin body. Leaflet
+  // adds its own ~6 px gap from the arrow; we layer pin radius on top.
+  const offset: [number, number] =
+    direction === 'top'
+      ? [0, -pin.sizePx / 2]
+      : direction === 'bottom'
+        ? [0, pin.sizePx / 2]
+        : direction === 'left'
+          ? [-pin.sizePx / 2, 0]
+          : [pin.sizePx / 2, 0];
+
+  return (
+    <Marker
+      position={[pin.coord.lat, pin.coord.lon]}
+      icon={pin.icon}
+      eventHandlers={{
+        click: () => onClick(pin.hcode),
+        mouseover: recompute,
+      }}
+    >
+      <Tooltip
+        direction={direction}
+        offset={offset}
+        sticky
+        className="kk-map-tooltip"
+      >
+        <HospitalTooltip pin={pin} />
+      </Tooltip>
+    </Marker>
+  );
+}
+
+// Rich hover tooltip — replaces the original two-line summary. Surfaces
+// the operational state operators usually need next: connection + sync
+// verdict, labor floor breakdown, ANC registry, last-sync freshness.
+// Keeps Thai-first copy for the floor staff while leaving structural
+// labels (LABOR / ANC / SYNC) in mono caps for at-a-glance scanning.
+function HospitalTooltip({ pin }: { pin: PinEntry }) {
+  const { live, name, level, hcode } = pin;
+  // Tooltip backdrop is forced dark via .kk-map-tooltip CSS so the same
+  // white-on-navy palette works in both light and kiosk app modes.
+  const ink = '#e6ecf5';
+  const muted = 'rgba(255,255,255,0.65)';
+  const ruleColor = 'rgba(255,255,255,0.18)';
+
+  // Connection + sync state — same precedence as the corner dot so the
+  // tooltip and the dot tell a consistent story.
+  const conn = live?.connectionStatus ?? 'UNKNOWN';
+  const syncStatus = live?.syncStatus ?? 'NEVER_SYNCED';
+  const isBlocked = syncStatus === 'BLOCKED';
+  const isNeverSynced = syncStatus === 'NEVER_SYNCED';
+  const statusLabel = isBlocked
+    ? 'BLOCKED'
+    : conn === 'ONLINE' && !isNeverSynced
+      ? 'ONLINE'
+      : conn === 'OFFLINE'
+        ? 'OFFLINE'
+        : isNeverSynced
+          ? 'NO SYNC'
+          : 'UNKNOWN';
+  const statusColor = isBlocked
+    ? '#eab308'
+    : conn === 'ONLINE' && !isNeverSynced
+      ? '#22c55e'
+      : conn === 'OFFLINE'
+        ? '#ef4444'
+        : muted;
+  const statusDetail = isBlocked
+    ? `Sync ถูกระงับ — ${live?.syncBlockedReason ?? 'unknown'}`
+    : isNeverSynced
+      ? 'ยังไม่เคยเชื่อม sync'
+      : conn === 'OFFLINE'
+        ? 'ติดต่อตู้ BMS ไม่ได้'
+        : conn === 'ONLINE'
+          ? 'sync ปกติ'
+          : 'ยังไม่ทราบสถานะ';
+
+  // Labor + ANC breakdown — fall back to "—" cells when no data so the
+  // grid layout doesn't shift between hospitals with vs without data.
+  const labor = live?.counts ?? { low: 0, medium: 0, high: 0, total: 0 };
+  const anc = live?.ancCounts ?? { total: 0, hr3: 0 };
+  const lastSync = live?.lastSyncAt ?? null;
+  const lastSyncRel = formatRelativeAgeShort(lastSync);
+  const lastSyncAbs = lastSync ? new Date(lastSync).toLocaleString('th-TH') : null;
+
+  return (
+    <div
+      style={{
+        color: ink,
+        fontSize: 12,
+        lineHeight: 1.35,
+        minWidth: 220,
+        maxWidth: 280,
+        fontFamily:
+          'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+      }}
+    >
+      {/* Title block */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <strong style={{ fontSize: 13 }}>{name}</strong>
+      </div>
+      <div style={{ color: muted, fontSize: 10, marginTop: 1 }}>
+        <span
+          style={{
+            border: `1px solid ${ruleColor}`,
+            padding: '0 4px',
+            marginRight: 6,
+            fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+          }}
+        >
+          {level}
+        </span>
+        <span style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>
+          {hcode}
+        </span>
+      </div>
+
+      {/* Status row */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          marginTop: 6,
+          paddingTop: 6,
+          borderTop: `1px solid ${ruleColor}`,
+        }}
+      >
+        <span
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: statusColor,
+            border: '1.5px solid rgba(255,255,255,0.3)',
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ fontWeight: 600, fontSize: 11, letterSpacing: '0.04em' }}>
+          {statusLabel}
+        </span>
+        <span style={{ color: muted, fontSize: 11 }}>· {statusDetail}</span>
+      </div>
+
+      {/* LABOR + ANC two-column grid */}
+      <div
+        style={{
+          marginTop: 6,
+          paddingTop: 6,
+          borderTop: `1px solid ${ruleColor}`,
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: 8,
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontSize: 9,
+              color: muted,
+              letterSpacing: '0.12em',
+              fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+            }}
+          >
+            LABOR FLOOR
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.1 }}>
+            {labor.total}
+            <span style={{ fontSize: 10, color: muted, marginLeft: 3 }}>ราย</span>
+          </div>
+          <div
+            style={{
+              fontSize: 10,
+              fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+              marginTop: 2,
+            }}
+          >
+            <span style={{ color: '#ef4444' }}>H {labor.high}</span>
+            <span style={{ color: muted }}> · </span>
+            <span style={{ color: '#eab308' }}>M {labor.medium}</span>
+            <span style={{ color: muted }}> · </span>
+            <span style={{ color: '#22c55e' }}>L {labor.low}</span>
+          </div>
+        </div>
+        <div>
+          <div
+            style={{
+              fontSize: 9,
+              color: muted,
+              letterSpacing: '0.12em',
+              fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+            }}
+          >
+            ANC REGISTRY
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.1 }}>
+            {anc.total}
+            <span style={{ fontSize: 10, color: muted, marginLeft: 3 }}>ราย</span>
+          </div>
+          {anc.hr3 > 0 ? (
+            <div
+              style={{
+                fontSize: 10,
+                fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+                marginTop: 2,
+                color: '#ef4444',
+                fontWeight: 700,
+              }}
+            >
+              HR3 {anc.hr3}
+            </div>
+          ) : (
+            <div style={{ fontSize: 10, color: muted, marginTop: 2 }}>—</div>
+          )}
+        </div>
+      </div>
+
+      {/* Sync freshness footer */}
+      <div
+        style={{
+          marginTop: 6,
+          paddingTop: 6,
+          borderTop: `1px solid ${ruleColor}`,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          fontSize: 10,
+          color: muted,
+          fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+        }}
+      >
+        <span>SYNC · {lastSyncRel}</span>
+        {lastSyncAbs && (
+          <span style={{ fontSize: 9, opacity: 0.8 }}>{lastSyncAbs}</span>
+        )}
+      </div>
+
+      {/* Click hint */}
+      <div
+        style={{
+          marginTop: 4,
+          fontSize: 9,
+          color: muted,
+          fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+          letterSpacing: '0.08em',
+        }}
+      >
+        คลิกเพื่อเปิดหน้าโรงพยาบาล →
+      </div>
+    </div>
+  );
+}
+
+function formatRelativeAgeShort(iso: string | null): string {
+  if (!iso) return 'ยังไม่ sync';
+  const ms = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(ms / 60000);
+  const hrs = Math.floor(mins / 60);
+  const days = Math.floor(hrs / 24);
+  if (mins < 60) return `${Math.max(1, mins)} นาทีที่แล้ว`;
+  if (hrs < 24) return `${hrs} ชม.ที่แล้ว`;
+  return `${days} วันที่แล้ว`;
+}
+
+function MapStatusLegend({ mode }: { mode: 'light' | 'kiosk' }) {
+  const isKiosk = mode === 'kiosk';
+  const bg = isKiosk ? 'rgba(11, 27, 46, 0.85)' : 'rgba(255, 255, 255, 0.92)';
+  const ink = isKiosk ? '#e6ecf5' : '#0b1b2e';
+  const inkMuted = isKiosk ? 'rgba(230,236,245,0.7)' : 'rgba(11,27,46,0.65)';
+  const border = isKiosk ? 'rgba(107,167,229,0.3)' : 'rgba(43,58,140,0.22)';
+  const items: Array<{ color: string; label: string; sub: string }> = [
+    { color: '#22c55e', label: 'ONLINE', sub: 'sync ปกติ' },
+    { color: '#eab308', label: 'BLOCKED', sub: 'sync ถูกระงับ' },
+    { color: '#ef4444', label: 'OFFLINE', sub: 'ติดต่อไม่ได้' },
+    { color: '#94a3b8', label: 'UNKNOWN', sub: 'ยังไม่ sync' },
+  ];
+  return (
+    <div
+      className="absolute"
+      style={{
+        top: 8,
+        left: 8,
+        zIndex: 500,
+        background: bg,
+        color: ink,
+        border: `1px solid ${border}`,
+        borderRadius: 4,
+        padding: '6px 8px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.18)',
+        fontFamily:
+          'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+        pointerEvents: 'none',
+      }}
+      aria-label="Map dot color legend"
+    >
+      <div
+        style={{
+          fontSize: 9,
+          letterSpacing: '0.14em',
+          color: inkMuted,
+          marginBottom: 4,
+        }}
+      >
+        STATUS DOT
+      </div>
+      <div className="flex flex-col gap-[2px]">
+        {items.map((it) => (
+          <div key={it.label} className="flex items-center gap-2">
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: it.color,
+                border: `1.5px solid ${isKiosk ? '#06121f' : '#ffffff'}`,
+                boxShadow: '0 0 0 0.5px rgba(0,0,0,0.15)',
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ fontSize: 10, fontWeight: 600 }}>{it.label}</span>
+            <span style={{ fontSize: 10, color: inkMuted }}>·&nbsp;{it.sub}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

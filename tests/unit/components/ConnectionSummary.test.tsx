@@ -17,6 +17,7 @@ function makeHospital(
     connectionStatus: status,
     lastSyncAt: null,
     counts: { low: 0, medium: 0, high: 0, total: 0 },
+    ancCounts: { total: 0, hr3: 0 },
     syncStatus: 'OK',
     syncBlockedReason: null,
   };

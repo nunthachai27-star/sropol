@@ -183,7 +183,13 @@ interface TestResult {
 
 // ───────────────── Component ─────────────────
 
-type SectionKey = 'general' | 'consult' | 'tunnel' | 'webhooks' | 'danger';
+type SectionKey =
+  | 'general'
+  | 'consult'
+  | 'tunnel'
+  | 'sync-log'
+  | 'webhooks'
+  | 'danger';
 type Tone = 'low' | 'medium' | 'high' | 'muted' | 'navy';
 
 interface Props {
@@ -191,9 +197,13 @@ interface Props {
   onClose: () => void;
   /** Called after General save so the parent SWR cache can revalidate. */
   onSaved: () => Promise<void> | void;
+  /** Optional starting tab — defaults to 'general'. The Sync Overview
+   *  tab passes 'sync-log' so clicking a row lands operators directly
+   *  on the run trail. */
+  initialSection?: SectionKey;
 }
 
-export function HospitalEditDialog({ hospital, onClose, onSaved }: Props) {
+export function HospitalEditDialog({ hospital, onClose, onSaved, initialSection }: Props) {
   if (!hospital) return null;
 
   return (
@@ -204,7 +214,13 @@ export function HospitalEditDialog({ hospital, onClose, onSaved }: Props) {
       >
         {/* key on the inner shell re-mounts state (active section, form fields)
             when switching hospitals without a useEffect-driven reset. */}
-        <DialogInner key={hospital.hcode} hospital={hospital} onClose={onClose} onSaved={onSaved} />
+        <DialogInner
+          key={hospital.hcode}
+          hospital={hospital}
+          onClose={onClose}
+          onSaved={onSaved}
+          initialSection={initialSection}
+        />
       </DialogContent>
     </Dialog>
   );
@@ -245,8 +261,12 @@ function toneColor(tone: Tone) {
   return 'var(--ink-navy-muted)';
 }
 
-function DialogInner({ hospital, onSaved }: Props & { hospital: AdminHospital }) {
-  const [section, setSection] = useState<SectionKey>('general');
+function DialogInner({
+  hospital,
+  onSaved,
+  initialSection,
+}: Props & { hospital: AdminHospital }) {
+  const [section, setSection] = useState<SectionKey>(initialSection ?? 'general');
   const { data: doctorsData } = useSWR<{ doctors: ConsultDoctor[] }>(
     `/api/admin/hospitals/${hospital.hcode}/consult-doctors`,
   );
@@ -285,6 +305,12 @@ function DialogInner({ hospital, onSaved }: Props & { hospital: AdminHospital })
       icon: Users,
     },
     { k: 'tunnel', label: 'BMS Tunnel', detail: bmsStatus, icon: Cable },
+    {
+      k: 'sync-log',
+      label: 'Sync Log',
+      detail: 'progress + errors',
+      icon: Activity,
+    },
     {
       k: 'webhooks',
       label: 'Webhook Keys',
@@ -431,6 +457,8 @@ function DialogInner({ hospital, onSaved }: Props & { hospital: AdminHospital })
           <ConsultDoctorsSection hospital={hospital} />
         ) : section === 'tunnel' ? (
           <TunnelSection hospital={hospital} />
+        ) : section === 'sync-log' ? (
+          <SyncLogSection hospital={hospital} />
         ) : section === 'webhooks' ? (
           <WebhooksSection hospital={hospital} />
         ) : (
@@ -1738,6 +1766,360 @@ function HeaderFact({
       >
         {value}
       </div>
+    </div>
+  );
+}
+
+// ───────────────── Sync Log section ─────────────────
+//
+// Surfaces the per-cycle progress trail that pollHospital() persists to
+// Redis. The intent is to answer "why did THIS hospital fail to sync?"
+// without an admin needing log access. Auto-refreshes every 10s so an
+// operator can watch a re-onboard land in real time.
+
+interface SyncLogStep {
+  name: string;
+  status: 'running' | 'success' | 'warning' | 'error' | 'info';
+  message: string;
+  detail?: string;
+  counts?: Record<string, number>;
+  at: string;
+}
+
+interface SyncLogRun {
+  runId: string;
+  hospitalId: string;
+  hcode: string;
+  trigger: 'scheduled' | 'immediate' | 'onboarding';
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  outcome: 'running' | 'success' | 'partial' | 'failed';
+  finalMessage: string | null;
+  errorMessage: string | null;
+  steps: SyncLogStep[];
+}
+
+interface SyncProgressResponse {
+  hcode: string;
+  latest: SyncLogRun | null;
+  runs: SyncLogRun[];
+}
+
+function outcomeTone(outcome: SyncLogRun['outcome']): {
+  bg: string;
+  ink: string;
+  label: string;
+} {
+  switch (outcome) {
+    case 'success':
+      return { bg: '#d1fae5', ink: '#065f46', label: 'SUCCESS' };
+    case 'partial':
+      return { bg: '#fef3c7', ink: '#92400e', label: 'PARTIAL' };
+    case 'failed':
+      return { bg: '#fee2e2', ink: '#991b1b', label: 'FAILED' };
+    case 'running':
+    default:
+      return { bg: '#dbeafe', ink: '#1e3a8a', label: 'RUNNING' };
+  }
+}
+
+function stepTone(status: SyncLogStep['status']): { dot: string; ink: string } {
+  switch (status) {
+    case 'success':
+      return { dot: '#22c55e', ink: 'var(--ink-navy)' };
+    case 'warning':
+      return { dot: '#eab308', ink: '#92400e' };
+    case 'error':
+      return { dot: '#ef4444', ink: '#991b1b' };
+    case 'info':
+      return { dot: '#94a3b8', ink: 'var(--ink-navy-dim)' };
+    case 'running':
+    default:
+      return { dot: '#3b82f6', ink: 'var(--ink-navy-dim)' };
+  }
+}
+
+function formatTimeShort(iso: string): string {
+  return new Date(iso).toLocaleTimeString('th-TH', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatRelative(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return `${Math.max(1, Math.floor(ms / 1000))}s ago`;
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
+}
+
+function SyncLogSection({ hospital }: { hospital: AdminHospital }) {
+  const { data, error, isLoading, mutate } = useSWR<SyncProgressResponse>(
+    `/api/admin/hospitals/${hospital.hcode}/sync-progress?limit=20`,
+    { refreshInterval: 10_000 },
+  );
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+
+  const runs = data?.runs ?? [];
+  const latest = data?.latest ?? null;
+
+  // Auto-expand the latest run so operators see the freshest details on
+  // open without an extra click. They can collapse and pick another.
+  const effectiveExpanded = expandedRunId ?? latest?.runId ?? null;
+
+  return (
+    <div className="space-y-4">
+      <SectionIntro
+        eyebrow="OBSERVABILITY"
+        title="Sync Progress & Errors"
+        detail="ติดตามทุกรอบการ sync (ทุก ~30 วินาที) จาก HOSxP โดยอัตโนมัติ — แสดงทุกขั้นตอน, ข้อผิดพลาด, และเหตุผลที่บางรอบไม่สำเร็จ. ข้อมูลเก็บใน Redis ใช้งานได้ 24 ชม.ย้อนหลัง"
+        Icon={Activity}
+        meta={`${runs.length} รอบล่าสุด`}
+      />
+
+      {isLoading && (
+        <div
+          className="border bg-white px-4 py-6 text-center font-mono text-[11px] text-[var(--ink-navy-muted)]"
+          style={{ borderColor: 'var(--rule-strong)' }}
+        >
+          กำลังโหลด…
+        </div>
+      )}
+
+      {error && (
+        <div
+          className="border bg-white px-4 py-3 text-[13px] text-[#991b1b]"
+          style={{ borderColor: '#fee2e2', background: '#fef2f2' }}
+        >
+          โหลดประวัติ sync ไม่สำเร็จ
+        </div>
+      )}
+
+      {!isLoading && !error && runs.length === 0 && (
+        <div
+          className="border bg-white px-4 py-6 text-center font-mono text-[11px] text-[var(--ink-navy-muted)]"
+          style={{ borderColor: 'var(--rule-strong)' }}
+        >
+          ยังไม่มีรอบ sync บันทึกใน 24 ชม.ที่ผ่านมา — ตรวจสอบว่าผู้ใช้จากโรงพยาบาลนี้เปิด KK-LRMS แล้วหรือยัง
+        </div>
+      )}
+
+      {/* Run list */}
+      {runs.length > 0 && (
+        <div
+          className="border bg-white"
+          style={{ borderColor: 'var(--rule-strong)' }}
+        >
+          <div
+            className="flex items-center justify-between border-b px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]"
+            style={{ borderColor: 'var(--rule-strong)' }}
+          >
+            <span>RUN HISTORY · 24h · auto-refresh 10s</span>
+            <button
+              type="button"
+              onClick={() => mutate()}
+              className="border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--accent-navy)]"
+              style={{ borderColor: 'var(--accent-navy)' }}
+            >
+              REFRESH
+            </button>
+          </div>
+          <div className="divide-y" style={{ borderColor: 'var(--rule-hair)' }}>
+            {runs.map((run) => {
+              const tone = outcomeTone(run.outcome);
+              const expanded = effectiveExpanded === run.runId;
+              const lastStep = run.steps[run.steps.length - 1];
+              const summary =
+                run.errorMessage ??
+                run.finalMessage ??
+                lastStep?.message ??
+                '—';
+              return (
+                <div key={run.runId}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedRunId(expanded ? null : run.runId)
+                    }
+                    className="grid w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-[var(--surface-cool)]"
+                    style={{
+                      gridTemplateColumns: '78px 1fr 80px 60px',
+                    }}
+                  >
+                    <span
+                      className="font-mono text-[10px] font-bold uppercase tracking-[0.1em]"
+                      style={{
+                        background: tone.bg,
+                        color: tone.ink,
+                        padding: '2px 6px',
+                        textAlign: 'center',
+                      }}
+                    >
+                      {tone.label}
+                    </span>
+                    <span
+                      className="truncate text-[12px]"
+                      style={{ color: 'var(--ink-navy)' }}
+                    >
+                      {summary}
+                    </span>
+                    <span
+                      className="font-mono text-[10px] text-[var(--ink-navy-muted)]"
+                      style={{ textAlign: 'right' }}
+                    >
+                      {run.trigger}
+                    </span>
+                    <span
+                      className="font-mono text-[10px] tabular-nums text-[var(--ink-navy-dim)]"
+                      style={{ textAlign: 'right' }}
+                    >
+                      {formatRelative(run.startedAt)}
+                    </span>
+                  </button>
+
+                  {expanded && (
+                    <div
+                      className="border-t px-3 py-2"
+                      style={{
+                        borderColor: 'var(--rule-hair)',
+                        background: 'var(--surface-cool)',
+                      }}
+                    >
+                      <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 font-mono text-[10px] text-[var(--ink-navy-muted)]">
+                        <span>
+                          เริ่ม:{' '}
+                          <span style={{ color: 'var(--ink-navy)' }}>
+                            {new Date(run.startedAt).toLocaleString('th-TH')}
+                          </span>
+                        </span>
+                        {run.finishedAt && (
+                          <span>
+                            จบ:{' '}
+                            <span style={{ color: 'var(--ink-navy)' }}>
+                              {new Date(run.finishedAt).toLocaleString('th-TH')}
+                            </span>
+                          </span>
+                        )}
+                        {run.durationMs != null && (
+                          <span>
+                            ใช้เวลา:{' '}
+                            <span style={{ color: 'var(--ink-navy)' }}>
+                              {(run.durationMs / 1000).toFixed(1)}s
+                            </span>
+                          </span>
+                        )}
+                        <span>
+                          ขั้นตอน:{' '}
+                          <span style={{ color: 'var(--ink-navy)' }}>
+                            {run.steps.length}
+                          </span>
+                        </span>
+                      </div>
+
+                      {run.errorMessage && (
+                        <div
+                          className="mb-2 border px-3 py-2 text-[12px]"
+                          style={{
+                            borderColor: '#fecaca',
+                            background: '#fef2f2',
+                            color: '#991b1b',
+                          }}
+                        >
+                          <strong>Error:</strong> {run.errorMessage}
+                        </div>
+                      )}
+
+                      <ol
+                        className="border bg-white"
+                        style={{ borderColor: 'var(--rule-hair)' }}
+                      >
+                        {run.steps.length === 0 ? (
+                          <li
+                            className="px-3 py-2 text-[11px] text-[var(--ink-navy-muted)]"
+                          >
+                            ไม่มีขั้นตอนบันทึกในรอบนี้
+                          </li>
+                        ) : (
+                          run.steps.map((step, i) => {
+                            const t = stepTone(step.status);
+                            return (
+                              <li
+                                key={i}
+                                className="grid items-start gap-2 border-b px-3 py-1.5 last:border-b-0"
+                                style={{
+                                  borderColor: 'var(--rule-hair)',
+                                  gridTemplateColumns: '12px 80px 1fr 60px',
+                                }}
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  style={{
+                                    width: 8,
+                                    height: 8,
+                                    borderRadius: '50%',
+                                    background: t.dot,
+                                    marginTop: 6,
+                                  }}
+                                />
+                                <span
+                                  className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--ink-navy-muted)]"
+                                  style={{ marginTop: 2 }}
+                                >
+                                  {step.name}
+                                </span>
+                                <div>
+                                  <div
+                                    className="text-[12px] leading-snug"
+                                    style={{ color: t.ink }}
+                                  >
+                                    {step.message}
+                                  </div>
+                                  {step.detail && (
+                                    <div
+                                      className="mt-0.5 break-words font-mono text-[10px]"
+                                      style={{ color: 'var(--ink-navy-muted)' }}
+                                    >
+                                      {step.detail}
+                                    </div>
+                                  )}
+                                  {step.counts &&
+                                    Object.keys(step.counts).length > 0 && (
+                                      <div
+                                        className="mt-0.5 font-mono text-[10px]"
+                                        style={{
+                                          color: 'var(--ink-navy-dim)',
+                                        }}
+                                      >
+                                        {Object.entries(step.counts)
+                                          .map(
+                                            ([k, v]) => `${k}=${v}`,
+                                          )
+                                          .join(' · ')}
+                                      </div>
+                                    )}
+                                </div>
+                                <span
+                                  className="font-mono text-[10px] tabular-nums text-[var(--ink-navy-muted)]"
+                                  style={{ textAlign: 'right', marginTop: 2 }}
+                                >
+                                  {formatTimeShort(step.at)}
+                                </span>
+                              </li>
+                            );
+                          })
+                        )}
+                      </ol>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
