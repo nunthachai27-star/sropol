@@ -13,6 +13,7 @@ import type {
 import { encrypt } from '@/lib/encryption';
 import { calculateAge } from '@/lib/utils';
 import { isValidThaiCidChecksum } from '@/lib/cid';
+import { isoDatesEqual } from '@/lib/dates';
 import {
   createJourney,
   getActiveJourneyByCid,
@@ -88,9 +89,13 @@ export async function syncAncData(
     let journey = (cidHash ? await getActiveJourneyByCid(db, cidHash) : null)
       ?? await getJourneyByHn(db, anc.hn, hospitalId);
 
+    // Same Date-vs-string trap as in webhook.ts:processAncWebhook —
+    // journey.lmp is a Date at runtime even though the type says string,
+    // so raw `!==` always fires and creates a fresh journey every cycle.
+    // Normalise to "YYYY-MM-DD" before comparing.
     const isNewPregnancy = journey && (
       (anc.preg_no > journey.gravida) ||
-      (anc.lmp && journey.lmp && anc.lmp !== journey.lmp)
+      (anc.lmp != null && journey.lmp != null && !isoDatesEqual(anc.lmp, journey.lmp))
     );
     const existingIsActive = journey && (journey.careStage === 'PREGNANCY' || journey.careStage === 'LABOR');
 

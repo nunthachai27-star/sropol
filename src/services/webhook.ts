@@ -16,6 +16,7 @@ import {
 import { AncRiskLevel } from '@/types/domain';
 import { logger } from '@/lib/logger';
 import { diagnoseCid, describeCidFailure } from '@/lib/cid';
+import { isoDatesEqual } from '@/lib/dates';
 
 // ─── Webhook payload types ───
 
@@ -769,10 +770,16 @@ export async function processAncWebhook(
     const existing = await getActiveJourneyByCid(db, cidHash)
       ?? (patientHn != null ? await getJourneyByHn(db, patientHn, hospitalId) : null);
 
-    // Detect if incoming data is a NEW pregnancy vs update to existing
+    // Detect if incoming data is a NEW pregnancy vs update to existing.
+    // The pg driver returns lmp as a Date (the column is `timestamp with
+    // time zone`) even though the journey type claims string|null, so a
+    // raw `!==` between the HOSxP-side string ("2026-01-12") and the
+    // Date object compared identity — always true — and synthesised a new
+    // pregnancy on every cycle. isoDatesEqual normalises both sides to
+    // "YYYY-MM-DD" and compares as strings.
     const isNewPregnancy = existing && (
       (patient.pregNo > existing.gravida) ||
-      (patient.lmp && existing.lmp && patient.lmp !== existing.lmp)
+      (patient.lmp != null && existing.lmp != null && !isoDatesEqual(patient.lmp, existing.lmp))
     );
     const existingIsActive = existing && (existing.careStage === 'PREGNANCY' || existing.careStage === 'LABOR');
 
