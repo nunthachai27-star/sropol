@@ -99,6 +99,10 @@ const AUTHENTICITY_FAILURE_STATUSES = new Set([
   'no_id_field',
   'probe_failed',
   'missing_marketplace_token',
+  // Browser-poll's name round-trip probe: old HOSxP API servers return
+  // anonymised display PII (fname/lname) while keeping CID stable, so the
+  // CID probe alone misses them. See src/lib/browser-poll.ts.
+  'name_unstable',
 ]);
 // Permanent suspension — only cleared by an explicit admin re-onboard
 // (POST /api/onboarding/hosxp-sync with confirmReonboard=true). Time-based
@@ -123,10 +127,21 @@ function isWithinAuthenticityCooldown(
   return Date.now() - t < AUTHENTICITY_COOLDOWN_MS;
 }
 
-async function recordAuthenticityVerdict(
+export type AuthenticityVerdict =
+  | 'authentic'
+  | 'cid_unstable'
+  | 'hn_unstable'
+  | 'cid_invalid_checksum'
+  | 'no_id_field'
+  | 'probe_failed'
+  | 'missing_marketplace_token'
+  | 'name_unstable'
+  | 'no_data';
+
+export async function recordAuthenticityVerdict(
   db: DatabaseAdapter,
   hospitalId: string,
-  status: 'authentic' | 'cid_unstable' | 'hn_unstable' | 'cid_invalid_checksum' | 'no_id_field' | 'probe_failed' | 'missing_marketplace_token' | 'no_data',
+  status: AuthenticityVerdict,
   reason: string | null,
 ): Promise<void> {
   const now = new Date().toISOString();

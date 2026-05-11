@@ -15,6 +15,10 @@ export const SYNC_FAILURE_STATUSES: ReadonlySet<string> = new Set([
   'probe_failed',
   'missing_marketplace_token',
   'purged_pending_reonboard',
+  // Set when the browser-side name round-trip (hn + fname + lname) returns
+  // zero rows — old HOSxP API servers anonymise PII display fields while
+  // keeping CID stable, so the CID-only probe misses them.
+  'name_unstable',
 ]);
 
 export function isSyncFailureStatus(

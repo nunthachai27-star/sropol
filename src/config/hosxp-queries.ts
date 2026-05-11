@@ -50,6 +50,7 @@ export const ACTIVE_LABOR_PATIENTS: SqlQueryTemplate = {
     LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
     LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
     WHERE i.confirm_discharge = 'N'
+      AND i.ipt_admit_type_id = 3
     ORDER BY i.regdate DESC`,
   mysql: `
     SELECT i.an, i.hn, i.regdate, i.regtime, i.dchdate, i.ward,
@@ -83,6 +84,7 @@ export const ACTIVE_LABOR_PATIENTS: SqlQueryTemplate = {
     LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
     LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
     WHERE i.confirm_discharge = 'N'
+      AND i.ipt_admit_type_id = 3
     ORDER BY i.regdate DESC`,
 };
 
@@ -377,6 +379,7 @@ export const PARTOGRAPH_OBSERVATIONS: SqlQueryTemplate = {
       JOIN ipt i ON i.an = lp.an
       JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
      WHERE i.confirm_discharge = 'N'
+       AND i.ipt_admit_type_id = 3
      ORDER BY lp.an, lp.observe_datetime`,
   mysql: `
     SELECT lp.ipt_labour_partograph_id,
@@ -414,6 +417,7 @@ export const PARTOGRAPH_OBSERVATIONS: SqlQueryTemplate = {
       JOIN ipt i ON i.an = lp.an
       JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
      WHERE i.confirm_discharge = 'N'
+       AND i.ipt_admit_type_id = 3
      ORDER BY lp.an, lp.observe_datetime`,
 };
 

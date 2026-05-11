@@ -133,19 +133,32 @@ export interface BrowserPollResult {
   partograph: { read: number; mapped: number; sent: number };
   anc: { read: number; mapped: number; sent: number };
   pushedToServer: boolean;
+  /** Verdict of the name round-trip probe — present whenever a probe ran. */
+  authenticity?: { status: 'authentic' | 'name_unstable' | 'no_data' | 'probe_failed'; detail: string };
   error?: string;
 }
 
 // ─── SQL queries (MySQL flavour — HOSxP) ────────────────────────────────────
 //
 // Mirrors src/config/hosxp-queries.ts (server-side polling) but inlined so
-// the browser bundle doesn't drag in PG-only types. ipt_admit_type_id=3 is
-// HOSxP's "delivery admission"; ward.is_maternity_ward='Y' is the per-site
-// scope flag set in the ward admin UI.
-
+// the browser bundle doesn't drag in PG-only types.
+//
+// Scope:
+//   - i.confirm_discharge = 'N'   → still admitted
+//   - w.is_maternity_ward = 'Y'   → per-site scope flag set in HOSxP ward admin
+//   - i.ipt_admit_type_id = 3     → "delivery admission" specifically. Without
+//                                    this, we pick up early-pregnancy management
+//                                    (miscarriage / threatened abortion, G1 GA
+//                                    10 weeks at hcode 11004 was the first
+//                                    real-world hit), post-partum readmissions,
+//                                    and gynae procedures — all show up under
+//                                    "ACTIVE LABOR · PROVINCE" with clinically
+//                                    nonsensical GA values. Matches the
+//                                    Pascal client (KKLRMSWebhookUnit.pas L594).
 const SQL_ACTIVE_LABOUR = `
   SELECT i.an, i.hn, i.regdate, i.regtime, i.dchdate,
          CONCAT(p.pname, p.fname, ' ', p.lname) AS patient_name,
+         p.pname, p.fname, p.lname,
          p.cid, p.birthday, p.height,
          pvs.bw AS weight,
          l.g AS gravida, l.p AS para, l.a AS abortion, l.l AS living_children,
@@ -166,6 +179,7 @@ const SQL_ACTIVE_LABOUR = `
     LEFT JOIN ipt_labour l ON l.an = i.an
     LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
    WHERE i.confirm_discharge = 'N'
+     AND i.ipt_admit_type_id = 3
    ORDER BY i.regdate DESC`;
 
 const SQL_PARTOGRAPH = `
@@ -183,6 +197,7 @@ const SQL_PARTOGRAPH = `
     JOIN ipt i ON i.an = lp.an
     JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
    WHERE i.confirm_discharge = 'N'
+     AND i.ipt_admit_type_id = 3
    ORDER BY lp.an, lp.observe_datetime`;
 
 // ANC active window: edc within 45 days post-EDC OR lmp within 330 days.
@@ -500,6 +515,111 @@ async function runQuery<T>(sql: string, opts: RunOptions): Promise<T[]> {
   return Array.isArray(res.data) ? res.data : [];
 }
 
+// ─── Authenticity probe ─────────────────────────────────────────────────────
+//
+// Some HOSxP installations run an old API-server build that returns
+// ANONYMISED first/last names while leaving structural fields (HN, CID)
+// stable. The CID-only round-trip on the server-side polling worker missed
+// this because CID still matched itself. The reliable test is to take a
+// real (hn, fname, lname) tuple from the freshly-pulled row and re-query
+// HOSxP for an exact match: anonymised values will never match themselves
+// on the second look-up.
+//
+// Mandatory gate: if the probe fails, NO data is pushed to the server
+// (labor + partograph + ANC are all skipped) and the verdict is recorded
+// to hospital_bms_config so the admin UI surfaces a BLOCKED state.
+
+type AuthenticityProbeResult =
+  | { ok: true; status: 'authentic'; detail: string }
+  | { ok: false; status: 'name_unstable' | 'no_data' | 'probe_failed'; detail: string };
+
+// Inline SQL string escape — HOSxP names occasionally contain apostrophes
+// (e.g. transliterated Western names like O'Connor). Standard SQL escapes
+// single quotes by doubling them. Names cannot contain backslash-quote
+// because HOSxP stores plain Thai/Western text — nothing fancy.
+function sqlString(v: string): string {
+  return v.replace(/'/g, "''");
+}
+
+async function probeNameAuthenticity(
+  laborRows: Record<string, unknown>[],
+  opts: RunOptions,
+): Promise<AuthenticityProbeResult> {
+  // Find the first row that has all three identity fields populated. Some
+  // legacy rows have empty patient.fname (registered under HN only); those
+  // aren't useful for the probe — skip them and keep looking up to 10
+  // candidates. If nothing usable exists, return 'no_data' so the caller
+  // can decide whether to push anyway (we choose to skip but not flag).
+  let candidate: { hn: string; fname: string; lname: string } | null = null;
+  for (const row of laborRows.slice(0, 10)) {
+    const hn = strOrNull(row.hn);
+    const fname = strOrNull(row.fname);
+    const lname = strOrNull(row.lname);
+    if (hn && fname && lname) {
+      candidate = { hn, fname, lname };
+      break;
+    }
+  }
+  if (!candidate) {
+    return {
+      ok: false,
+      status: 'no_data',
+      detail: 'No labor row with non-empty (hn, fname, lname) to fingerprint.',
+    };
+  }
+
+  const sql =
+    `SELECT COUNT(*) AS c FROM patient ` +
+    `WHERE hn = '${sqlString(candidate.hn)}' ` +
+    `AND fname = '${sqlString(candidate.fname)}' ` +
+    `AND lname = '${sqlString(candidate.lname)}'`;
+
+  try {
+    const rows = await runQuery<Record<string, unknown>>(sql, opts);
+    const count = intOrNull(rows[0]?.c) ?? 0;
+    if (count >= 1) {
+      return {
+        ok: true,
+        status: 'authentic',
+        detail: `Round-trip on hn=${candidate.hn} matched (count=${count}).`,
+      };
+    }
+    return {
+      ok: false,
+      status: 'name_unstable',
+      detail:
+        `Round-trip on hn=${candidate.hn} returned 0 rows — HOSxP is returning ` +
+        `anonymised fname/lname (likely on old API server build).`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 'probe_failed',
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function reportAuthenticityVerdict(
+  status: 'authentic' | 'name_unstable' | 'no_data',
+  reason: string | null,
+  signal?: AbortSignal,
+): Promise<void> {
+  try {
+    await fetch('/api/sync/browser-authenticity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, reason }),
+      signal,
+      credentials: 'same-origin',
+    });
+  } catch {
+    // Best-effort: failing to report shouldn't crash the poll cycle. The
+    // worst case is the admin Sync Status tab shows stale state — next
+    // successful cycle will overwrite it.
+  }
+}
+
 export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResult> {
   const startedAt = Date.now();
   const result: BrowserPollResult = {
@@ -525,6 +645,33 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
     result.labor.read = laborRows.length;
     result.partograph.read = partRows.length;
     result.anc.read = ancMasters.length;
+
+    // ─── Mandatory authenticity gate ──────────────────────────────────────
+    // Name round-trip probe on a real labor row. If HOSxP is returning
+    // anonymised PII (old API-server builds), the second look-up returns
+    // zero matches → record `name_unstable` server-side and abort the
+    // push so junk data never reaches cached_patients / maternal_journeys.
+    // Skipped when there's nothing to fingerprint (laborRows.length === 0);
+    // in that case we don't have any data to push anyway.
+    if (laborRows.length > 0) {
+      const probe = await probeNameAuthenticity(laborRows, opts);
+      result.authenticity = { status: probe.status, detail: probe.detail };
+      if (!probe.ok && probe.status === 'name_unstable') {
+        await reportAuthenticityVerdict('name_unstable', probe.detail, opts.signal);
+        result.error = `authenticity_failed_${probe.status}`;
+        result.durationMs = Date.now() - startedAt;
+        return result;
+      }
+      // probe_failed (network/timeout) is a transient soft-failure — we
+      // proceed with the push so a flaky probe doesn't block legitimate
+      // syncs. The verdict is NOT reported to the server in this case so
+      // the admin UI doesn't surface a false BLOCKED state.
+      if (probe.ok) {
+        // Best-effort write so admins see "authentic · <reason>" on Sync
+        // Status, and any previous `name_unstable` verdict gets cleared.
+        await reportAuthenticityVerdict('authentic', probe.detail, opts.signal);
+      }
+    }
 
     const laborPatients = laborRows
       .map(mapLabor)
