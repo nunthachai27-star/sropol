@@ -623,7 +623,12 @@ export default function DashboardPage() {
                     size="full"
                   />
                 </div>
-                {/* Compact hospital list under the map for at-a-glance */}
+                {/* Compact hospital list under the map for at-a-glance.
+                    Clicking a row navigates to /hospitals/<hcode>; the
+                    onSelect callback still fires so the map marker briefly
+                    highlights during the route transition. Mirrors the
+                    mobile-fallback HospitalTable below — sidebar lists are
+                    primary navigation, the overview-dialog list stays modal. */}
                 <div
                   className="max-h-[36%] min-h-0 overflow-auto border-t border-[var(--rule-strong)]"
                   style={{ flexShrink: 0 }}
@@ -636,6 +641,7 @@ export default function DashboardPage() {
                     hospitals={hospitals}
                     selected={selectedHospital}
                     onSelect={openHospitalDetail}
+                    navigateOnClick
                   />
                 </div>
               </>
@@ -649,6 +655,7 @@ export default function DashboardPage() {
                   hospitals={hospitals}
                   selected={selectedHospital}
                   onSelect={openHospitalDetail}
+                  navigateOnClick
                 />
               </div>
             )}
