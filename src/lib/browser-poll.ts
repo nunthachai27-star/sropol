@@ -170,7 +170,7 @@ const SQL_ACTIVE_LABOUR = `
          p.cid, p.birthday, p.height,
          pvs.bw AS weight,
          l.g AS gravida, l.p AS para, l.a AS abortion, l.l AS living_children,
-         l.preg_no, l.ga AS ga_weeks, l.ga_day, l.anc_count,
+         l.preg_no, COALESCE(ip.ga, l.ga) AS ga_weeks, l.ga_day, l.anc_count,
          pvs.hct,
          pvs.bps AS bp_sys_admit, pvs.bpd AS bp_dia_admit,
          pvs.hr AS pulse_admit, pvs.rr AS rr_admit, pvs.temperature AS temp_admit,
@@ -185,6 +185,7 @@ const SQL_ACTIVE_LABOUR = `
     JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
     JOIN patient p ON p.hn = i.hn
     LEFT JOIN ipt_labour l ON l.an = i.an
+    LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
     LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
    WHERE i.confirm_discharge = 'N'
      AND i.ipt_admit_type_id = 3

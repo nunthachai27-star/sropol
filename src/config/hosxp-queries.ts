@@ -28,8 +28,8 @@ export const ACTIVE_LABOR_PATIENTS: SqlQueryTemplate = {
            COALESCE(il.g, ip.preg_number) AS preg_number,
            il.p AS para, il.a AS abortion, il.l AS living_children,
            il.preg_no,
-           COALESCE(il.ga, ip.ga) AS ga_weeks,
-           COALESCE(il.ga, ip.ga) AS ga,
+           COALESCE(ip.ga, il.ga) AS ga_weeks,
+           COALESCE(ip.ga, il.ga) AS ga,
            il.ga_day, il.anc_count,
            ip.anc_complete, ip.labor_date,
            pvs.hct,
@@ -62,8 +62,8 @@ export const ACTIVE_LABOR_PATIENTS: SqlQueryTemplate = {
            COALESCE(il.g, ip.preg_number) AS preg_number,
            il.p AS para, il.a AS abortion, il.l AS living_children,
            il.preg_no,
-           COALESCE(il.ga, ip.ga) AS ga_weeks,
-           COALESCE(il.ga, ip.ga) AS ga,
+           COALESCE(ip.ga, il.ga) AS ga_weeks,
+           COALESCE(ip.ga, il.ga) AS ga,
            il.ga_day, il.anc_count,
            ip.anc_complete, ip.labor_date,
            pvs.hct,
@@ -473,7 +473,7 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
        p.pname, p.fname, p.lname, p.birthday, p.bloodgrp AS blood_grp,
        i.prediag, i.bw / 1000.0 AS admit_bw_kg, p.height AS patient_height,
        py.name AS pttype_name,
-       il.g AS gravida, il.ga,
+       il.g AS gravida, COALESCE(ip.ga, il.ga) AS ga,
        di.name AS incharge_doctor_name,
        (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
        (SELECT MAX(observe_datetime) FROM ipt_labour_partograph
@@ -484,6 +484,7 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
   JOIN iptadm ON iptadm.an = i.an
   LEFT JOIN patient p ON p.hn = i.hn
   LEFT JOIN ipt_labour il ON il.an = i.an
+  LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
   LEFT JOIN doctor di ON di.code = i.incharge_doctor
   LEFT JOIN pttype py ON py.pttype = i.pttype
   LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
@@ -495,7 +496,7 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
        p.pname, p.fname, p.lname, p.birthday, p.bloodgrp AS blood_grp,
        i.prediag, i.bw / 1000.0 AS admit_bw_kg, p.height AS patient_height,
        py.name AS pttype_name,
-       il.g AS gravida, il.ga,
+       il.g AS gravida, COALESCE(ip.ga, il.ga) AS ga,
        di.name AS incharge_doctor_name,
        (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
        (SELECT MAX(observe_datetime) FROM ipt_labour_partograph
@@ -506,6 +507,7 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
   JOIN iptadm ON iptadm.an = i.an
   LEFT JOIN patient p ON p.hn = i.hn
   LEFT JOIN ipt_labour il ON il.an = i.an
+  LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
   LEFT JOIN doctor di ON di.code = i.incharge_doctor
   LEFT JOIN pttype py ON py.pttype = i.pttype
   LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
@@ -554,7 +556,7 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
        p.pname, p.fname, p.lname, p.birthday, p.bloodgrp AS blood_grp,
        i.prediag, i.bw / 1000.0 AS admit_bw_kg, p.height AS patient_height,
        py.name AS pttype_name,
-       il.g AS gravida, il.ga,
+       il.g AS gravida, COALESCE(ip.ga, il.ga) AS ga,
        di.name AS incharge_doctor_name,
        (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
        latest_lp.observe_datetime    AS last_observation_at,
@@ -586,6 +588,7 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
   JOIN iptadm ON iptadm.an = i.an
   LEFT JOIN patient p ON p.hn = i.hn
   LEFT JOIN ipt_labour il ON il.an = i.an
+  LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
   LEFT JOIN doctor di ON di.code = i.incharge_doctor
   LEFT JOIN pttype py ON py.pttype = i.pttype
   LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
@@ -609,7 +612,7 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
        p.pname, p.fname, p.lname, p.birthday, p.bloodgrp AS blood_grp,
        i.prediag, i.bw / 1000.0 AS admit_bw_kg, p.height AS patient_height,
        py.name AS pttype_name,
-       il.g AS gravida, il.ga,
+       il.g AS gravida, COALESCE(ip.ga, il.ga) AS ga,
        di.name AS incharge_doctor_name,
        (SELECT COUNT(*) FROM opd_allergy WHERE hn = i.hn) AS allergy_count,
        latest_lp.observe_datetime    AS last_observation_at,
@@ -641,6 +644,7 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
   JOIN iptadm ON iptadm.an = i.an
   LEFT JOIN patient p ON p.hn = i.hn
   LEFT JOIN ipt_labour il ON il.an = i.an
+  LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
   LEFT JOIN doctor di ON di.code = i.incharge_doctor
   LEFT JOIN pttype py ON py.pttype = i.pttype
   LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
