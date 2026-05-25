@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1100" aria-label="แผนที่ประเทศไทย">
+  <!-- Simplified Thailand silhouette -->
+  <path d="M 380 80
+           Q 460 90 500 140
+           L 540 220 Q 580 300 560 360
+           L 600 420 Q 640 480 620 540
+           L 560 600 Q 540 660 580 720
+           L 520 820 Q 480 880 460 940
+           L 440 1000 Q 420 1040 380 1050
+           L 340 1020 Q 320 980 340 920
+           L 380 840 Q 340 760 320 700
+           L 300 620 Q 320 540 340 480
+           L 320 420 Q 300 360 320 300
+           L 340 240 Q 320 180 340 120
+           Z"
+        fill="#dcdde4" stroke="#a8b0bc" stroke-width="2" />
+
+  <!-- Khon Kaen province marker with pulse -->
+  <g transform="translate(445 380)">
+    <circle r="42" fill="#d4a017" fill-opacity="0.12">
+      <animate attributeName="r" values="42;52;42" dur="2.5s" repeatCount="indefinite"/>
+      <animate attributeName="fill-opacity" values="0.12;0.04;0.12" dur="2.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="22" fill="#d4a017" fill-opacity="0.30"/>
+    <circle r="10" fill="#d4a017"/>
+    <text x="32" y="6" font-family="Sarabun, sans-serif" font-size="22"
+          font-weight="700" fill="#0c1d3d">ขอนแก่น</text>
+  </g>
+</svg>
