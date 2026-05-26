@@ -20,10 +20,9 @@ export async function GET(
     const perPage = parseInt(searchParams.get('per_page') ?? '20', 10);
 
     // Find hospital by hcode
-    const hospitals = await db.query<{ id: string }>(
-      `SELECT id FROM hospitals WHERE hcode = ?`,
-      [hcode],
-    );
+    const hospitals = await db.query<{ id: string }>(`SELECT id FROM hospitals WHERE hcode = ?`, [
+      hcode,
+    ]);
     if (hospitals.length === 0) {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: 'ไม่พบโรงพยาบาล', details: null } },

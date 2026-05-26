@@ -19,7 +19,16 @@ const { auth } = NextAuth(authConfig);
 // /deck is the MOPH executive briefing deck (no PHI, presentation assets only).
 // Public so the briefing room laptop can open it directly via URL without
 // requiring a BMS session.
-const PUBLIC_PATHS = ['/login', '/provider/complete', '/about', '/deck', '/api/auth', '/api/health', '/api/webhooks', '/api/referrals/check'];
+const PUBLIC_PATHS = [
+  '/login',
+  '/provider/complete',
+  '/about',
+  '/deck',
+  '/api/auth',
+  '/api/health',
+  '/api/webhooks',
+  '/api/referrals/check',
+];
 const STATIC_PATHS = ['/_next', '/favicon.ico'];
 const READONLY_BLOCKED_API_PREFIXES = [
   '/api/admin',
@@ -45,7 +54,7 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set('X-XSS-Protection', '1; mode=block');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  response.headers.set('Content-Security-Policy', "frame-ancestors *");
+  response.headers.set('Content-Security-Policy', 'frame-ancestors *');
   // HSTS - only in production
   if (process.env.NODE_ENV === 'production') {
     response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -98,10 +107,7 @@ export default auth((req) => {
     if (pathname.startsWith('/admin')) {
       return addSecurityHeaders(NextResponse.redirect(new URL('/', req.url)));
     }
-    if (
-      req.method !== 'GET' &&
-      READONLY_BLOCKED_API_PREFIXES.some((p) => pathname.startsWith(p))
-    ) {
+    if (req.method !== 'GET' && READONLY_BLOCKED_API_PREFIXES.some((p) => pathname.startsWith(p))) {
       return addSecurityHeaders(
         NextResponse.json(
           { error: 'readonly_session', message: 'ProviderID sessions are read-only' },
@@ -138,7 +144,5 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: [
-    '/((?!_next/static|_next/image|favicon.ico).*)',
-  ],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 };

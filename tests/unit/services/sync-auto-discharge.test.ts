@@ -29,10 +29,9 @@ interface CachedPatientSeed {
 }
 
 async function getHospitalId(db: SqliteAdapter): Promise<string> {
-  const rows = await db.query<{ id: string }>(
-    'SELECT id FROM hospitals WHERE hcode = ?',
-    [HOSPITAL_HCODE],
-  );
+  const rows = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [
+    HOSPITAL_HCODE,
+  ]);
   return rows[0].id;
 }
 
@@ -81,9 +80,7 @@ async function applyAutoDischarge(
 ): Promise<string[]> {
   const currentSet = new Set(currentAns);
   const transferredSet = new Set(transferredAns);
-  const discharged = existingAns.filter(
-    (an) => !currentSet.has(an) && !transferredSet.has(an),
-  );
+  const discharged = existingAns.filter((an) => !currentSet.has(an) && !transferredSet.has(an));
   const now = new Date().toISOString();
   for (const an of discharged) {
     await db.execute(
@@ -147,7 +144,11 @@ describe('sync auto-discharge — root-cause fix for stale labor_status=ACTIVE',
     // AN-100 was transferred to another hospital in this cycle. The
     // transfer-detection block marks the from-side as TRANSFERRED. Our
     // diff must skip it so we don't overwrite that transition.
-    await seedActivePatient(db, hospitalId, { an: 'AN-100', hn: 'HN-100', laborStatus: 'TRANSFERRED' });
+    await seedActivePatient(db, hospitalId, {
+      an: 'AN-100',
+      hn: 'HN-100',
+      laborStatus: 'TRANSFERRED',
+    });
     await seedActivePatient(db, hospitalId, { an: 'AN-200', hn: 'HN-200', laborStatus: 'ACTIVE' });
 
     const existingAns = ['AN-100', 'AN-200'];
@@ -178,7 +179,11 @@ describe('sync auto-discharge — root-cause fix for stale labor_status=ACTIVE',
   it('is idempotent — running twice does not re-touch already-DISCHARGED rows', async () => {
     // The guard `WHERE labor_status='ACTIVE'` in the UPDATE prevents
     // overwriting a DELIVERED/DISCHARGED row that a parallel cycle wrote.
-    await seedActivePatient(db, hospitalId, { an: 'AN-300', hn: 'HN-300', laborStatus: 'DISCHARGED' });
+    await seedActivePatient(db, hospitalId, {
+      an: 'AN-300',
+      hn: 'HN-300',
+      laborStatus: 'DISCHARGED',
+    });
     await seedActivePatient(db, hospitalId, { an: 'AN-301', hn: 'HN-301', laborStatus: 'ACTIVE' });
 
     // First cycle — AN-301 vanishes from HOSxP, should be closed.
@@ -236,13 +241,7 @@ describe('sync auto-discharge — root-cause fix for stale labor_status=ACTIVE',
 
     const existingAns = ['AN-001', 'AN-002', 'AN-003', 'AN-004', 'AN-005'];
     const currentAns = ['AN-001']; // only one remains active in HOSxP
-    const dischargedAns = await applyAutoDischarge(
-      db,
-      hospitalId,
-      existingAns,
-      currentAns,
-      [],
-    );
+    const dischargedAns = await applyAutoDischarge(db, hospitalId, existingAns, currentAns, []);
 
     expect(dischargedAns.sort()).toEqual(['AN-002', 'AN-003', 'AN-004', 'AN-005']);
 

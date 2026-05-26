@@ -5,11 +5,7 @@ import { BmsSessionClient } from '@/lib/bms-session';
 import { SseManager } from '@/lib/sse';
 import { encrypt } from '@/lib/encryption';
 import { calculateAge } from '@/lib/utils';
-import {
-  getQuery,
-  ACTIVE_LABOR_PATIENTS,
-  PARTOGRAPH_OBSERVATIONS,
-} from '@/config/hosxp-queries';
+import { getQuery, ACTIVE_LABOR_PATIENTS, PARTOGRAPH_OBSERVATIONS } from '@/config/hosxp-queries';
 import type { DatabaseDialect } from '@/config/hosxp-queries';
 import {
   upsertCachedPatients,
@@ -18,10 +14,7 @@ import {
   markPatientsDelivered,
   type SyncPatientData,
 } from './patient';
-import {
-  upsertPartographObservations,
-  type PartographRow,
-} from './partograph';
+import { upsertPartographObservations, type PartographRow } from './partograph';
 import { calculateAndStoreCpdScores } from './cpd-persist';
 import { syncAncData } from './anc';
 import { logger } from '@/lib/logger';
@@ -70,7 +63,9 @@ export function getSyncState(hospitalId: string): SyncState {
   }
   // Auto-release stuck locks (e.g. process crashed or HOSxP request hung)
   if (state.inProgress && Date.now() - state.syncStartedAt > SYNC_TIMEOUT_MS) {
-    console.warn(`[SYNC] Force-releasing stuck sync lock for hospital ${hospitalId} after ${SYNC_TIMEOUT_MS}ms`);
+    console.warn(
+      `[SYNC] Force-releasing stuck sync lock for hospital ${hospitalId} after ${SYNC_TIMEOUT_MS}ms`,
+    );
     state.inProgress = false;
   }
   return state;
@@ -111,8 +106,7 @@ const PERMANENT_SKIP_STATUSES = new Set(['purged_pending_reonboard']);
 
 function isAuthenticityFailureStatus(status: string | null | undefined): boolean {
   return Boolean(
-    status &&
-      (AUTHENTICITY_FAILURE_STATUSES.has(status) || PERMANENT_SKIP_STATUSES.has(status)),
+    status && (AUTHENTICITY_FAILURE_STATUSES.has(status) || PERMANENT_SKIP_STATUSES.has(status)),
   );
 }
 
@@ -711,10 +705,7 @@ export async function requestImmediateSync(
   // updating last_authenticity_check_at via a fresh probe.
   if (
     isAuthenticityFailureStatus(config.last_authenticity_status) &&
-    isWithinAuthenticityCooldown(
-      config.last_authenticity_check_at,
-      config.last_authenticity_status,
-    )
+    isWithinAuthenticityCooldown(config.last_authenticity_check_at, config.last_authenticity_status)
   ) {
     logger.info('immediate_sync_skipped_authenticity_cooldown', {
       hospitalId,
@@ -767,9 +758,7 @@ export async function requestImmediateSync(
       }
     }
 
-    const marketplaceToken = config.marketplace_token
-      ? decryptSafe(config.marketplace_token)
-      : '';
+    const marketplaceToken = config.marketplace_token ? decryptSafe(config.marketplace_token) : '';
 
     await pollHospital(
       db,
@@ -895,7 +884,8 @@ export async function pollHospital(
     emitStep(options, {
       name: 'query_active_ipt',
       status: 'running',
-      message: "Querying HOSxP active admissions where ipt.confirm_discharge = 'N' and ward.is_maternity_ward = 'Y'.",
+      message:
+        "Querying HOSxP active admissions where ipt.confirm_discharge = 'N' and ward.is_maternity_ward = 'Y'.",
     });
     const result = await client.executeQuery(sql, bmsUrl, jwt, undefined, {
       appIdentifier: APP_IDENTIFIER,
@@ -920,13 +910,7 @@ export async function pollHospital(
         message: 'Verifying upstream returned real CID/HN values (round-trip lookup).',
       });
       const firstRow = result.data[0] as Record<string, unknown>;
-      const fp = await fingerprintFirstRow(
-        client,
-        bmsUrl,
-        jwt,
-        options.marketplaceToken,
-        firstRow,
-      );
+      const fp = await fingerprintFirstRow(client, bmsUrl, jwt, options.marketplaceToken, firstRow);
       if (!fp.ok) {
         await recordAuthenticityVerdict(db, hospitalId, fp.status, fp.detail);
         logger.warn('sync_aborted_data_unauthentic', {
@@ -979,10 +963,7 @@ export async function pollHospital(
     const patients: SyncPatientData[] = result.data.map((row) => {
       const rawCid = stringOrNull(row.cid);
       const cidForMatch = isValidCid13(rawCid) ? rawCid : null;
-      const joinedName = [row.pname, row.fname, row.lname]
-        .filter(Boolean)
-        .join(' ')
-        .trim();
+      const joinedName = [row.pname, row.fname, row.lname].filter(Boolean).join(' ').trim();
       const fullName = (stringOrNull(row.patient_name) ?? joinedName) || 'ไม่ระบุชื่อ';
       const age = row.birthday ? calculateAge(String(row.birthday)) : 0;
       const weightKg = numberOrNull(row.weight);
@@ -1045,9 +1026,10 @@ export async function pollHospital(
     emitStep(options, {
       name: 'detect_transfers',
       status: transfers.length > 0 ? 'warning' : 'success',
-      message: transfers.length > 0
-        ? `Detected ${transfers.length} possible transfer rows.`
-        : 'No transfer rows detected.',
+      message:
+        transfers.length > 0
+          ? `Detected ${transfers.length} possible transfer rows.`
+          : 'No transfer rows detected.',
       counts: { transfers: transfers.length },
     });
 
@@ -1165,9 +1147,7 @@ export async function pollHospital(
 
       if (partographResult.data.length > 0) {
         // Resolve AN -> patient_id once for the batch.
-        const ans = Array.from(
-          new Set(partographResult.data.map((r) => String(r.an))),
-        );
+        const ans = Array.from(new Set(partographResult.data.map((r) => String(r.an))));
         const placeholders = ans.map(() => '?').join(',');
         const patientRows = await db.query<{ id: string; an: string }>(
           `SELECT id, an FROM cached_patients
@@ -1187,70 +1167,41 @@ export async function pollHospital(
               sourcePk: String(row.ipt_labour_partograph_id),
               observeDatetime: String(row.observe_datetime),
               hourNo: row.hour_no != null ? Number(row.hour_no) : null,
-              fetalHeartRate:
-                row.fetal_heart_rate != null
-                  ? Number(row.fetal_heart_rate)
-                  : null,
+              fetalHeartRate: row.fetal_heart_rate != null ? Number(row.fetal_heart_rate) : null,
               amnioticFluid: (row.amniotic_fluid as string | null) ?? null,
               amnioticTypeId:
-                row.labour_amniotic_type_id != null
-                  ? Number(row.labour_amniotic_type_id)
-                  : null,
-              amnioticTypeName:
-                (row.amniotic_type_name as string | null) ?? null,
+                row.labour_amniotic_type_id != null ? Number(row.labour_amniotic_type_id) : null,
+              amnioticTypeName: (row.amniotic_type_name as string | null) ?? null,
               moulding: (row.moulding as string | null) ?? null,
               cervicalDilationCm:
-                row.cervical_dilation_cm != null
-                  ? Number(row.cervical_dilation_cm)
-                  : null,
+                row.cervical_dilation_cm != null ? Number(row.cervical_dilation_cm) : null,
               descentOfHead: (row.descent_of_head as string | null) ?? null,
               contractionPer10Min:
-                row.contraction_per_10min != null
-                  ? Number(row.contraction_per_10min)
-                  : null,
+                row.contraction_per_10min != null ? Number(row.contraction_per_10min) : null,
               contractionDurationSec:
-                row.contraction_duration_sec != null
-                  ? Number(row.contraction_duration_sec)
-                  : null,
-              contractionStrength:
-                (row.contraction_strength as string | null) ?? null,
-              oxytocinUml:
-                row.oxytocin_uml != null ? Number(row.oxytocin_uml) : null,
+                row.contraction_duration_sec != null ? Number(row.contraction_duration_sec) : null,
+              contractionStrength: (row.contraction_strength as string | null) ?? null,
+              oxytocinUml: row.oxytocin_uml != null ? Number(row.oxytocin_uml) : null,
               oxytocinDropsMin:
-                row.oxytocin_drops_min != null
-                  ? Number(row.oxytocin_drops_min)
-                  : null,
+                row.oxytocin_drops_min != null ? Number(row.oxytocin_drops_min) : null,
               drugsIvFluids: (row.drugs_iv_fluids as string | null) ?? null,
               pulse: row.pulse != null ? Number(row.pulse) : null,
-              bpSystolic:
-                row.bp_systolic != null ? Number(row.bp_systolic) : null,
-              bpDiastolic:
-                row.bp_diastolic != null ? Number(row.bp_diastolic) : null,
-              temperature:
-                row.temperature != null ? Number(row.temperature) : null,
-              urineVolumeMl:
-                row.urine_volume_ml != null
-                  ? Number(row.urine_volume_ml)
-                  : null,
+              bpSystolic: row.bp_systolic != null ? Number(row.bp_systolic) : null,
+              bpDiastolic: row.bp_diastolic != null ? Number(row.bp_diastolic) : null,
+              temperature: row.temperature != null ? Number(row.temperature) : null,
+              urineVolumeMl: row.urine_volume_ml != null ? Number(row.urine_volume_ml) : null,
               urineProtein: (row.urine_protein as string | null) ?? null,
               urineGlucose: (row.urine_glucose as string | null) ?? null,
               urineAcetone: (row.urine_acetone as string | null) ?? null,
               note: (row.note as string | null) ?? null,
               entryStaff: (row.entry_staff as string | null) ?? null,
-              entryDatetime:
-                row.entry_datetime != null
-                  ? String(row.entry_datetime)
-                  : null,
+              entryDatetime: row.entry_datetime != null ? String(row.entry_datetime) : null,
             };
             return r;
           })
           .filter((r): r is PartographRow => r !== null);
 
-        const partographResultStats = await upsertPartographObservations(
-          db,
-          hospitalId,
-          rows,
-        );
+        const partographResultStats = await upsertPartographObservations(db, hospitalId, rows);
         stats.partographRowsUpserted = partographResultStats.upserted;
         emitStep(options, {
           name: 'persist_partograph',
@@ -1304,16 +1255,22 @@ export async function pollHospital(
       emitStep(options, {
         name: 'query_anc',
         status: 'running',
-        message: "Querying active ANC from person_anc using discharge <> 'Y' + labor_status_id = 1 + EDC/LMP active date window.",
+        message:
+          "Querying active ANC from person_anc using discharge <> 'Y' + labor_status_id = 1 + EDC/LMP active date window.",
       });
-      const [ancPatientsResult, ancServicesResult, ancRisksResult, ancClassifyingResult, ancAddressesResult] =
-        await Promise.all([
-          client.executeQuery(activeAncPatientsSql(), bmsUrl, jwt, undefined, queryOptions),
-          client.executeQuery(activeAncServicesSql(), bmsUrl, jwt, undefined, queryOptions),
-          client.executeQuery(activeAncRisksSql(), bmsUrl, jwt, undefined, queryOptions),
-          client.executeQuery(activeAncClassifyingSql(), bmsUrl, jwt, undefined, queryOptions),
-          client.executeQuery(activeAncAddressesSql(), bmsUrl, jwt, undefined, queryOptions),
-        ]);
+      const [
+        ancPatientsResult,
+        ancServicesResult,
+        ancRisksResult,
+        ancClassifyingResult,
+        ancAddressesResult,
+      ] = await Promise.all([
+        client.executeQuery(activeAncPatientsSql(), bmsUrl, jwt, undefined, queryOptions),
+        client.executeQuery(activeAncServicesSql(), bmsUrl, jwt, undefined, queryOptions),
+        client.executeQuery(activeAncRisksSql(), bmsUrl, jwt, undefined, queryOptions),
+        client.executeQuery(activeAncClassifyingSql(), bmsUrl, jwt, undefined, queryOptions),
+        client.executeQuery(activeAncAddressesSql(), bmsUrl, jwt, undefined, queryOptions),
+      ]);
       stats.anc.sourcePatientsRead = ancPatientsResult.data.length;
       stats.anc.servicesRead = ancServicesResult.data.length;
       stats.anc.risksRead = ancRisksResult.data.length;
@@ -1396,9 +1353,10 @@ export async function pollHospital(
           classifyingRead: ancClassifying.length,
         });
       } else {
-        stats.anc.skippedReason = stats.anc.sourcePatientsRead === 0
-          ? "HOSxP returned 0 active ANC rows. Filter requires discharge <> 'Y', labor_status_id = 1, and EDC >= today-45d or LMP >= today-330d."
-          : 'HOSxP returned ANC rows, but no rows had required person_anc_id/person_id/HN-or-CID fields.';
+        stats.anc.skippedReason =
+          stats.anc.sourcePatientsRead === 0
+            ? "HOSxP returned 0 active ANC rows. Filter requires discharge <> 'Y', labor_status_id = 1, and EDC >= today-45d or LMP >= today-330d."
+            : 'HOSxP returned ANC rows, but no rows had required person_anc_id/person_id/HN-or-CID fields.';
         emitStep(options, {
           name: 'persist_anc',
           status: 'warning',
@@ -1487,9 +1445,7 @@ export async function pollHospital(
       hospitalId,
       runId,
       hadWarningStep ? 'partial' : 'success',
-      hadWarningStep
-        ? 'Sync เสร็จแต่มีบางขั้นตอนเตือน'
-        : 'Sync เสร็จสมบูรณ์',
+      hadWarningStep ? 'Sync เสร็จแต่มีบางขั้นตอนเตือน' : 'Sync เสร็จสมบูรณ์',
       null,
     );
     return stats;
@@ -1515,23 +1471,16 @@ export async function pollHospital(
       detail: errorMessage(error),
     });
     logger.error('polling_failed', { hospitalId, error });
-    await db.execute(
-      "UPDATE hospitals SET connection_status = 'OFFLINE' WHERE id = ?",
-      [hospitalId],
-    );
+    await db.execute("UPDATE hospitals SET connection_status = 'OFFLINE' WHERE id = ?", [
+      hospitalId,
+    ]);
 
     sseManager.broadcast('connection-status', {
       hcode,
       status: 'OFFLINE',
       lastSyncAt: new Date().toISOString(),
     });
-    void finalizeSyncRun(
-      hospitalId,
-      runId,
-      'failed',
-      'Sync ล้มเหลว',
-      errorMessage(error),
-    );
+    void finalizeSyncRun(hospitalId, runId, 'failed', 'Sync ล้มเหลว', errorMessage(error));
     throw error;
   }
 }
@@ -1654,10 +1603,9 @@ export async function startPolling(db: DatabaseAdapter, sseManager: SseManager):
             }
           }
 
-          const marketplaceToken =
-            freshConfig[0]?.marketplace_token
-              ? decryptSafe(freshConfig[0].marketplace_token)
-              : '';
+          const marketplaceToken = freshConfig[0]?.marketplace_token
+            ? decryptSafe(freshConfig[0].marketplace_token)
+            : '';
 
           await pollHospital(
             db,
