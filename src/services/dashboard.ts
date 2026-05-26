@@ -230,7 +230,8 @@ export async function getHighRiskPatients(
   db: DatabaseAdapter,
   limit: number = 20,
 ): Promise<HighRiskPatient[]> {
-  const rows = await db.query<HighRiskRow>(`
+  const rows = await db.query<HighRiskRow>(
+    `
     SELECT
       cp.an,
       cp.hn,
@@ -258,7 +259,9 @@ export async function getHighRiskPatients(
       AND h.is_active = true
     ORDER BY cs.score DESC
     LIMIT ?
-  `, [limit]);
+  `,
+    [limit],
+  );
 
   return rows.map((row) => ({
     an: row.an,
@@ -302,10 +305,9 @@ export async function getHospitalPatientList(
     level: string;
     connection_status: string;
     last_sync_at: string | null;
-  }>(
-    'SELECT id, name, level, connection_status, last_sync_at FROM hospitals WHERE hcode = ?',
-    [hcode],
-  );
+  }>('SELECT id, name, level, connection_status, last_sync_at FROM hospitals WHERE hcode = ?', [
+    hcode,
+  ]);
   if (hospitals.length === 0) {
     return {
       hospital: null,
@@ -354,10 +356,12 @@ export async function getHospitalPatientList(
   // partograph_alert_count are written by upsertPartographObservations()
   // and surfaced here so the patient list can render a severity dot
   // without an extra fetch.
-  const rows = await db.query<Record<string, unknown> & {
-    partograph_severity: string | null;
-    partograph_alert_count: number | null;
-  }>(
+  const rows = await db.query<
+    Record<string, unknown> & {
+      partograph_severity: string | null;
+      partograph_alert_count: number | null;
+    }
+  >(
     `SELECT cp.*,
       cp.partograph_severity,
       cp.partograph_alert_count,
@@ -437,7 +441,12 @@ export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageK
   firstOfMonth.setHours(0, 0, 0, 0);
   const monthStart = firstOfMonth.toISOString();
 
-  const deliveredRows = await db.query<{ total: number; abnormal: number; low_apgar: number; lbw: number }>(
+  const deliveredRows = await db.query<{
+    total: number;
+    abnormal: number;
+    low_apgar: number;
+    lbw: number;
+  }>(
     `SELECT COUNT(*) as total,
             SUM(CASE WHEN cn.apgar_1min < 7 OR cn.birth_weight_g < 2500 THEN 1 ELSE 0 END) as abnormal,
             SUM(CASE WHEN cn.apgar_1min < 7 THEN 1 ELSE 0 END) as low_apgar,
@@ -564,14 +573,21 @@ function resolveShifts(now: Date = new Date()): { current: ShiftWindow; previous
   // Determine Bangkok-local time components from the UTC instant.
   const bkk = new Date(now.getTime() + 7 * 3600 * 1000);
   const bkkHour = bkk.getUTCHours();
-  const bkkDate = new Date(
-    Date.UTC(bkk.getUTCFullYear(), bkk.getUTCMonth(), bkk.getUTCDate()),
-  );
+  const bkkDate = new Date(Date.UTC(bkk.getUTCFullYear(), bkk.getUTCMonth(), bkk.getUTCDate()));
 
   // Build candidate windows around today (and yesterday, for previous).
-  const mkWindow = (dayOffset: number, startH: number, endH: number, label: string): ShiftWindow => {
-    const start = new Date(bkkDate.getTime() + dayOffset * 86400_000 + startH * 3600_000 - 7 * 3600_000);
-    const end = new Date(bkkDate.getTime() + dayOffset * 86400_000 + endH * 3600_000 - 7 * 3600_000);
+  const mkWindow = (
+    dayOffset: number,
+    startH: number,
+    endH: number,
+    label: string,
+  ): ShiftWindow => {
+    const start = new Date(
+      bkkDate.getTime() + dayOffset * 86400_000 + startH * 3600_000 - 7 * 3600_000,
+    );
+    const end = new Date(
+      bkkDate.getTime() + dayOffset * 86400_000 + endH * 3600_000 - 7 * 3600_000,
+    );
     return { label, windowStart: start, windowEnd: end };
   };
 
@@ -796,8 +812,7 @@ function resolveDestinationHcode(
     if (!cap) return { destination: null, triggersAtSpoke };
     const exceedsGa = gaWeeks < cap.minGaWeeks;
     const exceedsFw = efwG != null && efwG < cap.minFetalWeightG;
-    const exceedsRisk =
-      ANC_RISK_LEVEL_ORDER[riskLevel] > ANC_RISK_LEVEL_ORDER[cap.maxRiskLevel];
+    const exceedsRisk = ANC_RISK_LEVEL_ORDER[riskLevel] > ANC_RISK_LEVEL_ORDER[cap.maxRiskLevel];
 
     // Record the triggers that fired at the actual spoke (first iteration only)
     if (i === 0) {

@@ -18,9 +18,7 @@ import { LoadingState } from '@/components/shared/LoadingState';
 import { ConnectionStatus } from '@/components/shared/ConnectionStatus';
 import { ANC_RISK_RULES } from '@/config/anc-risk-rules';
 import { buildPatientId } from '@/lib/utils';
-import {
-  ConnectionStatus as ConnectionStatusEnum,
-} from '@/types/domain';
+import { ConnectionStatus as ConnectionStatusEnum } from '@/types/domain';
 import type {
   JourneyListResponse,
   JourneyListItem,
@@ -111,7 +109,11 @@ function ancTier(level: string | null): 'high' | 'medium' | 'low' {
 }
 
 function tierColor(tier: 'high' | 'medium' | 'low'): string {
-  return tier === 'high' ? 'var(--risk-high)' : tier === 'medium' ? 'var(--risk-medium)' : 'var(--risk-low)';
+  return tier === 'high'
+    ? 'var(--risk-high)'
+    : tier === 'medium'
+      ? 'var(--risk-medium)'
+      : 'var(--risk-low)';
 }
 
 function gaTrimester(weeks: number | null): 'T3' | 'T2' | 'T1' | 'unknown' {
@@ -131,7 +133,10 @@ function daysSince(iso: string | null): number | null {
   return (Date.now() - new Date(iso).getTime()) / 86400000;
 }
 
-function formatEdc(edcIso: string | null, gaWeeks: number | null): { daysToEdc: number | null; edcText: string } {
+function formatEdc(
+  edcIso: string | null,
+  gaWeeks: number | null,
+): { daysToEdc: number | null; edcText: string } {
   if (!edcIso) {
     return { daysToEdc: null, edcText: '—' };
   }
@@ -201,10 +206,7 @@ interface KpiProps {
 
 function KpiCell({ group, label, value, unit, sub, valueColor, riskMix }: KpiProps) {
   return (
-    <div
-      className="relative px-5 py-3"
-      style={{ borderRight: '1px solid var(--rule-strong)' }}
-    >
+    <div className="relative px-5 py-3" style={{ borderRight: '1px solid var(--rule-strong)' }}>
       <div
         className="absolute right-3 top-1 font-mono text-[8px] tracking-[0.16em] opacity-50"
         style={{ color: 'var(--ink-navy-muted)' }}
@@ -225,10 +227,8 @@ function KpiCell({ group, label, value, unit, sub, valueColor, riskMix }: KpiPro
           </span>
         )}
       </div>
-      {sub && (
-        <div className="mt-1 font-mono text-[11px] text-[var(--ink-navy-dim)]">{sub}</div>
-      )}
-      {riskMix && (riskMix.low + riskMix.medium + riskMix.high) > 0 && (
+      {sub && <div className="mt-1 font-mono text-[11px] text-[var(--ink-navy-dim)]">{sub}</div>}
+      {riskMix && riskMix.low + riskMix.medium + riskMix.high > 0 && (
         <div
           className="mt-2 flex h-1 overflow-hidden rounded-sm"
           style={{ background: 'var(--rule-hair)' }}
@@ -264,9 +264,7 @@ function Sig({ label, value, unit, sub, alarm, warn }: SigProps) {
       >
         {value}
         {unit && (
-          <span className="ml-1 text-[10px] font-normal text-[var(--ink-navy-muted)]">
-            {unit}
-          </span>
+          <span className="ml-1 text-[10px] font-normal text-[var(--ink-navy-muted)]">{unit}</span>
         )}
       </div>
       {sub && (
@@ -395,9 +393,7 @@ function AncRow({ j, isSelected, onSelect, onOpen }: AncRowProps) {
         </div>
       </div>
       <div className="text-center font-mono text-[11px] text-[var(--ink-navy-dim)]">
-        <span className="text-[14px] font-semibold text-[var(--ink-navy)]">
-          {j.gaWeeks ?? '—'}
-        </span>
+        <span className="text-[14px] font-semibold text-[var(--ink-navy)]">{j.gaWeeks ?? '—'}</span>
         <span className="opacity-60">w</span>
       </div>
       <div className="flex flex-col">
@@ -429,7 +425,17 @@ function AncRow({ j, isSelected, onSelect, onOpen }: AncRowProps) {
 
 // ─── Section headers (trimester / stage groupings) ──────────────────────
 
-function GroupHeader({ title, sub, count, hr }: { title: string; sub?: string; count: number; hr?: number }) {
+function GroupHeader({
+  title,
+  sub,
+  count,
+  hr,
+}: {
+  title: string;
+  sub?: string;
+  count: number;
+  hr?: number;
+}) {
   return (
     <div
       className="flex items-center justify-between px-3 py-1.5"
@@ -444,16 +450,12 @@ function GroupHeader({ title, sub, count, hr }: { title: string; sub?: string; c
           {title}
         </span>
         {sub && (
-          <span className="ml-2 font-mono text-[10px] text-[var(--ink-navy-muted)]">
-            {sub}
-          </span>
+          <span className="ml-2 font-mono text-[10px] text-[var(--ink-navy-muted)]">{sub}</span>
         )}
       </div>
       <div className="font-mono text-[11px] font-semibold text-[var(--accent-navy)] tabular-nums">
         {count}
-        {hr != null && hr > 0 && (
-          <span className="ml-2 text-[var(--risk-high)]">· HR3 {hr}</span>
-        )}
+        {hr != null && hr > 0 && <span className="ml-2 text-[var(--risk-high)]">· HR3 {hr}</span>}
       </div>
     </div>
   );
@@ -470,9 +472,7 @@ function EmptyPreview({ message }: { message: string }) {
       <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--ink-navy-muted)]">
         SELECT A PATIENT
       </div>
-      <p className="mt-2 max-w-sm text-[12px] text-[var(--ink-navy-dim)]">
-        {message}
-      </p>
+      <p className="mt-2 max-w-sm text-[12px] text-[var(--ink-navy-dim)]">{message}</p>
     </div>
   );
 }
@@ -486,7 +486,7 @@ function LaborPreview({ patient, hcode }: { patient: LaborPatient; hcode: string
   const v = patient.latest_vitals;
   const fhr = v?.fetal_hr ? parseInt(v.fetal_hr, 10) : null;
   const fhrAlarm = fhr != null && (fhr > 160 || fhr < 110);
-  const sbpAlarm = v?.sbp != null && (v.sbp >= 160);
+  const sbpAlarm = v?.sbp != null && v.sbp >= 160;
   const sbpWarn = !sbpAlarm && v?.sbp != null && v.sbp >= 140;
   const dbpAlarm = v?.dbp != null && v.dbp >= 110;
   const dbpWarn = !dbpAlarm && v?.dbp != null && v.dbp >= 90;
@@ -541,7 +541,11 @@ function LaborPreview({ patient, hcode }: { patient: LaborPatient; hcode: string
             warn={bpWarn}
             sub={bpAlarm ? '↑↑ severe-PE' : bpWarn ? '↑ borderline' : 'normal'}
           />
-          <Sig label="MHR" value={v?.maternal_hr != null ? String(v.maternal_hr) : '—'} unit="bpm" />
+          <Sig
+            label="MHR"
+            value={v?.maternal_hr != null ? String(v.maternal_hr) : '—'}
+            unit="bpm"
+          />
           <Sig
             label="FHR"
             value={v?.fetal_hr ?? '—'}
@@ -619,26 +623,17 @@ function AncPreview({ journeyId, hcode }: { journeyId: string; hcode: string }) 
   // Hooks must run unconditionally — sort visits before any early return.
   // SWR returns the same `data.ancVisits` reference across re-renders until a
   // new fetch lands, so depending on it directly is referentially stable.
-  const visitsChrono = useMemo(
-    () => {
-      const v = data?.ancVisits ?? [];
-      return [...v].sort((a, b) => new Date(a.visitDate).getTime() - new Date(b.visitDate).getTime());
-    },
-    [data?.ancVisits],
-  );
+  const visitsChrono = useMemo(() => {
+    const v = data?.ancVisits ?? [];
+    return [...v].sort((a, b) => new Date(a.visitDate).getTime() - new Date(b.visitDate).getTime());
+  }, [data?.ancVisits]);
 
   if (isLoading) {
     return <EmptyPreview message="กำลังโหลดข้อมูลฝากครรภ์…" />;
   }
   if (error || !data?.journey) {
     return (
-      <EmptyPreview
-        message={
-          error instanceof Error
-            ? error.message
-            : 'ไม่พบข้อมูลฝากครรภ์'
-        }
-      />
+      <EmptyPreview message={error instanceof Error ? error.message : 'ไม่พบข้อมูลฝากครรภ์'} />
     );
   }
 
@@ -652,7 +647,8 @@ function AncPreview({ journeyId, hcode }: { journeyId: string; hcode: string }) 
 
   // Build a rough EDC progress percentage. 40 weeks total; we cap at 99
   // so the marker doesn't disappear at exactly term.
-  const edcPct = journey.gaWeeks != null ? Math.min(99, Math.max(0, (journey.gaWeeks / 40) * 100)) : 0;
+  const edcPct =
+    journey.gaWeeks != null ? Math.min(99, Math.max(0, (journey.gaWeeks / 40) * 100)) : 0;
   const sbpVals = visitsChrono.map((v) => v.bpSystolic).filter((x): x is number => x != null);
   const dbpVals = visitsChrono.map((v) => v.bpDiastolic).filter((x): x is number => x != null);
 
@@ -743,10 +739,7 @@ function AncPreview({ journeyId, hcode }: { journeyId: string; hcode: string }) 
             {journey.edc ? ` · EDC ${journey.edc.slice(0, 10)}` : ''}
           </div>
         </div>
-        <div
-          className="bg-white p-3"
-          style={{ border: '1px solid var(--rule-strong)' }}
-        >
+        <div className="bg-white p-3" style={{ border: '1px solid var(--rule-strong)' }}>
           <div className="mb-2 flex justify-between font-mono text-[11px] text-[var(--ink-navy-muted)]">
             <span>
               GA:{' '}
@@ -810,7 +803,9 @@ function AncPreview({ journeyId, hcode }: { journeyId: string; hcode: string }) 
                     className="flex items-center gap-2 px-3 py-1.5 text-[12px]"
                     style={{ borderBottom: '1px solid var(--rule-hair)' }}
                   >
-                    <span className="font-mono text-[10px] text-[var(--ink-navy-muted)]">{rid}</span>
+                    <span className="font-mono text-[10px] text-[var(--ink-navy-muted)]">
+                      {rid}
+                    </span>
                   </div>
                 );
               }
@@ -889,18 +884,21 @@ function AncPreview({ journeyId, hcode }: { journeyId: string; hcode: string }) 
             border: '1px solid var(--rule-strong)',
           }}
         >
-          <LabCell label="GROUP" value={journey.bloodGroup ? `${journey.bloodGroup} ${journey.rhFactor === 'NEG' ? 'Rh-' : journey.rhFactor === 'POS' ? 'Rh+' : ''}`.trim() : null} />
+          <LabCell
+            label="GROUP"
+            value={
+              journey.bloodGroup
+                ? `${journey.bloodGroup} ${journey.rhFactor === 'NEG' ? 'Rh-' : journey.rhFactor === 'POS' ? 'Rh+' : ''}`.trim()
+                : null
+            }
+          />
           <LabCell label="HBSAG" value={journey.hbsagResult} />
           <LabCell label="VDRL" value={journey.vdrlResult} />
           <LabCell label="HIV" value={journey.hivResult} />
           <LabCell label="OGTT" value={journey.ogttResult} alarmIfMatches={['ABNORMAL', 'POS']} />
           <LabCell label="DCIP" value={journey.dcipResult} alarmIfMatches={['POS']} />
           <LabCell label="HbE" value={journey.hbEResult} alarmIfMatches={['POS']} />
-          <LabCell
-            label="GBS"
-            value={journey.gbsResult}
-            alarmIfMatches={['POS']}
-          />
+          <LabCell label="GBS" value={journey.gbsResult} alarmIfMatches={['POS']} />
         </div>
       </div>
     </div>
@@ -964,9 +962,25 @@ function BpSparkline({ visits }: { visits: AncVisitEntry[] }) {
 
   return (
     <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-      <line x1="0" y1={yFor(140)} x2={W} y2={yFor(140)} stroke="var(--rule-hair)" strokeDasharray="3 2" />
-      <line x1="0" y1={yFor(90)} x2={W} y2={yFor(90)} stroke="var(--rule-hair)" strokeDasharray="3 2" />
-      {sbpPts && <polyline points={sbpPts} fill="none" stroke="var(--accent-navy)" strokeWidth="1.8" />}
+      <line
+        x1="0"
+        y1={yFor(140)}
+        x2={W}
+        y2={yFor(140)}
+        stroke="var(--rule-hair)"
+        strokeDasharray="3 2"
+      />
+      <line
+        x1="0"
+        y1={yFor(90)}
+        x2={W}
+        y2={yFor(90)}
+        stroke="var(--rule-hair)"
+        strokeDasharray="3 2"
+      />
+      {sbpPts && (
+        <polyline points={sbpPts} fill="none" stroke="var(--accent-navy)" strokeWidth="1.8" />
+      )}
       {dbpPts && (
         <polyline
           points={dbpPts}
@@ -981,9 +995,15 @@ function BpSparkline({ visits }: { visits: AncVisitEntry[] }) {
         const isLast = i === visits.length - 1;
         const alarm = v.bpSystolic >= 140;
         const fill = isLast
-          ? alarm ? 'var(--risk-high)' : 'var(--accent-navy)'
-          : alarm ? 'var(--risk-medium)' : 'var(--risk-low)';
-        return <circle key={i} cx={i * xStep} cy={yFor(v.bpSystolic)} r={isLast ? 4 : 3} fill={fill} />;
+          ? alarm
+            ? 'var(--risk-high)'
+            : 'var(--accent-navy)'
+          : alarm
+            ? 'var(--risk-medium)'
+            : 'var(--risk-low)';
+        return (
+          <circle key={i} cx={i * xStep} cy={yFor(v.bpSystolic)} r={isLast ? 4 : 3} fill={fill} />
+        );
       })}
     </svg>
   );
@@ -991,11 +1011,7 @@ function BpSparkline({ visits }: { visits: AncVisitEntry[] }) {
 
 // ─── Main page ──────────────────────────────────────────────────────────
 
-export default function HospitalConsolePage({
-  params,
-}: {
-  params: Promise<{ hcode: string }>;
-}) {
+export default function HospitalConsolePage({ params }: { params: Promise<{ hcode: string }> }) {
   const { hcode } = use(params);
   const router = useRouter();
   const [tab, setTab] = useState<TabKey>('labor');
@@ -1035,7 +1051,9 @@ export default function HospitalConsolePage({
   const labor = useMemo(() => {
     const list = laborData?.patients ?? [];
     const order: Record<string, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
-    return [...list].sort((a, b) => (order[a.cpd_risk_level ?? 'LOW'] ?? 3) - (order[b.cpd_risk_level ?? 'LOW'] ?? 3));
+    return [...list].sort(
+      (a, b) => (order[a.cpd_risk_level ?? 'LOW'] ?? 3) - (order[b.cpd_risk_level ?? 'LOW'] ?? 3),
+    );
   }, [laborData]);
 
   // Stable reference for downstream memos — `ancData?.journeys ?? []` would
@@ -1063,7 +1081,10 @@ export default function HospitalConsolePage({
   // Group ANC by trimester for the list view
   const ancByTrimester = useMemo(() => {
     const groups: Record<'T3' | 'T2' | 'T1' | 'unknown', JourneyListItem[]> = {
-      T3: [], T2: [], T1: [], unknown: [],
+      T3: [],
+      T2: [],
+      T1: [],
+      unknown: [],
     };
     for (const j of journeys) groups[gaTrimester(j.gaWeeks)].push(j);
     const o: Record<string, number> = { HR3: 0, HR2: 1, HR1: 2, LOW: 3 };
@@ -1107,18 +1128,20 @@ export default function HospitalConsolePage({
   }, [journeys]);
   const ancHr3 = ancMix.high;
   const ancOverdue = useMemo(
-    () => journeys.filter((j) => {
-      const d = daysSince(j.lastAncDate);
-      return d != null && d >= 14;
-    }).length,
+    () =>
+      journeys.filter((j) => {
+        const d = daysSince(j.lastAncDate);
+        return d != null && d >= 14;
+      }).length,
     [journeys],
   );
   const ancDueWeek = useMemo(
-    () => journeys.filter((j) => {
-      if (!j.edc) return false;
-      const d = (new Date(j.edc).getTime() - now) / 86400000;
-      return d >= 0 && d <= 7;
-    }).length,
+    () =>
+      journeys.filter((j) => {
+        if (!j.edc) return false;
+        const d = (new Date(j.edc).getTime() - now) / 86400000;
+        return d >= 0 && d <= 7;
+      }).length,
     [journeys, now],
   );
 
@@ -1268,23 +1291,44 @@ export default function HospitalConsolePage({
               ผู้คลอดที่จะส่งต่อมา · GA ≥ {incomingData?.minGaWeeks ?? 34} สัปดาห์
             </div>
             <div className="font-mono text-[10px] tracking-[0.08em] text-[var(--ink-navy-muted)]">
-              {incomingCount} ราย · {incomingItems.length === incomingCount ? 'ทั้งหมด' : `แสดง ${incomingItems.length}`}
+              {incomingCount} ราย ·{' '}
+              {incomingItems.length === incomingCount ? 'ทั้งหมด' : `แสดง ${incomingItems.length}`}
             </div>
           </div>
           <div className="overflow-x-auto" style={{ maxHeight: 320 }}>
             <table className="w-full border-collapse text-[13px]">
               <thead className="sticky top-0 bg-[var(--surface-cool)] text-[var(--ink-navy-muted)]">
                 <tr>
-                  <th className="px-5 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.1em]">HN</th>
-                  <th className="px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.1em]">ชื่อ</th>
-                  <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.1em]">อายุ</th>
-                  <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.1em]">G/P</th>
-                  <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.1em]">GA</th>
-                  <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.1em]">EFW</th>
-                  <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.1em]">EDC / วันที่เหลือ</th>
-                  <th className="px-3 py-1.5 text-center font-mono text-[10px] uppercase tracking-[0.1em]">ANC</th>
-                  <th className="px-3 py-1.5 text-center font-mono text-[10px] uppercase tracking-[0.1em]">เหตุผล</th>
-                  <th className="px-5 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.1em]">จาก</th>
+                  <th className="px-5 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.1em]">
+                    HN
+                  </th>
+                  <th className="px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.1em]">
+                    ชื่อ
+                  </th>
+                  <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.1em]">
+                    อายุ
+                  </th>
+                  <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.1em]">
+                    G/P
+                  </th>
+                  <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.1em]">
+                    GA
+                  </th>
+                  <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.1em]">
+                    EFW
+                  </th>
+                  <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.1em]">
+                    EDC / วันที่เหลือ
+                  </th>
+                  <th className="px-3 py-1.5 text-center font-mono text-[10px] uppercase tracking-[0.1em]">
+                    ANC
+                  </th>
+                  <th className="px-3 py-1.5 text-center font-mono text-[10px] uppercase tracking-[0.1em]">
+                    เหตุผล
+                  </th>
+                  <th className="px-5 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.1em]">
+                    จาก
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1303,17 +1347,24 @@ export default function HospitalConsolePage({
                       style={{ borderColor: 'var(--rule-hair)' }}
                       onClick={() => router.push(`/pregnancies/${p.id}`)}
                     >
-                      <td className="px-5 py-1.5 font-mono text-[12px] tabular-nums text-[var(--ink-navy)]">{p.hn}</td>
+                      <td className="px-5 py-1.5 font-mono text-[12px] tabular-nums text-[var(--ink-navy)]">
+                        {p.hn}
+                      </td>
                       <td className="px-3 py-1.5 text-[var(--ink-navy)]">{maskName(p.name)}</td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums">{p.age}</td>
-                      <td className="px-3 py-1.5 text-right font-mono tabular-nums">{p.gravida}/{p.para}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums">
+                        {p.gravida}/{p.para}
+                      </td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums">
                         {p.gaWeeks != null ? `${p.gaWeeks}w` : '—'}
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums text-[var(--ink-navy-dim)]">
                         {p.efwG != null ? `${p.efwG}g` : '—'}
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono tabular-nums" style={{ color: edcTone }}>
+                      <td
+                        className="px-3 py-1.5 text-right font-mono tabular-nums"
+                        style={{ color: edcTone }}
+                      >
                         {p.edc ? p.edc.slice(0, 10) : '—'}
                         {p.daysToEdc != null && (
                           <span className="ml-1.5 text-[10px] text-[var(--ink-navy-muted)]">
@@ -1336,7 +1387,9 @@ export default function HospitalConsolePage({
                         {p.triggers.join('+') || '—'}
                       </td>
                       <td className="px-5 py-1.5 text-[12px] text-[var(--ink-navy-dim)]">
-                        <span className="font-mono text-[10px] text-[var(--ink-navy-muted)]">[{p.fromHcode}]</span>{' '}
+                        <span className="font-mono text-[10px] text-[var(--ink-navy-muted)]">
+                          [{p.fromHcode}]
+                        </span>{' '}
                         {p.fromHospitalName}
                       </td>
                     </tr>
@@ -1359,7 +1412,8 @@ export default function HospitalConsolePage({
           style={{
             color: tab === 'labor' ? 'var(--ink-navy)' : 'var(--ink-navy-muted)',
             fontWeight: tab === 'labor' ? 700 : 500,
-            borderBottom: tab === 'labor' ? '2px solid var(--accent-navy)' : '2px solid transparent',
+            borderBottom:
+              tab === 'labor' ? '2px solid var(--accent-navy)' : '2px solid transparent',
           }}
         >
           LABOR WARD
@@ -1431,7 +1485,9 @@ export default function HospitalConsolePage({
           >
             <div className="font-mono text-[12px] tracking-[0.1em] text-[var(--ink-navy)]">
               <span className="text-[var(--ink-navy-muted)] mr-1.5">01</span>
-              {tab === 'labor' ? 'LABOR FLOOR · เรียงตามความเสี่ยง' : 'ANC LIST · เรียงตามไตรมาส / ความเสี่ยง'}
+              {tab === 'labor'
+                ? 'LABOR FLOOR · เรียงตามความเสี่ยง'
+                : 'ANC LIST · เรียงตามไตรมาส / ความเสี่ยง'}
             </div>
             <div className="font-mono text-[10px] tracking-[0.08em] text-[var(--ink-navy-muted)]">
               {tab === 'labor' ? `${labor.length} PATIENTS` : `${journeys.length} PATIENTS`} · LIVE
@@ -1440,7 +1496,10 @@ export default function HospitalConsolePage({
 
           {tab === 'labor' ? (
             labor.length === 0 ? (
-              <div className="border bg-white py-10 text-center" style={{ borderColor: 'var(--rule-strong)' }}>
+              <div
+                className="border bg-white py-10 text-center"
+                style={{ borderColor: 'var(--rule-strong)' }}
+              >
                 <p className="font-mono text-[11px] text-[var(--ink-navy-muted)]">
                   ไม่มีผู้คลอดในขณะนี้
                 </p>
@@ -1462,7 +1521,10 @@ export default function HospitalConsolePage({
               </div>
             )
           ) : journeys.length === 0 ? (
-            <div className="border bg-white py-10 text-center" style={{ borderColor: 'var(--rule-strong)' }}>
+            <div
+              className="border bg-white py-10 text-center"
+              style={{ borderColor: 'var(--rule-strong)' }}
+            >
               <p className="font-mono text-[11px] text-[var(--ink-navy-muted)]">
                 ยังไม่มีหญิงตั้งครรภ์ลงทะเบียนกับโรงพยาบาลนี้
               </p>
@@ -1474,13 +1536,15 @@ export default function HospitalConsolePage({
                 if (list.length === 0) return null;
                 const hr = list.filter((j) => j.ancRiskLevel === 'HR3').length;
                 const title =
-                  tri === 'T3' ? '3RD TRIMESTER' :
-                  tri === 'T2' ? '2ND TRIMESTER' :
-                  tri === 'T1' ? '1ST TRIMESTER' : 'GA UNKNOWN';
+                  tri === 'T3'
+                    ? '3RD TRIMESTER'
+                    : tri === 'T2'
+                      ? '2ND TRIMESTER'
+                      : tri === 'T1'
+                        ? '1ST TRIMESTER'
+                        : 'GA UNKNOWN';
                 const sub =
-                  tri === 'T3' ? '28w+' :
-                  tri === 'T2' ? '13–27w' :
-                  tri === 'T1' ? '0–12w' : '—';
+                  tri === 'T3' ? '28w+' : tri === 'T2' ? '13–27w' : tri === 'T1' ? '0–12w' : '—';
                 return (
                   <div key={tri}>
                     <GroupHeader title={title} sub={sub} count={list.length} hr={hr} />

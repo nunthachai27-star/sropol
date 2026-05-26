@@ -31,10 +31,9 @@ export async function GET(
 
     // Confirm the hub exists. Returning 404 keeps the URL contract clean
     // (otherwise callers can't distinguish "unknown hcode" from "no incoming").
-    const hospitals = await db.query<{ id: string }>(
-      `SELECT id FROM hospitals WHERE hcode = ?`,
-      [hcode],
-    );
+    const hospitals = await db.query<{ id: string }>(`SELECT id FROM hospitals WHERE hcode = ?`, [
+      hcode,
+    ]);
     if (hospitals.length === 0) {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: 'ไม่พบโรงพยาบาล', details: null } },
