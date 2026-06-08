@@ -1,5 +1,6 @@
 import { SessionProvider } from 'next-auth/react';
 import { BmsSessionProvider } from '@/contexts/BmsSessionContext';
+import { withBasePath } from '@/lib/base-path';
 import { TopNavBarSlot } from '@/components/layout/TopNavBarSlot';
 import { ContentFrameSlot } from '@/components/layout/ContentFrameSlot';
 import { BreadcrumbProvider } from '@/components/layout/BreadcrumbContext';
@@ -13,7 +14,7 @@ import { DbHealthBanner } from '@/components/layout/DbHealthBanner';
 // who arrive at `/` without marketplace context.
 export default function ProvincialLayout({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider>
+    <SessionProvider basePath={withBasePath('/api/auth')}>
       <BmsSessionProvider>
         <BreadcrumbProvider>
           <div className="flex min-h-screen flex-col bg-slate-50/50">

@@ -7,6 +7,7 @@ import { signIn } from 'next-auth/react';
 import { Building2, Activity, BarChart3, Shield, Clock, AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { withBasePath } from '@/lib/base-path';
 import {
   Dialog,
   DialogContent,
@@ -74,7 +75,7 @@ function LoginForm() {
       // Preflight: differentiate "bad session" from "hospital not registered"
       // BEFORE NextAuth swallows the rejection reason into a generic
       // CredentialsSignin error. The endpoint is public (no auth needed).
-      const preflightRes = await fetch('/api/auth/hospital-preflight', {
+      const preflightRes = await fetch(withBasePath('/api/auth/hospital-preflight'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: trimmed }),
@@ -168,7 +169,9 @@ function LoginForm() {
   };
 
   const handleProviderLogin = () => {
-    window.location.href = `/api/auth/provider/start?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+    window.location.href = withBasePath(
+      `/api/auth/provider/start?callbackUrl=${encodeURIComponent(callbackUrl)}`,
+    );
   };
 
   return (
@@ -192,8 +195,8 @@ function LoginForm() {
               <Building2 className="h-7 w-7 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white">KK-LRMS</h1>
-              <p className="text-sm text-slate-400">Khon Kaen Labor Room Monitoring System</p>
+              <h1 className="text-2xl font-bold text-white">SR-LRMS</h1>
+              <p className="text-sm text-slate-400">Surin Labor Room Monitoring System</p>
             </div>
           </div>
         </div>
@@ -204,7 +207,7 @@ function LoginForm() {
             <br />
             การคลอด
             <br />
-            จังหวัดขอนแก่น
+            จังหวัดสุรินทร์
           </h2>
 
           <div className="space-y-3">
@@ -228,7 +231,7 @@ function LoginForm() {
         </div>
 
         <p className="relative z-10 text-xs text-slate-500">
-          v1.0.0 — สำนักงานสาธารณสุขจังหวัดขอนแก่น
+          v1.0.0 — สำนักงานสาธารณสุขจังหวัดสุรินทร์
         </p>
       </div>
 
@@ -243,8 +246,8 @@ function LoginForm() {
                   <Building2 className="h-6 w-6 text-white" />
                 </div>
               </div>
-              <h1 className="text-lg font-bold text-white">KK-LRMS</h1>
-              <p className="text-sm text-slate-400">ระบบติดตามการคลอดจังหวัดขอนแก่น</p>
+              <h1 className="text-lg font-bold text-white">SR-LRMS</h1>
+              <p className="text-sm text-slate-400">ระบบติดตามการคลอดจังหวัดสุรินทร์</p>
             </div>
           </div>
 
@@ -296,8 +299,8 @@ function LoginForm() {
                 </div>
                 <div className="text-red-700 text-xs leading-relaxed border-t border-red-200 pt-2">
                   {accessDenied.reason === 'deactivated'
-                    ? 'โรงพยาบาลของท่านถูกปิดการใช้งานในระบบ KK-LRMS หากท่านคิดว่าเป็นความผิดพลาด กรุณาติดต่อผู้ดูแลระบบ (สสจ.ขอนแก่น) เพื่อขอเปิดใช้งานอีกครั้ง'
-                    : 'โรงพยาบาลของท่านยังไม่ได้รับการลงทะเบียนในระบบ KK-LRMS หากท่านคิดว่าเป็นความผิดพลาด หรือต้องการเข้าร่วมเครือข่าย กรุณาติดต่อผู้ดูแลระบบ (สสจ.ขอนแก่น) เพื่อขอลงทะเบียนโรงพยาบาลของท่านในระบบ'}
+                    ? 'โรงพยาบาลของท่านถูกปิดการใช้งานในระบบ SR-LRMS หากท่านคิดว่าเป็นความผิดพลาด กรุณาติดต่อผู้ดูแลระบบ (สสจ.สุรินทร์) เพื่อขอเปิดใช้งานอีกครั้ง'
+                    : 'โรงพยาบาลของท่านยังไม่ได้รับการลงทะเบียนในระบบ SR-LRMS หากท่านคิดว่าเป็นความผิดพลาด หรือต้องการเข้าร่วมเครือข่าย กรุณาติดต่อผู้ดูแลระบบ (สสจ.สุรินทร์) เพื่อขอลงทะเบียนโรงพยาบาลของท่านในระบบ'}
                 </div>
               </div>
             )}
@@ -370,13 +373,13 @@ function LoginForm() {
 
           <div className="text-center space-y-2">
             <p className="text-xs text-slate-400">
-              ระบบตรวจสอบสิทธิ์ผ่าน BMS Session ของ สสจ.ขอนแก่น
+              ระบบตรวจสอบสิทธิ์ผ่าน BMS Session ของ สสจ.สุรินทร์
             </p>
             <a
               href="/about"
               className="inline-block text-sm text-slate-400 hover:text-teal-600 transition-colors"
             >
-              เกี่ยวกับระบบ KK-LRMS
+              เกี่ยวกับระบบ SR-LRMS
             </a>
           </div>
         </div>
@@ -400,7 +403,7 @@ function LoginForm() {
                     ต้องอัปเดต HOSxP ก่อนใช้งาน
                   </DialogTitle>
                   <DialogDescription className="text-xs text-red-700/80 mt-1">
-                    เวอร์ชัน HOSxP API ของโรงพยาบาลเก่ากว่าที่ระบบ KK-LRMS รองรับ
+                    เวอร์ชัน HOSxP API ของโรงพยาบาลเก่ากว่าที่ระบบ SR-LRMS รองรับ
                   </DialogDescription>
                 </DialogHeader>
               </div>
@@ -449,7 +452,7 @@ function LoginForm() {
                 {' '}
                 <span className="font-mono font-semibold">{versionRejection.minVersion}</span>
                 {' '}
-                ขึ้นไป จากนั้นจึงเข้าใช้งาน KK-LRMS อีกครั้ง
+                ขึ้นไป จากนั้นจึงเข้าใช้งาน SR-LRMS อีกครั้ง
               </div>
             </div>
           )}

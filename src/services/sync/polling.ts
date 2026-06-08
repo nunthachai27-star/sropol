@@ -946,7 +946,7 @@ export async function pollHospital(
     emitStep(options, {
       name: 'read_local_active_patients',
       status: 'running',
-      message: 'Reading existing active cached patients from KK-LRMS.',
+      message: 'Reading existing active cached patients from SR-LRMS.',
     });
     const existing = await db.query<{ an: string }>(
       "SELECT an FROM cached_patients WHERE hospital_id = ? AND labor_status = 'ACTIVE'",
@@ -1325,7 +1325,7 @@ export async function pollHospital(
         emitStep(options, {
           name: 'persist_anc',
           status: 'running',
-          message: `Upserting ${ancPatients.length} ANC pregnancies and ${ancServices.length} ANC visits into KK-LRMS.`,
+          message: `Upserting ${ancPatients.length} ANC pregnancies and ${ancServices.length} ANC visits into SR-LRMS.`,
           counts: { pregnancies: ancPatients.length, visits: ancServices.length },
         });
         const ancSynced = await syncAncData(

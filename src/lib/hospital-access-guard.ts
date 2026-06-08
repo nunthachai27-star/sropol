@@ -58,6 +58,12 @@ function parseHcodeSet(
 
 export const EXEMPT_HCODES: ReadonlySet<string> = parseHcodeSet(undefined, ['00000', '99999']);
 
+// Hospital codes whose BMS sessions are granted ADMIN role regardless of the
+// user's BMS position. 99999 is the provincial-admin sandbox hcode. Override /
+// extend via the ADMIN_HCODES env var (comma-separated). The middleware's
+// ADMIN_ALLOWED_CIDS allow-list still applies on top when it is non-empty.
+export const ADMIN_HCODES: ReadonlySet<string> = parseHcodeSet(process.env.ADMIN_HCODES, ['99999']);
+
 export const READONLY_LOGIN_HCODES: ReadonlySet<string> = parseHcodeSet(
   process.env.READONLY_LOGIN_HCODES,
 );

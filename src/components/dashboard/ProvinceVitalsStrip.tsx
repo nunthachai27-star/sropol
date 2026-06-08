@@ -73,8 +73,8 @@ export function ProvinceVitalsStrip({ summary, trends }: ProvinceVitalsStripProp
         title="ผู้ป่วยในห้องคลอดทั้งจังหวัด"
         body={
           <>
-            จำนวนผู้ป่วยที่ยังอยู่ในห้องคลอด (<strong>labor_status = ACTIVE</strong>) รวมทุก รพ. ใน
-            จ.ขอนแก่นที่เปิดใช้งานในระบบ KK-LRMS. ตัวเลข{' '}
+            จำนวนผู้ป่วยที่ยังอยู่ในห้องคลอด (<strong>labor_status = ACTIVE</strong>) รวมทุก รพ.
+            ในจังหวัดที่เปิดใช้งานในระบบ SR-LRMS. ตัวเลข{' '}
             <strong>+N ราย/24h</strong> = จำนวนรับใหม่ในรอบ 24 ชม.ที่ผ่านมา.
             แถบสีด้านล่างเป็นสัดส่วนตามระดับความเสี่ยง CPD ของ score ล่าสุด — LOW (เขียว) /
             MED (ส้ม) / HIGH (แดง). คะแนน CPD คำนวณจาก src/services/cpd-score.ts.

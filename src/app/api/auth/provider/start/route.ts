@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { randomBytes } from 'crypto';
 import { buildProviderAuthorizeUrl } from '@/lib/provider-id';
 import { logger } from '@/lib/logger';
+import { withBasePath } from '@/lib/base-path';
 
 const STATE_COOKIE = 'kk-lrms-provider-oauth-state';
 const CALLBACK_COOKIE = 'kk-lrms-provider-callback-url';
@@ -53,6 +54,8 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (error) {
     logger.error('provider_id_start_failed', { error });
-    return NextResponse.redirect(new URL('/login?error=provider_id_not_configured', request.url));
+    return NextResponse.redirect(
+      new URL(withBasePath('/login?error=provider_id_not_configured'), request.url),
+    );
   }
 }

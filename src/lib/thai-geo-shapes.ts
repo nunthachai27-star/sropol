@@ -8,6 +8,7 @@
 //   public/geo/th-districts.geojson — 928 amphoe polygons,  ~4.6 MB
 // Files are fetched once per page load and cached by the browser.
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
+import { withBasePath } from '@/lib/base-path';
 
 export interface ThaiProvinceProps {
   pro_code: string;
@@ -35,7 +36,7 @@ let districtsCache: FeatureCollection<Geometry, ThaiDistrictProps> | null = null
 
 async function loadAllProvinces(): Promise<FeatureCollection<Geometry, ThaiProvinceProps>> {
   if (provincesCache) return provincesCache;
-  const res = await fetch('/geo/th-provinces.geojson');
+  const res = await fetch(withBasePath('/geo/th-provinces.geojson'));
   if (!res.ok) throw new Error(`failed to load provinces: ${res.status}`);
   const data = (await res.json()) as FeatureCollection<Geometry, ThaiProvinceProps>;
   provincesCache = data;
@@ -44,7 +45,7 @@ async function loadAllProvinces(): Promise<FeatureCollection<Geometry, ThaiProvi
 
 async function loadAllDistricts(): Promise<FeatureCollection<Geometry, ThaiDistrictProps>> {
   if (districtsCache) return districtsCache;
-  const res = await fetch('/geo/th-districts.geojson');
+  const res = await fetch(withBasePath('/geo/th-districts.geojson'));
   if (!res.ok) throw new Error(`failed to load districts: ${res.status}`);
   const data = (await res.json()) as FeatureCollection<Geometry, ThaiDistrictProps>;
   districtsCache = data;

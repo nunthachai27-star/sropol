@@ -72,13 +72,13 @@ export function KioskHeader({
         </div>
         <div>
           <div className="text-[22px] font-semibold leading-tight" style={{ color: 'var(--kiosk-ink)', letterSpacing: '-0.01em' }}>
-            KK-LRMS ·{' '}
+            SR-LRMS ·{' '}
             <span style={{ color: 'var(--kiosk-dim)', fontWeight: 500 }}>
               OneLR ห้องคลอดหนึ่งเดียว
             </span>
           </div>
           <div className="mt-0.5 font-mono text-[11px] tracking-[0.18em]" style={{ color: 'var(--kiosk-dim)' }}>
-            PROVINCIAL LABOR-ROOM NETWORK · KHON KAEN · WAR-ROOM DISPLAY
+            PROVINCIAL LABOR-ROOM NETWORK · SURIN · WAR-ROOM DISPLAY
           </div>
         </div>
 

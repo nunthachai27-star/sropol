@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import useSWR from 'swr';
+import { withBasePath } from '@/lib/base-path';
 import { KeyRound, Copy, Check, AlertTriangle, Trash2, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -86,7 +87,7 @@ export function WebhookKeysTab() {
     setCopied(false);
 
     try {
-      const res = await fetch('/api/admin/webhooks', {
+      const res = await fetch(withBasePath('/api/admin/webhooks'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hcode: formHcode, label: formLabel.trim() }),
@@ -134,7 +135,7 @@ export function WebhookKeysTab() {
     setRevokeError(null);
 
     try {
-      const res = await fetch(`/api/admin/webhooks/${revokeTarget.id}`, { method: 'DELETE' });
+      const res = await fetch(withBasePath(`/api/admin/webhooks/${revokeTarget.id}`), { method: 'DELETE' });
       const result = await res.json();
 
       if (!res.ok) {

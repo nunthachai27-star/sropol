@@ -6,10 +6,11 @@
 import { SessionProvider } from 'next-auth/react';
 import { BmsSessionProvider } from '@/contexts/BmsSessionContext';
 import { TopNavBar } from '@/components/layout/TopNavBar';
+import { withBasePath } from '@/lib/base-path';
 
 export default function HospitalLayout({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider>
+    <SessionProvider basePath={withBasePath('/api/auth')}>
       <BmsSessionProvider>
         <div className="flex min-h-screen flex-col bg-slate-50/50">
           <TopNavBar variant="hospital" />

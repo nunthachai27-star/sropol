@@ -139,7 +139,7 @@ export async function checkBmsApiVersion(
 export function buildVersionRejectionMessage(result: BmsVersionCheckResult): string {
   const min = MIN_BMS_API_VERSION;
   if (result.reason === 'too_old') {
-    return `HOSxP API ของโรงพยาบาลเป็นเวอร์ชัน ${result.version ?? '-'} ซึ่งเก่ากว่าที่ระบบ KK-LRMS ต้องการ (${min} ขึ้นไป) — กรุณาอัปเดต HOSxP เป็นเวอร์ชันใหม่ก่อนเข้าใช้งาน`;
+    return `HOSxP API ของโรงพยาบาลเป็นเวอร์ชัน ${result.version ?? '-'} ซึ่งเก่ากว่าที่ระบบ SR-LRMS ต้องการ (${min} ขึ้นไป) — กรุณาอัปเดต HOSxP เป็นเวอร์ชันใหม่ก่อนเข้าใช้งาน`;
   }
   if (result.reason === 'invalid_response') {
     return `ไม่สามารถอ่านเวอร์ชัน HOSxP API ได้ (รูปแบบไม่ถูกต้อง) — กรุณาอัปเดต HOSxP เป็นเวอร์ชัน ${min} ขึ้นไปก่อนเข้าใช้งาน`;

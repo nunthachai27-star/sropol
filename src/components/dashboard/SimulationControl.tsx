@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { FlaskConical, Play, Square, AlertCircle, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { withBasePath } from '@/lib/base-path';
 import {
   Dialog,
   DialogContent,
@@ -131,7 +132,7 @@ export function SimulationControl() {
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    fetch('/api/dev/simulate/models')
+    fetch(withBasePath('/api/dev/simulate/models'))
       .then((r) => r.json())
       .then((body: { models?: Array<{ id: string }>; error?: string }) => {
         if (cancelled) return;
@@ -219,7 +220,7 @@ export function SimulationControl() {
     setSubmitErr(null);
     setResettingOnboarding(true);
     try {
-      const res = await fetch('/api/dev/simulate/reset-onboarding', { method: 'POST' });
+      const res = await fetch(withBasePath('/api/dev/simulate/reset-onboarding'), { method: 'POST' });
       const body = (await res.json().catch(() => null)) as
         | { ok?: boolean; cleared?: Record<string, number>; error?: string }
         | null;

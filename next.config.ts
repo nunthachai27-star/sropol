@@ -20,10 +20,16 @@ if (!buildId) {
 }
 const buildTime = process.env.NEXT_PUBLIC_BUILD_TIME ?? new Date().toISOString();
 
+// Serve the app under a URL sub-path (e.g. /sr-lrms) when set. Baked into the
+// bundle at build time; empty = root deployment. Client/server/middleware code
+// reads the same value via NEXT_PUBLIC_BASE_PATH (see src/lib/base-path.ts).
+const basePath = (process.env.NEXT_PUBLIC_BASE_PATH ?? '').replace(/\/$/, '');
+
 const nextConfig: NextConfig = {
   reactCompiler: true,
   // standalone output only for Docker builds; regular next start for bare server
   ...(isDocker && { output: 'standalone' as const }),
+  ...(basePath && { basePath }),
   serverExternalPackages: ['better-sqlite3', 'pg'],
   allowedDevOrigins: ['https://kk-lrms.bmscloud.in.th'],
   devIndicators: false,

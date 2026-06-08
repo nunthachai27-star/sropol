@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { completeProviderOAuth } from '@/lib/provider-id';
 import { storeProviderPendingSession } from '@/lib/provider-id-session-store';
 import { logger } from '@/lib/logger';
+import { withBasePath } from '@/lib/base-path';
 
 const STATE_COOKIE = 'kk-lrms-provider-oauth-state';
 const CALLBACK_COOKIE = 'kk-lrms-provider-callback-url';
@@ -21,7 +22,7 @@ function sanitizeCallbackUrl(value: string | undefined): string {
 
 function redirectToLogin(request: NextRequest, message: string): NextResponse {
   return NextResponse.redirect(
-    new URL(`/login?providerError=${encodeURIComponent(message)}`, request.url),
+    new URL(withBasePath(`/login?providerError=${encodeURIComponent(message)}`), request.url),
   );
 }
 
@@ -79,7 +80,10 @@ export async function GET(request: NextRequest) {
       hcodes: pending.organizations.map((org) => org.hcode),
       callbackUrl,
     });
-    const completeUrl = new URL('/provider/complete', baseUrl);
+    // baseUrl already includes any sub-path (from NEXTAUTH_URL). Using the
+    // single-arg URL constructor with string concat preserves it — passing
+    // '/provider/complete' as a second-arg absolute path would DROP the sub-path.
+    const completeUrl = new URL(`${baseUrl}/provider/complete`);
     completeUrl.searchParams.set('token', token);
     completeUrl.searchParams.set('callbackUrl', callbackUrl);
 

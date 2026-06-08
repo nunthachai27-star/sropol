@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn } from 'next-auth/react';
 import { Building2, Loader2, Shield, UserRound } from 'lucide-react';
 import { removeMarketplaceToken, removeSessionCookie } from '@/utils/bms-session-storage';
+import { withBasePath } from '@/lib/base-path';
 
 interface ProviderOrgSummary {
   index: number;
@@ -85,7 +86,9 @@ function ProviderCompleteContent() {
     let cancelled = false;
     async function loadSummary() {
       try {
-        const response = await fetch(`/api/auth/provider/pending?token=${encodeURIComponent(token)}`);
+        const response = await fetch(
+          withBasePath(`/api/auth/provider/pending?token=${encodeURIComponent(token)}`),
+        );
         if (!response.ok) {
           throw new Error('ProviderID session expired');
         }

@@ -81,7 +81,7 @@ async function resolveOrCreateExemptHospital(
           hcode,
           stage: 'resolve_hospital',
           detail:
-            'This hospital code is not active in KK-LRMS. Add/activate it in Admin > Hospitals before automatic HOSxP sync can start.',
+            'This hospital code is not active in SR-LRMS. Add/activate it in Admin > Hospitals before automatic HOSxP sync can start.',
         },
         { status: 403 },
       );
@@ -126,7 +126,7 @@ async function resolveOrCreateExemptHospital(
           hcode,
           stage: 'resolve_hospital',
           detail:
-            'This hospital code is not active in KK-LRMS. Add/activate it in Admin > Hospitals before automatic HOSxP sync can start.',
+            'This hospital code is not active in SR-LRMS. Add/activate it in Admin > Hospitals before automatic HOSxP sync can start.',
         },
         { status: 403 },
       );
@@ -164,7 +164,7 @@ export async function POST(request: NextRequest) {
           error: 'missing_bms_session',
           stage: 'read_bms_session',
           detail:
-            'The browser BMS session did not provide apiUrl and bearerToken. Open KK-LRMS from the HOSxP/BMS launcher with a valid session.',
+            'The browser BMS session did not provide apiUrl and bearerToken. Open SR-LRMS from the HOSxP/BMS launcher with a valid session.',
         },
         { status: 400 },
       );
@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
           error: 'missing_marketplace_token',
           stage: 'read_bms_session',
           detail:
-            'Automatic HOSxP sync requires a marketplace_token. Open KK-LRMS from the BMS marketplace launcher (which embeds marketplace_token / marketplace-token in the URL).',
+            'Automatic HOSxP sync requires a marketplace_token. Open SR-LRMS from the BMS marketplace launcher (which embeds marketplace_token / marketplace-token in the URL).',
         },
         { status: 403 },
       );
@@ -320,7 +320,7 @@ export async function GET() {
         phase: 'stopped',
         detail: EXEMPT_HCODES.has(hcode)
           ? 'Hospital row has not been auto-created yet. Reload the dashboard to start onboarding sync.'
-          : 'Hospital is not registered in KK-LRMS.',
+          : 'Hospital is not registered in SR-LRMS.',
       });
     }
 

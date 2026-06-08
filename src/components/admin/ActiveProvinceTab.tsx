@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
+import { withBasePath } from '@/lib/base-path';
 import { Globe, Save, CheckCircle2, ListPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LoadingState } from '@/components/shared/LoadingState';
@@ -56,7 +57,7 @@ export function ActiveProvinceTab() {
     setSaving(true);
     setSaveMessage(null);
     try {
-      const res = await fetch('/api/admin/config', {
+      const res = await fetch(withBasePath('/api/admin/config'), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ activeProvinceCode: selectedCode }),

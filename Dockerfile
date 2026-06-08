@@ -12,8 +12,15 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ARG NEXT_PUBLIC_BUILD_ID=dev
 ARG NEXT_PUBLIC_BUILD_TIME
+# Sub-path the app is served under (e.g. /sr-lrms). Inlined into the client
+# bundle at build time, so it must be present here, not only at runtime.
+ARG NEXT_PUBLIC_BASE_PATH=
+# MOPH province code the deployment defaults to (32=Surin). Inlined at build.
+ARG NEXT_PUBLIC_DEFAULT_PROVINCE_CODE=
 ENV NEXT_PUBLIC_BUILD_ID=$NEXT_PUBLIC_BUILD_ID
 ENV NEXT_PUBLIC_BUILD_TIME=$NEXT_PUBLIC_BUILD_TIME
+ENV NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
+ENV NEXT_PUBLIC_DEFAULT_PROVINCE_CODE=$NEXT_PUBLIC_DEFAULT_PROVINCE_CODE
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DOCKER_BUILD=true
 RUN npm run build

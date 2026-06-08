@@ -21,6 +21,7 @@
 // session), and the same code path the Delphi client exercises in prod.
 
 import { executeSql } from '@/lib/bms-browser-client';
+import { withBasePath } from '@/lib/base-path';
 import type { ConnectionConfig, SqlApiResponse } from '@/types/bms-browser';
 
 // ─── Webhook payload shapes (mirror src/services/webhook.ts) ────────────────
@@ -708,7 +709,7 @@ async function reportAuthenticityVerdict(
   signal?: AbortSignal,
 ): Promise<{ permanentBlock: boolean }> {
   try {
-    const res = await fetch('/api/sync/browser-authenticity', {
+    const res = await fetch(withBasePath('/api/sync/browser-authenticity'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, reason }),
@@ -920,7 +921,7 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
     if (partographs.length > 0) body.partograph = { observations: partographs };
     if (ancPatients.length > 0) body.anc = { patients: ancPatients };
 
-    const pushRes = await fetch('/api/sync/browser-push', {
+    const pushRes = await fetch(withBasePath('/api/sync/browser-push'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

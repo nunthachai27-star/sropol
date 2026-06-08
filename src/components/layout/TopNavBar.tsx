@@ -11,6 +11,7 @@ import { usePathname } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import { LogOut, Menu, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { withBasePath } from '@/lib/base-path';
 import { NAV_ITEMS, ROLE_LABELS, filterNavByRole } from '@/config/nav';
 
 export type TopNavBarVariant = 'hospital' | 'provincial';
@@ -59,7 +60,7 @@ export function TopNavBar({ variant = 'provincial' }: TopNavBarProps = {}) {
 
     const sendHeartbeat = () => {
       if (document.visibilityState === 'hidden') return;
-      fetch('/api/presence/heartbeat', {
+      fetch(withBasePath('/api/presence/heartbeat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: pathname || '/' }),
@@ -116,7 +117,7 @@ export function TopNavBar({ variant = 'provincial' }: TopNavBarProps = {}) {
         <Link
           href={logoHref}
           className="flex shrink-0 items-center gap-2.5"
-          aria-label="KK-LRMS home"
+          aria-label="SR-LRMS home"
         >
           <span
             className="grid h-8 w-8 place-items-center rounded-sm bg-white font-mono text-[12px] font-extrabold shadow-md"
@@ -133,10 +134,10 @@ export function TopNavBar({ variant = 'provincial' }: TopNavBarProps = {}) {
                 textShadow: '0 1px 2px rgba(0,0,0,0.25)',
               }}
             >
-              KK-LRMS
+              SR-LRMS
             </span>
             <span className="block text-[10px] font-medium tracking-wide text-white/70">
-              {isHospital ? 'ห้องคลอด' : 'OneLR · ขอนแก่น'}
+              {isHospital ? 'ห้องคลอด' : 'OneLR · สุรินทร์'}
             </span>
           </span>
         </Link>

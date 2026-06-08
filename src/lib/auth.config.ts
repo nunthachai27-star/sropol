@@ -7,6 +7,13 @@ import type { NextAuthConfig } from 'next-auth';
 
 export const authConfig: NextAuthConfig = {
   providers: [],
+  // Pin the server-side Auth.js basePath to the bare "/api/auth". Next.js
+  // strips the app basePath (/sr-lrms) BEFORE the request reaches the route
+  // handler, so the handler always sees "/api/auth/...". Without this, Auth.js
+  // derives basePath from NEXTAUTH_URL's path (/sr-lrms) and rejects every
+  // request with "Bad request." The browser client is told the prefixed path
+  // separately via <SessionProvider basePath> (see the route-group layouts).
+  basePath: '/api/auth',
   pages: {
     signIn: '/login',
   },

@@ -281,9 +281,9 @@ export default function HospitalMaternityWardPage() {
           >
             <span style={{ display: 'inline-block', width: 28, height: 5, background: ACCENT_BLUE }} />
             <span style={{ color: SLATE_INK, fontWeight: 800, letterSpacing: '0.24em' }}>
-              KK-LRMS / OneLR
+              SR-LRMS / OneLR
             </span>
-            <span>· จังหวัดขอนแก่น · Provincial Maternity Network</span>
+            <span>· จังหวัดสุรินทร์ · Provincial Maternity Network</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 18, flexWrap: 'wrap' }}>
             <h1

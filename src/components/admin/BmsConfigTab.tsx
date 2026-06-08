@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import useSWR from 'swr';
+import { withBasePath } from '@/lib/base-path';
 import { Wifi, WifiOff, Pencil, FlaskConical, Save, Database } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -127,7 +128,7 @@ export function BmsConfigTab() {
     setSaveMessage(null);
 
     try {
-      const res = await fetch(`/api/admin/hospitals/${editHospital.hcode}/bms-config`, {
+      const res = await fetch(withBasePath(`/api/admin/hospitals/${editHospital.hcode}/bms-config`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tunnelUrl: tunnelUrl.trim() }),
@@ -158,7 +159,7 @@ export function BmsConfigTab() {
     setTestResult(null);
 
     try {
-      const res = await fetch(`/api/admin/hospitals/${editHospital.hcode}/test-connection`, {
+      const res = await fetch(withBasePath(`/api/admin/hospitals/${editHospital.hcode}/test-connection`), {
         method: 'POST',
       });
 

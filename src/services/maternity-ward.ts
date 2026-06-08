@@ -8,6 +8,7 @@ import {
   restUpdate,
 } from '@/lib/bms-browser-client';
 import { mintSerial } from '@/lib/bms-serial';
+import { withBasePath } from '@/lib/base-path';
 import {
   BED_MOVE_REASONS,
   DRUG_LOOKUP,
@@ -275,7 +276,7 @@ interface AuditPayload {
  * /api/sync/browser-push. Acceptable lag for the central cache.
  */
 function fireAudit(payload: AuditPayload): void {
-  void fetch('/api/hospital/audit-log', {
+  void fetch(withBasePath('/api/hospital/audit-log'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

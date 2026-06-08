@@ -6,6 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
+import { withBasePath } from '@/lib/base-path';
 import { Plus, Check, Building2, AlertTriangle, Square, CheckSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -144,7 +145,7 @@ function BulkAddBody({ open, onClose, provinceCode, provinceName, onAdded }: Pro
     const results = await Promise.all(
       picks.map(async (m) => {
         try {
-          const res = await fetch('/api/admin/hospitals', {
+          const res = await fetch(withBasePath('/api/admin/hospitals'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

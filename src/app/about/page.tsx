@@ -174,15 +174,15 @@ export default function AboutPage() {
               <Building2 className="h-8 w-8 text-white" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold">KK-LRMS</h1>
-              <p className="text-slate-400">Khon Kaen Labor Room Monitoring System</p>
+              <h1 className="text-3xl font-bold">SR-LRMS</h1>
+              <p className="text-slate-400">Surin Labor Room Monitoring System</p>
             </div>
           </div>
 
           <h2 className="text-4xl font-bold leading-tight mb-4">
             ระบบติดตามการคลอด
             <br />
-            แบบรวมศูนย์ จังหวัดขอนแก่น
+            แบบรวมศูนย์ จังหวัดสุรินทร์
           </h2>
           <p className="text-lg text-slate-300 max-w-2xl leading-relaxed">
             ระบบ Real-time สำหรับสูติแพทย์และพยาบาลห้องคลอด ใช้ติดตามและประเมินความเสี่ยง
@@ -201,7 +201,7 @@ export default function AboutPage() {
           </SectionTitle>
           <div className="rounded-2xl bg-white p-8 shadow-sm space-y-6">
             <p className="text-slate-600 leading-relaxed text-lg">
-              <strong>KK-LRMS</strong> (Khon Kaen Labor Room Monitoring System) คือระบบติดตามการคลอดแบบรวมศูนย์
+              <strong>SR-LRMS</strong> (Khon Kaen Labor Room Monitoring System) คือระบบติดตามการคลอดแบบรวมศูนย์
               ระดับจังหวัด ที่ออกแบบมาเพื่อให้สูติแพทย์และพยาบาลห้องคลอดของ<strong>โรงพยาบาลแม่ข่าย</strong>
               (รพ.ขอนแก่น และ รพ.ศรีนครินทร์) สามารถ<strong>ติดตามผู้คลอด</strong>ที่รอคลอดใน
               <strong>โรงพยาบาลชุมชน (รพช.) ทุกแห่ง</strong>ในจังหวัดขอนแก่นได้แบบ Real-time
@@ -210,7 +210,7 @@ export default function AboutPage() {
               ระบบดึงข้อมูลอัตโนมัติจาก <strong>HOSxP HIS</strong> (ระบบสารสนเทศโรงพยาบาล)
               ที่ใช้งานอยู่ใน รพช. ทุกแห่ง ผ่าน <strong>BMS Central API</strong> ซึ่งทำหน้าที่เป็นตัวกลางเชื่อมต่อข้อมูล
               ทำให้เจ้าหน้าที่ <strong>ไม่ต้องบันทึกข้อมูลซ้ำ</strong> — ข้อมูลที่บันทึกใน HOSxP จะไหลเข้ามาที่
-              KK-LRMS โดยอัตโนมัติภายใน 30 วินาที
+              SR-LRMS โดยอัตโนมัติภายใน 30 วินาที
             </p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4">
               <div className="text-center p-4 bg-teal-50 rounded-xl">
@@ -259,7 +259,7 @@ export default function AboutPage() {
               <StepItem
                 step={4}
                 title="ลดภาระการบันทึกข้อมูลซ้ำ"
-                description="ข้อมูลที่เจ้าหน้าที่ รพช. บันทึกใน HOSxP จะถูกดึงมาแสดงใน KK-LRMS โดยอัตโนมัติ ไม่ต้องพิมพ์ข้อมูลซ้ำอีกครั้ง ประหยัดเวลาและลดความผิดพลาดจากการคัดลอกข้อมูล"
+                description="ข้อมูลที่เจ้าหน้าที่ รพช. บันทึกใน HOSxP จะถูกดึงมาแสดงใน SR-LRMS โดยอัตโนมัติ ไม่ต้องพิมพ์ข้อมูลซ้ำอีกครั้ง ประหยัดเวลาและลดความผิดพลาดจากการคัดลอกข้อมูล"
               />
             </div>
           </div>
@@ -324,7 +324,7 @@ export default function AboutPage() {
           <div className="rounded-2xl bg-white p-8 shadow-sm space-y-6">
             <p className="text-slate-600 leading-relaxed">
               <strong>CPD (Cephalopelvic Disproportion)</strong> คือภาวะที่ศีรษะทารกไม่สามารถผ่านช่องเชิงกราน
-              ของมารดาได้ เป็นสาเหตุสำคัญของการคลอดยาก ระบบ KK-LRMS คำนวณคะแนนความเสี่ยง CPD
+              ของมารดาได้ เป็นสาเหตุสำคัญของการคลอดยาก ระบบ SR-LRMS คำนวณคะแนนความเสี่ยง CPD
               อัตโนมัติจาก <strong>8 ปัจจัย</strong> ดังนี้:
             </p>
 
@@ -417,14 +417,14 @@ export default function AboutPage() {
           </SectionTitle>
           <div className="rounded-2xl bg-white p-8 shadow-sm space-y-6">
             <p className="text-slate-600 leading-relaxed">
-              ระบบ KK-LRMS ใช้โมเดล <strong>Hub-and-Spoke</strong> โดยมี รพ.ขอนแก่น เป็นศูนย์กลาง (Hub)
+              ระบบ SR-LRMS ใช้โมเดล <strong>Hub-and-Spoke</strong> โดยมี รพ.ขอนแก่น เป็นศูนย์กลาง (Hub)
               เชื่อมต่อกับ รพช. ทุกระดับในจังหวัดขอนแก่น:
             </p>
             <div className="space-y-1">
               <HospitalLevelRow
                 level="Hub"
                 name="รพ.ขอนแก่น / รพ.ศรีนครินทร์"
-                description="โรงพยาบาลศูนย์ — ศูนย์กลาง KK-LRMS สูติแพทย์และพยาบาลห้องคลอดใช้ Monitor ผู้คลอดจากทุก รพ."
+                description="โรงพยาบาลศูนย์ — ศูนย์กลาง SR-LRMS สูติแพทย์และพยาบาลห้องคลอดใช้ Monitor ผู้คลอดจากทุก รพ."
               />
               <HospitalLevelRow
                 level="A (S)"
@@ -486,8 +486,8 @@ export default function AboutPage() {
               </div>
               <StepItem
                 step={3}
-                title="KK-LRMS ประมวลผลและแสดงข้อมูล"
-                description="ระบบ KK-LRMS รับข้อมูลจาก BMS API คำนวณ CPD Risk Score อัตโนมัติจาก 8 ปัจจัยเสี่ยง สร้าง Partogram และแสดงบน Dashboard กลาง โดยอัปเดตทุก 30 วินาที"
+                title="SR-LRMS ประมวลผลและแสดงข้อมูล"
+                description="ระบบ SR-LRMS รับข้อมูลจาก BMS API คำนวณ CPD Risk Score อัตโนมัติจาก 8 ปัจจัยเสี่ยง สร้าง Partogram และแสดงบน Dashboard กลาง โดยอัปเดตทุก 30 วินาที"
               />
               <div className="flex justify-center">
                 <ChevronRight className="h-6 w-6 text-slate-300 rotate-90" />
@@ -516,7 +516,7 @@ export default function AboutPage() {
                   <h3 className="text-lg font-semibold text-slate-700 mb-2">ภาพรวม</h3>
                   <p className="text-slate-600 leading-relaxed">
                     สำหรับ<strong>โรงพยาบาลที่ไม่ได้ใช้ HOSxP</strong> (เช่น รพ.เอกชน หรือ รพ.ที่ใช้ HIS อื่น)
-                    สามารถส่งข้อมูลผู้คลอดเข้าระบบ KK-LRMS ได้ผ่าน <strong>Webhook API</strong> โดยตรง
+                    สามารถส่งข้อมูลผู้คลอดเข้าระบบ SR-LRMS ได้ผ่าน <strong>Webhook API</strong> โดยตรง
                     ข้อมูลจะถูกประมวลผลเหมือนกันทุกประการ — คำนวณ CPD Score, ตรวจจับการส่งต่อ,
                     แจ้งเตือนความเสี่ยงสูง, และแสดงบน Dashboard แบบ Real-time
                   </p>
@@ -921,7 +921,7 @@ export default function AboutPage() {
           </SectionTitle>
           <div className="rounded-2xl bg-white p-8 shadow-sm space-y-4">
             <p className="text-slate-600 leading-relaxed">
-              ระบบ KK-LRMS ออกแบบให้เป็นไปตาม <strong>พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล (PDPA)</strong>:
+              ระบบ SR-LRMS ออกแบบให้เป็นไปตาม <strong>พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล (PDPA)</strong>:
             </p>
             <ul className="space-y-3 text-slate-600">
               <li className="flex gap-3">
@@ -951,7 +951,7 @@ export default function AboutPage() {
         {/* --- Footer --- */}
         <footer className="border-t border-slate-200 pt-8 pb-4 text-center text-sm text-slate-400 space-y-2">
           <p className="font-semibold text-slate-500">
-            KK-LRMS v1.0.0 — ระบบติดตามการคลอดแบบรวมศูนย์ จังหวัดขอนแก่น
+            SR-LRMS v1.0.0 — ระบบติดตามการคลอดแบบรวมศูนย์ จังหวัดสุรินทร์
           </p>
           <p>
             สำนักงานสาธารณสุขจังหวัดขอนแก่น — เขตสุขภาพที่ 7

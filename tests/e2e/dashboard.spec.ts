@@ -10,7 +10,7 @@ test.describe('Dashboard Flow', () => {
   test('login page shows BMS Session ID input', async ({ page }) => {
     await page.goto('/login');
     await expect(page.locator('input#sessionId')).toBeVisible();
-    await expect(page.getByText('เข้าสู่ระบบ KK-LRMS')).toBeVisible();
+    await expect(page.getByText('เข้าสู่ระบบ SR-LRMS')).toBeVisible();
   });
 
   test('shows error for invalid session ID', async ({ page }) => {
@@ -26,7 +26,7 @@ test.describe('Dashboard Flow', () => {
   test.skip('authenticated dashboard loads hospital table', async ({ page }) => {
     // Requires valid auth session
     await page.goto('/');
-    await expect(page.getByText('KK-LRMS')).toBeVisible();
+    await expect(page.getByText('SR-LRMS')).toBeVisible();
     await expect(page.locator('table')).toBeVisible();
   });
 

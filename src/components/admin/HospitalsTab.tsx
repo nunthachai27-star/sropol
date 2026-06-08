@@ -6,6 +6,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
+import { withBasePath } from '@/lib/base-path';
+import { DEFAULT_PROVINCE_CODE } from '@/config/province';
 import { Plus, Pencil, Trash2, Building2, Database, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -82,7 +84,7 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
     { refreshInterval: 30_000 }, // refresh every 30s so counts trail polling sync
   );
 
-  const activeProvince = configData?.config?.active_province_code ?? '40';
+  const activeProvince = configData?.config?.active_province_code ?? DEFAULT_PROVINCE_CODE;
   const { data: mophData } = useSWR<{ hospitals: MophHospital[] }>(
     `/api/admin/moph-hospitals?province=${activeProvince}`,
   );
@@ -169,7 +171,7 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
     }
     setBusy(true);
     try {
-      const res = await fetch('/api/admin/hospitals', {
+      const res = await fetch(withBasePath('/api/admin/hospitals'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -200,7 +202,7 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
     }
     setBusy(true);
     try {
-      const res = await fetch(`/api/admin/hospitals/${h.hcode}`, {
+      const res = await fetch(withBasePath(`/api/admin/hospitals/${h.hcode}`), {
         method: 'DELETE',
       });
       if (!res.ok) {
@@ -221,14 +223,14 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
         `เปิดใช้งาน Sync ของ ${h.name} (${h.hcode}) อีกครั้ง?\n` +
           `\n` +
           `การกดยืนยันจะล้างสถานะระงับฝั่งเซิร์ฟเวอร์เท่านั้น — Sync จริงจะเริ่มทำงานอีกครั้งเมื่อ\n` +
-          `ผู้ใช้จากโรงพยาบาลนี้เปิด KK-LRMS จาก HOSxP (ระบบจะใช้ marketplace_token จากเซสชันใหม่)`,
+          `ผู้ใช้จากโรงพยาบาลนี้เปิด SR-LRMS จาก HOSxP (ระบบจะใช้ marketplace_token จากเซสชันใหม่)`,
       )
     ) {
       return;
     }
     setBusy(true);
     try {
-      const res = await fetch(`/api/admin/hospitals/${h.hcode}/clear-purge`, {
+      const res = await fetch(withBasePath(`/api/admin/hospitals/${h.hcode}/clear-purge`), {
         method: 'POST',
       });
       if (!res.ok) {
@@ -327,7 +329,7 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
                     <button
                       type="button"
                       onClick={() => handleClearPurge(h)}
-                      title="ล้างสถานะระงับ Sync ฝั่งเซิร์ฟเวอร์ — Sync จริงจะเริ่มอีกครั้งเมื่อผู้ใช้จากโรงพยาบาลนี้เปิด KK-LRMS จาก HOSxP"
+                      title="ล้างสถานะระงับ Sync ฝั่งเซิร์ฟเวอร์ — Sync จริงจะเริ่มอีกครั้งเมื่อผู้ใช้จากโรงพยาบาลนี้เปิด SR-LRMS จาก HOSxP"
                       className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold tracking-wide hover:bg-emerald-100"
                       style={{
                         borderColor: '#86efac',

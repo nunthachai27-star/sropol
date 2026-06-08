@@ -1,12 +1,13 @@
 // GET/PUT /api/admin/config — singleton key/value configuration.
 // Known key: `active_province_code` (MOPH 2-digit province code scoping
-// dashboard/map/sync). Empty DB returns the Khon Kaen default (40).
+// dashboard/map/sync). Empty DB returns DEFAULT_PROVINCE_CODE (Surin, 32).
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
 import { logger } from '@/lib/logger';
+import { DEFAULT_PROVINCE_CODE } from '@/config/province';
 
-const DEFAULT_ACTIVE_PROVINCE_CODE = '40';
+const DEFAULT_ACTIVE_PROVINCE_CODE = DEFAULT_PROVINCE_CODE;
 
 async function readConfig(): Promise<Record<string, string | null>> {
   const db = await getDatabase();

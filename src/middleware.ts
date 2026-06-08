@@ -9,6 +9,7 @@
 import NextAuth from 'next-auth';
 import { authConfig } from '@/lib/auth.config';
 import { NextResponse } from 'next/server';
+import { BASE_PATH, withBasePath } from '@/lib/base-path';
 
 const { auth } = NextAuth(authConfig);
 
@@ -63,7 +64,15 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
 }
 
 export default auth((req) => {
-  const { pathname } = req.nextUrl;
+  // Next.js does NOT strip the basePath from `nextUrl.pathname` inside
+  // middleware (only the route matcher is basePath-aware). Strip it here so the
+  // bare PUBLIC_PATHS / STATIC_PATHS / '/admin' prefixes below still match.
+  // `withBasePath` re-adds the prefix when we build redirect targets.
+  const rawPathname = req.nextUrl.pathname;
+  const pathname =
+    BASE_PATH && rawPathname.startsWith(BASE_PATH)
+      ? rawPathname.slice(BASE_PATH.length) || '/'
+      : rawPathname;
 
   // Allow static assets and public paths
   if (STATIC_PATHS.some((p) => pathname.startsWith(p))) {
@@ -85,7 +94,10 @@ export default auth((req) => {
   // Check authentication
   const session = req.auth;
   if (!session?.user) {
-    const loginUrl = new URL('/login', req.url);
+    // NextResponse.redirect does NOT auto-apply the Next.js basePath, so the
+    // target path is prefixed explicitly here. `pathname` (used for callbackUrl)
+    // already has basePath stripped by Next, so it stays bare.
+    const loginUrl = new URL(withBasePath('/login'), req.url);
     loginUrl.searchParams.set('callbackUrl', pathname);
     // Preserve bms-session-id for auto-login
     const bmsSessionId = req.nextUrl.searchParams.get('bms-session-id');
@@ -105,7 +117,7 @@ export default auth((req) => {
 
   if (session.user.accessMode === 'readonly') {
     if (pathname.startsWith('/admin')) {
-      return addSecurityHeaders(NextResponse.redirect(new URL('/', req.url)));
+      return addSecurityHeaders(NextResponse.redirect(new URL(withBasePath('/'), req.url)));
     }
     if (req.method !== 'GET' && READONLY_BLOCKED_API_PREFIXES.some((p) => pathname.startsWith(p))) {
       return addSecurityHeaders(
@@ -126,7 +138,7 @@ export default auth((req) => {
   // production /admin access. The allow-list short-circuits both.
   if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin')) {
     if (session.user.role !== 'ADMIN') {
-      return addSecurityHeaders(NextResponse.redirect(new URL('/', req.url)));
+      return addSecurityHeaders(NextResponse.redirect(new URL(withBasePath('/'), req.url)));
     }
     const allowList = (process.env.ADMIN_ALLOWED_CIDS ?? '')
       .split(',')
@@ -135,7 +147,7 @@ export default auth((req) => {
     if (allowList.length > 0) {
       const cid = session.user.userCid ?? '';
       if (!cid || !allowList.includes(cid)) {
-        return addSecurityHeaders(NextResponse.redirect(new URL('/', req.url)));
+        return addSecurityHeaders(NextResponse.redirect(new URL(withBasePath('/'), req.url)));
       }
     }
   }

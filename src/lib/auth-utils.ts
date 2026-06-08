@@ -1,6 +1,7 @@
 // T085: Auth utility functions — separated from NextAuth config for testability
 import { UserRole } from '@/types/domain';
 import { logger } from '@/lib/logger';
+import { ADMIN_HCODES } from '@/lib/hospital-access-guard';
 
 export function mapPositionToRole(position: string): UserRole {
   const lower = position.toLowerCase();
@@ -79,6 +80,16 @@ export async function validateBmsSession(
       logger.info('auth_dev_bypass_with_real_identity', {
         sessionId,
         hcode: real.hospitalCode,
+        role: 'ADMIN',
+      });
+      return { ...real, role: UserRole.ADMIN };
+    }
+    // Provincial-admin sandbox hcodes (default 99999) get ADMIN regardless of
+    // the user's BMS position. See ADMIN_HCODES in hospital-access-guard.
+    if (ADMIN_HCODES.has(real.hospitalCode)) {
+      logger.info('auth_admin_hcode_promoted', {
+        hcode: real.hospitalCode,
+        position_role: real.role,
         role: 'ADMIN',
       });
       return { ...real, role: UserRole.ADMIN };

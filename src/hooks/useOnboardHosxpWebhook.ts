@@ -29,6 +29,7 @@ import { useSession } from 'next-auth/react';
 import { useBmsSession } from '@/contexts/BmsSessionContext';
 import { executeSql, restInsert, restUpdate } from '@/lib/bms-browser-client';
 import { mintSerial } from '@/lib/bms-serial';
+import { BASE_PATH, withBasePath } from '@/lib/base-path';
 
 const DONE_STORAGE_KEY = 'kk-lrms:hosxp-webhook-onboarded';
 const PENDING_STORAGE_KEY = 'kk-lrms:hosxp-webhook-pending-key';
@@ -40,9 +41,15 @@ function resolveKkLrmsWebhookUrl(): string {
   // Reuse the deployed origin — HOSxP will POST back here with the auth key.
   // Override via NEXT_PUBLIC_KK_LRMS_PUBLIC_URL when the public origin
   // differs from window.location (e.g. behind a reverse proxy).
+  // The override is expected to already include any sub-path
+  // (e.g. https://surintelehealth.com/sr-lrms); window.location.origin does not,
+  // so append BASE_PATH in that fallback case.
   const override = process.env.NEXT_PUBLIC_KK_LRMS_PUBLIC_URL;
-  const origin = override && override.length > 0 ? override : window.location.origin;
-  return `${origin.replace(/\/$/, '')}/api/webhooks/patient-data`;
+  const base =
+    override && override.length > 0
+      ? override.replace(/\/$/, '')
+      : `${window.location.origin}${BASE_PATH}`;
+  return `${base}/api/webhooks/patient-data`;
 }
 
 interface PendingKey {
@@ -99,7 +106,7 @@ function clearPending(hcode: string): void {
 // not break the flow.
 function traceStep(event: string, detail?: Record<string, unknown>): void {
   try {
-    void fetch('/api/onboarding/log', {
+    void fetch(withBasePath('/api/onboarding/log'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ event, detail }),
@@ -181,7 +188,7 @@ export function useOnboardHosxpWebhook(): {
         if (minted) {
           traceStep('reused_pending_key', { hcode, keyPrefix: minted.keyPrefix });
         } else {
-          const res = await fetch('/api/onboarding/webhook-key', {
+          const res = await fetch(withBasePath('/api/onboarding/webhook-key'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ label: 'HOSxP webhook_setting auto-provision' }),
@@ -309,7 +316,7 @@ export function useOnboardHosxpWebhook(): {
         // actually accepted by HOSxP. Without this, a successful push still
         // looks identical to a failed push (both produce an active local
         // row), and subsequent visits would re-mint unnecessarily.
-        void fetch('/api/onboarding/confirm-push', {
+        void fetch(withBasePath('/api/onboarding/confirm-push'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ keyPrefix: minted.keyPrefix }),

@@ -110,7 +110,7 @@ export function PrintForm({ patient, hospitalName, vitals }: PrintFormProps) {
 
       {/* Footer */}
       <div className="mt-6 text-right text-xs text-gray-400">
-        พิมพ์จาก KK-LRMS เมื่อ {new Date().toLocaleString('th-TH')}
+        พิมพ์จาก SR-LRMS เมื่อ {new Date().toLocaleString('th-TH')}
       </div>
     </div>
   );

@@ -10,6 +10,7 @@ import { useMemo } from 'react';
 import useSWR from 'swr';
 import { MapPin } from 'lucide-react';
 import { ProvinceMap } from '@/components/dashboard/ProvinceMap';
+import { DEFAULT_PROVINCE_CODE } from '@/config/province';
 import { LoadingState } from '@/components/shared/LoadingState';
 import type { DashboardHospital, DashboardSyncStatus } from '@/types/api';
 import {
@@ -73,7 +74,7 @@ export function AdminMapPane({ onSelectHospital }: AdminMapPaneProps = {}) {
     '/api/admin/provinces',
   );
 
-  const activeCode = configData?.config?.active_province_code ?? '40';
+  const activeCode = configData?.config?.active_province_code ?? DEFAULT_PROVINCE_CODE;
   const activeName =
     provincesData?.provinces.find((p) => p.code === activeCode)?.name ?? '—';
 

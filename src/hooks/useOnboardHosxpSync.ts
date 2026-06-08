@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useBmsSession } from '@/contexts/BmsSessionContext';
+import { withBasePath } from '@/lib/base-path';
 
 export interface OnboardHosxpSyncState {
   ran: boolean;
@@ -108,7 +109,7 @@ export function useOnboardHosxpSync(): {
     ranRef.current = true;
     void (async () => {
       try {
-        const res = await fetch('/api/onboarding/hosxp-sync', {
+        const res = await fetch(withBasePath('/api/onboarding/hosxp-sync'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -182,7 +183,7 @@ export function useOnboardHosxpSync(): {
     let cancelled = false;
     const refreshStatus = async () => {
       try {
-        const res = await fetch('/api/onboarding/hosxp-sync', {
+        const res = await fetch(withBasePath('/api/onboarding/hosxp-sync'), {
           method: 'GET',
           cache: 'no-store',
         });

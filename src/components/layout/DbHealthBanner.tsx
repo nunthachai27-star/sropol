@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { withBasePath } from '@/lib/base-path';
 
 interface HealthBody {
   status: 'healthy' | 'degraded' | 'unhealthy' | string;
@@ -42,7 +43,7 @@ export function DbHealthBanner() {
 
   async function probe() {
     try {
-      const res = await fetch('/api/health', { cache: 'no-store' });
+      const res = await fetch(withBasePath('/api/health'), { cache: 'no-store' });
       const body = (await res.json().catch(() => null)) as HealthBody | null;
       if (res.ok && body?.database === 'connected' && body.status !== 'unhealthy') {
         setState({

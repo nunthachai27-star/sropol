@@ -58,7 +58,7 @@ export async function POST(
       hcode,
       hospitalId,
       message:
-        'Sync block cleared. The next time a user from this hospital opens KK-LRMS, the onboarding sync will run and re-ingest data with their marketplace_token.',
+        'Sync block cleared. The next time a user from this hospital opens SR-LRMS, the onboarding sync will run and re-ingest data with their marketplace_token.',
     });
   } catch (error) {
     logger.error('admin_hospital_clear_purge_failed', { error });

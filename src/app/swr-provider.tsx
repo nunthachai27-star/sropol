@@ -2,6 +2,7 @@
 'use client';
 
 import { SWRConfig } from 'swr';
+import { withBasePath } from '@/lib/base-path';
 
 // Throw on non-2xx so SWR populates `error` instead of handing components a
 // 500 body typed as success data. Carries the HTTP status + parsed error
@@ -30,7 +31,9 @@ function extractErrorMessage(body: unknown): string | null {
 }
 
 async function fetcher(url: string): Promise<unknown> {
-  const res = await fetch(url);
+  // SWR cache keys stay the bare "/api/..." path; only the wire request is
+  // prefixed with the deployment base path. Keeps mutate(key) call sites intact.
+  const res = await fetch(withBasePath(url));
   const text = await res.text();
   let body: unknown = null;
   if (text) {

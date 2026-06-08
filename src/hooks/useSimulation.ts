@@ -9,6 +9,7 @@ import type {
   SimulationConfig,
   SimulationStatus,
 } from '@/services/dev-simulation/types';
+import { withBasePath } from '@/lib/base-path';
 
 const EMPTY_STATUS: SimulationStatus = {
   running: false,
@@ -30,7 +31,7 @@ export function useSimulation() {
 
   const start = useCallback(
     async (config: SimulationConfig): Promise<SimulationStatus> => {
-      const res = await fetch('/api/dev/simulate/start', {
+      const res = await fetch(withBasePath('/api/dev/simulate/start'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
@@ -46,7 +47,7 @@ export function useSimulation() {
   );
 
   const stop = useCallback(async (): Promise<SimulationStatus> => {
-    const res = await fetch('/api/dev/simulate/stop', { method: 'POST' });
+    const res = await fetch(withBasePath('/api/dev/simulate/stop'), { method: 'POST' });
     const body = (await res.json()) as SimulationStatus;
     await mutate(body, { revalidate: false });
     return body;
@@ -54,7 +55,7 @@ export function useSimulation() {
 
   /** Wipes all patient/journey/labor data (dev-only) and resets pool + keys. */
   const clear = useCallback(async (): Promise<{ cleared: Record<string, number> }> => {
-    const res = await fetch('/api/dev/simulate/clear', { method: 'POST' });
+    const res = await fetch(withBasePath('/api/dev/simulate/clear'), { method: 'POST' });
     const body = (await res.json()) as { ok: boolean; cleared: Record<string, number>; error?: string };
     if (!res.ok || !body.ok) {
       throw new Error(body.error ?? `HTTP ${res.status}`);

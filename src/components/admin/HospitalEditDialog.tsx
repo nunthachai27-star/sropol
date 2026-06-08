@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
+import { withBasePath } from '@/lib/base-path';
 import {
   Settings2,
   Cable,
@@ -515,7 +516,7 @@ function GeneralSection({
       if (lat !== '' && !Number.isFinite(latNum)) throw new Error('lat ไม่ถูกต้อง');
       if (lon !== '' && !Number.isFinite(lonNum)) throw new Error('lon ไม่ถูกต้อง');
 
-      const res = await fetch(`/api/admin/hospitals/${hospital.hcode}`, {
+      const res = await fetch(withBasePath(`/api/admin/hospitals/${hospital.hcode}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -977,7 +978,7 @@ function TunnelSection({ hospital }: { hospital: AdminHospital }) {
     setSaving(true);
     setSaveMessage(null);
     try {
-      const res = await fetch(`/api/admin/hospitals/${hospital.hcode}/bms-config`, {
+      const res = await fetch(withBasePath(`/api/admin/hospitals/${hospital.hcode}/bms-config`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tunnelUrl: tunnelUrl.trim() }),
@@ -1161,7 +1162,7 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
     setJustCreated(null);
     setCopied(false);
     try {
-      const res = await fetch('/api/admin/webhooks', {
+      const res = await fetch(withBasePath('/api/admin/webhooks'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hcode: hospital.hcode, label: label.trim() }),
@@ -1200,7 +1201,7 @@ function WebhooksSection({ hospital }: { hospital: AdminHospital }) {
     if (!revokeTarget || revokeInput !== revokeTarget.keyPrefix) return;
     setRevoking(true);
     try {
-      const res = await fetch(`/api/admin/webhooks/${revokeTarget.id}`, {
+      const res = await fetch(withBasePath(`/api/admin/webhooks/${revokeTarget.id}`), {
         method: 'DELETE',
       });
       if (!res.ok) {
@@ -1483,7 +1484,7 @@ function DangerZoneSection({
     setError(null);
     setResult(null);
     try {
-      const res = await fetch(`/api/admin/hospitals/${hospital.hcode}/data`, {
+      const res = await fetch(withBasePath(`/api/admin/hospitals/${hospital.hcode}/data`), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirmHcode: hospital.hcode }),
@@ -1903,7 +1904,7 @@ function SyncLogSection({ hospital }: { hospital: AdminHospital }) {
           className="border bg-white px-4 py-6 text-center font-mono text-[11px] text-[var(--ink-navy-muted)]"
           style={{ borderColor: 'var(--rule-strong)' }}
         >
-          ยังไม่มีรอบ sync บันทึกใน 24 ชม.ที่ผ่านมา — ตรวจสอบว่าผู้ใช้จากโรงพยาบาลนี้เปิด KK-LRMS แล้วหรือยัง
+          ยังไม่มีรอบ sync บันทึกใน 24 ชม.ที่ผ่านมา — ตรวจสอบว่าผู้ใช้จากโรงพยาบาลนี้เปิด SR-LRMS แล้วหรือยัง
         </div>
       )}
 

@@ -3,6 +3,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { SsePatientUpdateEvent, SseConnectionStatusEvent } from '@/types/api';
+import { withBasePath } from '@/lib/base-path';
 
 interface UseSSEOptions {
   onPatientUpdate?: (event: SsePatientUpdateEvent) => void;
@@ -26,7 +27,7 @@ export function useSSE(options: UseSSEOptions = {}) {
         eventSourceRef.current.close();
       }
 
-      const es = new EventSource('/api/sse/dashboard');
+      const es = new EventSource(withBasePath('/api/sse/dashboard'));
       eventSourceRef.current = es;
 
       es.addEventListener('patient-update', (e) => {

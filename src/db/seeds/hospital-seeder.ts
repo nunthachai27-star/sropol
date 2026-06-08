@@ -1,9 +1,16 @@
-// T032: HospitalSeeder — seeds 26 Khon Kaen province hospitals (per MOPH)
+// T032: HospitalSeeder — seeds the 26 Khon Kaen province hospitals (per MOPH).
+// Only runs when the deployment defaults to Khon Kaen (DEFAULT_PROVINCE_CODE
+// === '40'); other provinces (e.g. Surin/32) start with an empty hospital list
+// and add sites from the MOPH registry via /admin · โรงพยาบาล.
 import { v4 as uuidv4 } from 'uuid';
 import type { DatabaseAdapter } from '../adapter';
 import { DataSeeder } from './seeder';
 import { KK_HOSPITALS } from '@/config/hospitals';
+import { DEFAULT_PROVINCE_CODE } from '@/config/province';
 import { HospitalLevel, HospitalServiceType } from '@/types/domain';
+
+// The bundled KK_HOSPITALS list is specific to Khon Kaen (chwpart 40).
+const KK_PROVINCE_CODE = '40';
 
 // Default service-type by level. Updated for SAP framework:
 //   P+ / P / A_S → provincial hub (regional centre)
@@ -27,6 +34,9 @@ export class HospitalSeeder extends DataSeeder {
   }
 
   async shouldRun(db: DatabaseAdapter): Promise<boolean> {
+    // Don't seed the Khon Kaen list into a non-KK deployment — those provinces
+    // populate hospitals from the MOPH registry instead.
+    if (DEFAULT_PROVINCE_CODE !== KK_PROVINCE_CODE) return false;
     const rows = await db.query<{ count: number }>(
       'SELECT COUNT(*) as count FROM hospitals',
     );

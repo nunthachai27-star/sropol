@@ -204,7 +204,7 @@ export function HospitalTable({
           const statusTitle = isBlocked
             ? `Sync ถูกระงับ — ${h.syncBlockedReason ?? 'unknown reason'}`
             : isNeverSynced
-              ? 'ยังไม่เคยมีการเชื่อมต่อ Sync — รอผู้ใช้จากโรงพยาบาลนี้เปิด KK-LRMS ครั้งแรก'
+              ? 'ยังไม่เคยมีการเชื่อมต่อ Sync — รอผู้ใช้จากโรงพยาบาลนี้เปิด SR-LRMS ครั้งแรก'
               : '';
           const sev =
             h.counts.high > 0
