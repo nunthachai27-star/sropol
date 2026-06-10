@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { MIN_BMS_API_VERSION } from '@/lib/bms-version';
 import {
+  getSessionCookie,
   setSessionCookie,
   setMarketplaceToken,
 } from '@/utils/bms-session-storage';
@@ -53,12 +54,23 @@ function LoginForm() {
   const marketplaceToken =
     searchParams.get('marketplace_token') ?? searchParams.get('marketplace-token');
 
-  // Auto-login when bms-session-id is in the URL
+  // Auto-login from the URL param when present, otherwise fall back to the
+  // persisted bms-session-id cookie (7-day expiry, written on the last
+  // successful login). The NextAuth app session lasts only 8h
+  // (auth.config.ts), so a returning user whose app session has lapsed lands
+  // here WITHOUT the URL param — but their BMS session cookie is usually still
+  // valid. Reusing it re-logs them in silently instead of forcing a re-type.
+  // If the cookied session has expired on HOSxP, preflight fails and the
+  // manual form is shown (no regression), so the fallback is always safe.
+  // Logout clears this cookie (TopNavBar.handleLogout), so it can't defeat
+  // an intentional sign-out.
   useEffect(() => {
-    if (bmsSessionId && !autoLoginAttempted.current) {
+    if (autoLoginAttempted.current) return;
+    const candidate = bmsSessionId ?? getSessionCookie();
+    if (candidate) {
       autoLoginAttempted.current = true;
-      setSessionId(bmsSessionId);
-      doLogin(bmsSessionId);
+      setSessionId(candidate);
+      doLogin(candidate);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bmsSessionId]);

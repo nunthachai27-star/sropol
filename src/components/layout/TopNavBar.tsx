@@ -13,6 +13,7 @@ import { LogOut, Menu, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { withBasePath } from '@/lib/base-path';
 import { NAV_ITEMS, ROLE_LABELS, filterNavByRole } from '@/config/nav';
+import { removeSessionCookie, removeMarketplaceToken } from '@/utils/bms-session-storage';
 
 export type TopNavBarVariant = 'hospital' | 'provincial';
 
@@ -91,6 +92,17 @@ export function TopNavBar({ variant = 'provincial' }: TopNavBarProps = {}) {
   );
 
   const handleLogout = useCallback(() => {
+    // Clear the persisted BMS session cookie + marketplace token BEFORE
+    // signOut redirects to /login. The login page now auto-logs in from this
+    // cookie when no URL param is present (so an 8h app-session lapse doesn't
+    // force a re-type); without this clear, that same fallback would sign the
+    // user straight back in and make logout a no-op. The localStorage
+    // auth-provider flag also signals BmsSessionProvider not to re-hydrate.
+    removeSessionCookie();
+    removeMarketplaceToken();
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem('kk-lrms:auth-provider');
+    }
     signOut({ callbackUrl: '/login' });
   }, []);
 
