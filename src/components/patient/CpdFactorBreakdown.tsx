@@ -8,6 +8,7 @@
 
 import { CheckCircle2, AlertTriangle, HelpCircle, Gauge } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
+import { DEFAULT_PROVINCE_NAME } from '@/config/province';
 import { CPD_FACTOR_WEIGHTS } from '@/config/risk-levels';
 
 interface CpdFactorBreakdownProps {
@@ -339,7 +340,7 @@ export function CpdFactorBreakdown({
         style={{ borderColor: 'var(--rule-hair)' }}
       >
         <span>คำนวณเมื่อ {formatRelativeTime(calculatedAt)}</span>
-        <span>CPD score · Khon Kaen province</span>
+        <span>CPD score · จ.{DEFAULT_PROVINCE_NAME}</span>
       </div>
     </div>
   );

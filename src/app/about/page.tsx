@@ -186,7 +186,7 @@ export default function AboutPage() {
           </h2>
           <p className="text-lg text-slate-300 max-w-2xl leading-relaxed">
             ระบบ Real-time สำหรับสูติแพทย์และพยาบาลห้องคลอด ใช้ติดตามและประเมินความเสี่ยง
-            ผู้คลอดในโรงพยาบาลชุมชนทั่วจังหวัดขอนแก่น จากศูนย์กลางที่ รพ.ขอนแก่น
+            ผู้คลอดในโรงพยาบาลชุมชนทั่วจังหวัดสุรินทร์ จากศูนย์กลางที่ รพ.สุรินทร์
           </p>
         </div>
       </header>
@@ -201,10 +201,10 @@ export default function AboutPage() {
           </SectionTitle>
           <div className="rounded-2xl bg-white p-8 shadow-sm space-y-6">
             <p className="text-slate-600 leading-relaxed text-lg">
-              <strong>SR-LRMS</strong> (Khon Kaen Labor Room Monitoring System) คือระบบติดตามการคลอดแบบรวมศูนย์
+              <strong>SR-LRMS</strong> (Surin Labor Room Monitoring System) คือระบบติดตามการคลอดแบบรวมศูนย์
               ระดับจังหวัด ที่ออกแบบมาเพื่อให้สูติแพทย์และพยาบาลห้องคลอดของ<strong>โรงพยาบาลแม่ข่าย</strong>
-              (รพ.ขอนแก่น และ รพ.ศรีนครินทร์) สามารถ<strong>ติดตามผู้คลอด</strong>ที่รอคลอดใน
-              <strong>โรงพยาบาลชุมชน (รพช.) ทุกแห่ง</strong>ในจังหวัดขอนแก่นได้แบบ Real-time
+              (รพ.สุรินทร์) สามารถ<strong>ติดตามผู้คลอด</strong>ที่รอคลอดใน
+              <strong>โรงพยาบาลชุมชน (รพช.) ทุกแห่ง</strong>ในจังหวัดสุรินทร์ได้แบบ Real-time
             </p>
             <p className="text-slate-600 leading-relaxed">
               ระบบดึงข้อมูลอัตโนมัติจาก <strong>HOSxP HIS</strong> (ระบบสารสนเทศโรงพยาบาล)
@@ -249,7 +249,7 @@ export default function AboutPage() {
               <StepItem
                 step={2}
                 title="สร้างมาตรฐานการส่งต่อผู้ป่วย"
-                description="ระบบแนะนำการส่งต่อตาม MOU ของเขตสุขภาพที่ 7 ผู้คลอดที่มีความเสี่ยงสูงจะได้รับคำแนะนำให้ประสานส่งต่อไปยังโรงพยาบาลแม่ข่ายทันที"
+                description="ระบบแนะนำการส่งต่อตาม MOU ของเขตสุขภาพที่ 9 ผู้คลอดที่มีความเสี่ยงสูงจะได้รับคำแนะนำให้ประสานส่งต่อไปยังโรงพยาบาลแม่ข่ายทันที"
               />
               <StepItem
                 step={3}
@@ -294,8 +294,8 @@ export default function AboutPage() {
             />
             <FeatureCard
               icon={<Network className="h-6 w-6" />}
-              title="เชื่อมต่อ 26 โรงพยาบาล"
-              description="ครอบคลุมโรงพยาบาลชุมชนทุกระดับในจังหวัดขอนแก่น ตั้งแต่ระดับ A (S) จนถึง F3 แสดงสถานะเชื่อมต่อ (ออนไลน์/ออฟไลน์) และเวลาอัปเดตข้อมูลล่าสุดของแต่ละ รพ."
+              title="เชื่อมต่อ 22 โรงพยาบาล"
+              description="ครอบคลุมโรงพยาบาลชุมชนทุกระดับในจังหวัดสุรินทร์ ตั้งแต่ระดับ A (S) จนถึง F3 แสดงสถานะเชื่อมต่อ (ออนไลน์/ออฟไลน์) และเวลาอัปเดตข้อมูลล่าสุดของแต่ละ รพ."
             />
             <FeatureCard
               icon={<Bell className="h-6 w-6" />}
@@ -417,13 +417,13 @@ export default function AboutPage() {
           </SectionTitle>
           <div className="rounded-2xl bg-white p-8 shadow-sm space-y-6">
             <p className="text-slate-600 leading-relaxed">
-              ระบบ SR-LRMS ใช้โมเดล <strong>Hub-and-Spoke</strong> โดยมี รพ.ขอนแก่น เป็นศูนย์กลาง (Hub)
-              เชื่อมต่อกับ รพช. ทุกระดับในจังหวัดขอนแก่น:
+              ระบบ SR-LRMS ใช้โมเดล <strong>Hub-and-Spoke</strong> โดยมี รพ.สุรินทร์ เป็นศูนย์กลาง (Hub)
+              เชื่อมต่อกับ รพช. ทุกระดับในจังหวัดสุรินทร์:
             </p>
             <div className="space-y-1">
               <HospitalLevelRow
                 level="Hub"
-                name="รพ.ขอนแก่น / รพ.ศรีนครินทร์"
+                name="รพ.สุรินทร์"
                 description="โรงพยาบาลศูนย์ — ศูนย์กลาง SR-LRMS สูติแพทย์และพยาบาลห้องคลอดใช้ Monitor ผู้คลอดจากทุก รพ."
               />
               <HospitalLevelRow
@@ -495,7 +495,7 @@ export default function AboutPage() {
               <StepItem
                 step={4}
                 title="สูติแพทย์ติดตามและให้คำแนะนำ"
-                description="สูติแพทย์ที่ รพ.ขอนแก่น เปิด Dashboard ดูผู้คลอดทั้งจังหวัด หากพบผู้คลอดเสี่ยงสูง สามารถประสานงานส่งต่อ ให้คำแนะนำ หรือเตรียมรับผู้ป่วยได้ทันที"
+                description="สูติแพทย์ที่ รพ.สุรินทร์ เปิด Dashboard ดูผู้คลอดทั้งจังหวัด หากพบผู้คลอดเสี่ยงสูง สามารถประสานงานส่งต่อ ให้คำแนะนำ หรือเตรียมรับผู้ป่วยได้ทันที"
               />
             </div>
           </div>
@@ -532,7 +532,7 @@ export default function AboutPage() {
               </div>
               <p className="text-slate-600 leading-relaxed">
                 ใช้ <strong>Bearer Token</strong> ผ่าน HTTP Header ทุกโรงพยาบาลจะได้รับ API Key เฉพาะ
-                ที่ออกให้โดยผู้ดูแลระบบ สสจ.ขอนแก่น API Key จะแสดงเพียงครั้งเดียวตอนสร้าง — กรุณาบันทึกไว้ให้ดี
+                ที่ออกให้โดยผู้ดูแลระบบ สสจ.สุรินทร์ API Key จะแสดงเพียงครั้งเดียวตอนสร้าง — กรุณาบันทึกไว้ให้ดี
               </p>
               <CodeBlock title="HTTP Header">
 {`Authorization: Bearer kklrms_a1b2c3d4e5f6...`}
@@ -889,22 +889,22 @@ export default function AboutPage() {
                 <tbody className="text-sm text-slate-600">
                   <tr className="border-b border-slate-100">
                     <td className="py-3 pr-4 font-medium">สูติแพทย์</td>
-                    <td className="py-3 pr-4">แพทย์เฉพาะทาง รพ.ขอนแก่น / รพ.ศรีนครินทร์</td>
+                    <td className="py-3 pr-4">แพทย์เฉพาะทาง รพ.สุรินทร์</td>
                     <td className="py-3">Monitor Case ให้คำแนะนำส่งต่อ ประเมินความเสี่ยง</td>
                   </tr>
                   <tr className="border-b border-slate-100">
                     <td className="py-3 pr-4 font-medium">พยาบาลห้องคลอด รพ.แม่ข่าย</td>
-                    <td className="py-3 pr-4">พยาบาลวิชาชีพ รพ.ขอนแก่น / รพ.ศรีนครินทร์</td>
+                    <td className="py-3 pr-4">พยาบาลวิชาชีพ รพ.สุรินทร์</td>
                     <td className="py-3">ติดตาม Partogram รับแจ้งเตือน ประสานงานส่งต่อ</td>
                   </tr>
                   <tr className="border-b border-slate-100">
                     <td className="py-3 pr-4 font-medium">พยาบาล รพช.</td>
-                    <td className="py-3 pr-4">พยาบาลวิชาชีพ รพช. ในจังหวัดขอนแก่น</td>
+                    <td className="py-3 pr-4">พยาบาลวิชาชีพ รพช. ในจังหวัดสุรินทร์</td>
                     <td className="py-3">บันทึกข้อมูลผู้คลอดใน HOSxP อัปเดตสถานะ</td>
                   </tr>
                   <tr>
                     <td className="py-3 pr-4 font-medium">ผู้ดูแลระบบ</td>
-                    <td className="py-3 pr-4">IT Admin สสจ.ขอนแก่น</td>
+                    <td className="py-3 pr-4">IT Admin สสจ.สุรินทร์</td>
                     <td className="py-3">ตั้งค่าการเชื่อมต่อ HOSxP จัดการสิทธิ์ผู้ใช้งาน</td>
                   </tr>
                 </tbody>
@@ -930,7 +930,7 @@ export default function AboutPage() {
               </li>
               <li className="flex gap-3">
                 <Shield className="h-5 w-5 shrink-0 text-teal-500 mt-0.5" />
-                <span><strong>ระบบยืนยันตัวตน</strong> — ผู้ใช้ต้องลงชื่อเข้าใช้ด้วย BMS Session ID ที่ได้รับจาก สสจ.ขอนแก่น ไม่สามารถเข้าถึงข้อมูลได้โดยไม่ผ่านการยืนยันตัวตน</span>
+                <span><strong>ระบบยืนยันตัวตน</strong> — ผู้ใช้ต้องลงชื่อเข้าใช้ด้วย BMS Session ID ที่ได้รับจาก สสจ.สุรินทร์ ไม่สามารถเข้าถึงข้อมูลได้โดยไม่ผ่านการยืนยันตัวตน</span>
               </li>
               <li className="flex gap-3">
                 <Shield className="h-5 w-5 shrink-0 text-teal-500 mt-0.5" />
@@ -954,7 +954,7 @@ export default function AboutPage() {
             SR-LRMS v1.0.0 — ระบบติดตามการคลอดแบบรวมศูนย์ จังหวัดสุรินทร์
           </p>
           <p>
-            สำนักงานสาธารณสุขจังหวัดขอนแก่น — เขตสุขภาพที่ 7
+            สำนักงานสาธารณสุขจังหวัดสุรินทร์ — เขตสุขภาพที่ 9
           </p>
           <p className="pt-4">
             <Link

@@ -12,15 +12,14 @@ import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { SectionLabel } from '@/components/dashboard/shared';
 import { ProvinceMap } from '@/components/dashboard/ProvinceMap';
-import { HOSPITAL_LEVELS, KK_HOSPITALS } from '@/config/hospitals';
+import { HOSPITAL_LEVELS } from '@/config/hospitals';
+import { DEFAULT_PROVINCE_CODE, DEFAULT_PROVINCE_NAME } from '@/config/province';
 import { cn } from '@/lib/utils';
 import { Search, Building2, Globe, ChevronRight } from 'lucide-react';
 import type { DashboardHospital } from '@/types/api';
 import type { HospitalLevel } from '@/types/domain';
 
-const KK_HCODES = new Set(KK_HOSPITALS.map((h) => h.hcode));
-
-type TabKey = 'khonkaen' | 'other';
+type TabKey = 'inProvince' | 'other';
 
 function groupByLevel(hospitals: DashboardHospital[]) {
   const groups = new Map<HospitalLevel, DashboardHospital[]>();
@@ -239,19 +238,21 @@ export default function HospitalsPage() {
 
   const { hospitals, isLoading } = useDashboard();
   const [search, setSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<TabKey>('khonkaen');
+  const [activeTab, setActiveTab] = useState<TabKey>('inProvince');
   const [selected, setSelected] = useState<string | null>(null);
 
-  const kkHospitals = useMemo(
-    () => hospitals.filter((h) => KK_HCODES.has(h.hcode)),
+  // Split by the active province (default = deployment province) rather than a
+  // hardcoded hospital list, so any province's hospitals group correctly.
+  const inProvinceHospitals = useMemo(
+    () => hospitals.filter((h) => h.provinceCode === DEFAULT_PROVINCE_CODE),
     [hospitals],
   );
   const otherHospitals = useMemo(
-    () => hospitals.filter((h) => !KK_HCODES.has(h.hcode)),
+    () => hospitals.filter((h) => h.provinceCode !== DEFAULT_PROVINCE_CODE),
     [hospitals],
   );
 
-  const tabHospitals = activeTab === 'khonkaen' ? kkHospitals : otherHospitals;
+  const tabHospitals = activeTab === 'inProvince' ? inProvinceHospitals : otherHospitals;
 
   // Search applies to the roster only — the map keeps showing the full set
   // for spatial context, since hiding pins on a typed search would erase the
@@ -301,7 +302,7 @@ export default function HospitalsPage() {
             className="mt-0.5 text-[24px] font-bold leading-tight tracking-tight"
             style={{ color: 'var(--ink-navy)' }}
           >
-            โรงพยาบาล จังหวัดขอนแก่น
+            โรงพยาบาล จังหวัด{DEFAULT_PROVINCE_NAME}
           </h1>
         </div>
       </div>
@@ -424,7 +425,7 @@ export default function HospitalsPage() {
         >
           {(
             [
-              { k: 'khonkaen' as const, label: 'จ.ขอนแก่น', count: kkHospitals.length, icon: Building2 },
+              { k: 'inProvince' as const, label: `จ.${DEFAULT_PROVINCE_NAME}`, count: inProvinceHospitals.length, icon: Building2 },
               { k: 'other' as const, label: 'จังหวัดอื่น / ภายนอก', count: otherHospitals.length, icon: Globe },
             ]
           ).map((t, i) => {
@@ -498,7 +499,7 @@ export default function HospitalsPage() {
                 </span>
               }
             >
-              Network map · เขตจังหวัดขอนแก่น
+              Network map · เขตจังหวัด{DEFAULT_PROVINCE_NAME}
             </SectionLabel>
           </div>
           <div

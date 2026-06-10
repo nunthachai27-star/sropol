@@ -736,7 +736,7 @@ export function ReferOutDialog({
                 value={draft.car_registration_no}
                 onChange={(e) => setF('car_registration_no', e.target.value)}
                 aria-label="car_registration_no"
-                placeholder="กข 1234 ขอนแก่น"
+                placeholder="กข 1234 สุรินทร์"
                 className={inputCls}
               />
             </div>
