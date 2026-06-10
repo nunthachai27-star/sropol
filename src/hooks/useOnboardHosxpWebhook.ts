@@ -10,10 +10,12 @@
 //        a. POST /api/onboarding/webhook-key  (mints a KK-LRMS API key
 //           bound to the session's hospital, returns the raw key once).
 //        b. POST /api/rest/webhook_setting via BMS with:
-//             webhook_module_id        = 3
-//             webhook_setting_code     = 'KK-LRMS'
-//             webhook_authorization_key = <the raw key>
-//             webhook_url              = <KK-LRMS public webhook URL>
+//             webhook_module_id          = 3
+//             webhook_setting_code       = 'KK-LRMS'
+//             webhook_setting_description = <label>  (NOT NULL on HOSxP)
+//             webhook_authorization_key  = <the raw key>
+//             webhook_url                = <KK-LRMS public webhook URL>
+//             webhook_active             = 'Y'  (consumer reads only active='Y')
 //
 // Ref-guarded so it runs at most once per tab/session even under
 // React-strict-mode double mount. SessionStorage persists two separate
@@ -35,6 +37,14 @@ const DONE_STORAGE_KEY = 'kk-lrms:hosxp-webhook-onboarded';
 const PENDING_STORAGE_KEY = 'kk-lrms:hosxp-webhook-pending-key';
 const WEBHOOK_MODULE_ID = 3;
 const WEBHOOK_SETTING_CODE = 'KK-LRMS';
+// webhook_setting_description is NOT NULL on HOSxP (PostgreSQL) — omitting it
+// fails the insert with a not-null-constraint violation. Provide a stable,
+// human-readable label so a DBA browsing webhook_setting knows what this row is.
+const WEBHOOK_SETTING_DESCRIPTION = 'KK-LRMS maternal-referral webhook (auto-provisioned)';
+// The HOSxP consumer (KKLRMSWebhookUnit.pas) only reads rows WHERE
+// webhook_active = 'Y'. Without this the row inserts cleanly but HOSxP skips
+// it and never POSTs patient data back, so set it explicitly on every write.
+const WEBHOOK_ACTIVE = 'Y';
 
 function resolveKkLrmsWebhookUrl(): string {
   if (typeof window === 'undefined') return '';
@@ -255,8 +265,10 @@ export function useOnboardHosxpWebhook(): {
             {
               webhook_module_id: WEBHOOK_MODULE_ID,
               webhook_setting_code: WEBHOOK_SETTING_CODE,
+              webhook_setting_description: WEBHOOK_SETTING_DESCRIPTION,
               webhook_authorization_key: minted.apiKey,
               webhook_url: webhookUrl,
+              webhook_active: WEBHOOK_ACTIVE,
             },
             config,
             marketplaceToken,
@@ -298,8 +310,10 @@ export function useOnboardHosxpWebhook(): {
               webhook_setting_id: webhookSettingId,
               webhook_module_id: WEBHOOK_MODULE_ID,
               webhook_setting_code: WEBHOOK_SETTING_CODE,
+              webhook_setting_description: WEBHOOK_SETTING_DESCRIPTION,
               webhook_authorization_key: minted.apiKey,
               webhook_url: webhookUrl,
+              webhook_active: WEBHOOK_ACTIVE,
             },
             config,
             marketplaceToken,
