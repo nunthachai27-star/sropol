@@ -65,7 +65,10 @@ export class PostgresAdapter extends DatabaseAdapter {
     super();
     this.pool = new Pool({
       connectionString,
-      max: poolConfig?.max ?? 10,
+      // Pool size for concurrent DB work. Raised from 10 → env/25 to give
+      // headroom for 300-500 concurrent dashboard users (short, bursty
+      // queries). Keep it well below Postgres `max_connections` (default 100).
+      max: poolConfig?.max ?? (Number(process.env.DATABASE_POOL_MAX) || 25),
       idleTimeoutMillis: poolConfig?.idleTimeoutMillis ?? 30000,
       connectionTimeoutMillis: poolConfig?.connectionTimeoutMillis ?? 5000,
       ...poolConfig,
