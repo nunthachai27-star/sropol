@@ -1,0 +1,6 @@
+# Husky hook scripts are executed by `sh`. With core.autocrlf=true (the
+# default on Windows clones) they would be checked out with CRLF endings,
+# which makes the shell choke on every line with "$'\r': command not found"
+# and silently disables the hook. Pin them to LF regardless of autocrlf so
+# the auto-bump pre-commit keeps working on every machine.
+.husky/** text eol=lf
