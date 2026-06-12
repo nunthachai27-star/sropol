@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { MIN_BMS_API_VERSION } from '@/lib/bms-version';
+import { APP_VERSION_LABEL } from '@/lib/app-version';
 import {
   getSessionCookie,
   setSessionCookie,
@@ -243,7 +244,7 @@ function LoginForm() {
         </div>
 
         <p className="relative z-10 text-xs text-slate-500">
-          v1.0.0 — สำนักงานสาธารณสุขจังหวัดสุรินทร์
+          {APP_VERSION_LABEL} — สำนักงานสาธารณสุขจังหวัดสุรินทร์
         </p>
       </div>
 

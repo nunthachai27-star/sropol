@@ -24,6 +24,7 @@ import {
   XCircle,
   Globe,
 } from 'lucide-react';
+import { APP_VERSION_LABEL } from '@/lib/app-version';
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -951,7 +952,7 @@ export default function AboutPage() {
         {/* --- Footer --- */}
         <footer className="border-t border-slate-200 pt-8 pb-4 text-center text-sm text-slate-400 space-y-2">
           <p className="font-semibold text-slate-500">
-            SR-LRMS v1.0.0 — ระบบติดตามการคลอดแบบรวมศูนย์ จังหวัดสุรินทร์
+            SR-LRMS {APP_VERSION_LABEL} — ระบบติดตามการคลอดแบบรวมศูนย์ จังหวัดสุรินทร์
           </p>
           <p>
             สำนักงานสาธารณสุขจังหวัดสุรินทร์ — เขตสุขภาพที่ 9

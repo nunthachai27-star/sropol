@@ -8,6 +8,8 @@
 // monospace pill in the bottom-right that doesn't compete with content.
 'use client';
 
+import { APP_VERSION_LABEL } from '@/lib/app-version';
+
 const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev';
 const BUILD_TIME = process.env.NEXT_PUBLIC_BUILD_TIME ?? '';
 
@@ -43,6 +45,8 @@ export function BuildBadge() {
         userSelect: 'all',
       }}
     >
+      <span style={{ opacity: 0.95 }}>{APP_VERSION_LABEL}</span>
+      {' · '}
       <span style={{ opacity: 0.55 }}>build</span>{' '}
       <span style={{ opacity: 0.95 }}>{BUILD_ID}</span>
       {shortTime && (

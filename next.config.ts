@@ -1,5 +1,6 @@
 import type { NextConfig } from 'next';
 import { execSync } from 'node:child_process';
+import { version as appVersion } from './package.json';
 
 const isDocker = process.env.DOCKER_BUILD === 'true';
 
@@ -36,6 +37,9 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_BUILD_ID: buildId,
     NEXT_PUBLIC_BUILD_TIME: buildTime,
+    // Auto-bumped on every commit by .husky/pre-commit. Baked in at build
+    // time so the deployed UI shows the version of the latest built commit.
+    NEXT_PUBLIC_APP_VERSION: appVersion,
   },
 };
 

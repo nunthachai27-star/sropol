@@ -1,0 +1,15 @@
+# Auto-bump the patch version on every commit so the deployed build always
+# carries a fresh, monotonically-increasing version number.
+#
+# --no-git-tag-version: edit package.json + package-lock.json only (no tag, no
+#   commit, and it skips the clean-working-tree check so it runs mid-commit).
+# --allow-same-version: never abort the commit if the bump is a no-op for any
+#   reason — a failed version bump must not block committing.
+# The re-add folds the bumped files into THIS commit, so the commit itself
+# records the version it produced.
+#
+# Notes: merge commits and `git commit --no-verify` skip this hook by design.
+# Requires npm on PATH in the commit environment (CLI, VS Code, git GUIs that
+# inherit the shell PATH all satisfy this).
+npm version patch --no-git-tag-version --allow-same-version
+git add package.json package-lock.json
