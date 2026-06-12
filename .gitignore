@@ -92,3 +92,7 @@ GEMINI.md
 
 # Deck snapshot ZIPs (regeneratable from public/deck/)
 public/*-deck-*.zip
+
+# Playwright MCP snapshot dumps
+.playwright-mcp/
+surin-synclog.md
