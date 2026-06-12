@@ -16,6 +16,7 @@
 //                                    → ipt_labour_partograph (latest by observe_datetime)
 'use client';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useBmsSession } from '@/hooks/useBmsSession';
 import { useMaternityWardStateFull } from '@/hooks/useMaternityWardStateFull';
 import { useOnboardHosxpWebhook } from '@/hooks/useOnboardHosxpWebhook';
@@ -30,7 +31,7 @@ import {
   getBedMoveReasons,
   movePatientBed,
 } from '@/services/maternity-ward';
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, ArrowLeft, RefreshCw } from 'lucide-react';
 
 const LIVE_GREEN = '#059669';
 const SLATE_INK = '#0F172A';
@@ -266,6 +267,31 @@ export default function HospitalMaternityWardPage() {
         }}
       >
         <div>
+          {/* This page lives in the (hospital) route group, which has no top
+              nav bar, so carry an explicit way back to the provincial
+              dashboard. href="/" — Next prepends the basePath at runtime. */}
+          <Link
+            href="/"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              marginBottom: 14,
+              fontFamily: FONT_MONO,
+              fontSize: 11,
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              fontWeight: 700,
+              color: ACCENT_BLUE,
+              textDecoration: 'none',
+              border: `1.5px solid ${ACCENT_BLUE}`,
+              borderRadius: 2,
+              padding: '6px 12px',
+            }}
+          >
+            <ArrowLeft size={14} strokeWidth={2.5} aria-hidden="true" />
+            แดชบอร์ด
+          </Link>
           <div
             style={{
               display: 'flex',
