@@ -79,14 +79,22 @@ type HosxpSyncStatusPayload = Partial<OnboardHosxpSyncState> & {
 export function useOnboardHosxpSync(): {
   state: OnboardHosxpSyncState | null;
 } {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const { config, userInfo, marketplaceToken, isReady } = useBmsSession();
   const ranRef = useRef(false);
   const [state, setState] = useState<OnboardHosxpSyncState | null>(null);
 
   useEffect(() => {
     if (ranRef.current) return;
-    if (session?.user?.authProvider === 'provider-id' || session?.user?.accessMode === 'readonly') {
+    // Gate on a CONFIRMED NextAuth session: the POST to /api/onboarding/hosxp-sync
+    // is redirected to /login by the middleware when unauthenticated, and a POST
+    // to the login page route returns HTTP 405. The BMS context can become ready
+    // before useSession() resolves (e.g. right after auto-login), so without this
+    // gate the request fires unauthenticated and surfaces "HOSxP SYNC ERROR".
+    // Return WITHOUT setting ranRef so it retries once the session hydrates.
+    // (Mirrors the same gate in useOnboardHosxpWebhook.)
+    if (status !== 'authenticated' || !session?.user) return;
+    if (session.user.authProvider === 'provider-id' || session.user.accessMode === 'readonly') {
       ranRef.current = true;
       queueMicrotask(() => setState({ ran: false }));
       return;
@@ -171,6 +179,8 @@ export function useOnboardHosxpSync(): {
     config,
     isReady,
     marketplaceToken,
+    status,
+    session?.user,
     session?.user?.accessMode,
     session?.user?.authProvider,
     userInfo,

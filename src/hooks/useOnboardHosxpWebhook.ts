@@ -137,7 +137,7 @@ export interface OnboardHosxpWebhookResult {
 export function useOnboardHosxpWebhook(): {
   state: OnboardHosxpWebhookResult | null;
 } {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const { config, userInfo, marketplaceToken, isReady } = useBmsSession();
   const ranRef = useRef(false);
   const stateRef = useRef<OnboardHosxpWebhookResult | null>(null);
@@ -151,7 +151,19 @@ export function useOnboardHosxpWebhook(): {
 
   useEffect(() => {
     if (ranRef.current) return;
-    if (session?.user?.authProvider === 'provider-id' || session?.user?.accessMode === 'readonly') {
+    // Gate the whole flow on a CONFIRMED NextAuth session. The first step
+    // (mint-key) POSTs to /api/onboarding/webhook-key, which the middleware
+    // redirects to /login when unauthenticated — and a POST to the login
+    // page route returns HTTP 405 ("failed to mint key (HTTP 405)"). The BMS
+    // session context hydrates from the cookie/localStorage and can become
+    // ready BEFORE useSession() resolves (notably right after auto-login), so
+    // without this gate the mint fires unauthenticated and 405s. Return
+    // WITHOUT setting ranRef so the effect retries once the session hydrates.
+    if (status !== 'authenticated' || !session?.user) {
+      traceStep('preconditions_missing', { reason: 'session_not_authenticated', status });
+      return;
+    }
+    if (session.user.authProvider === 'provider-id' || session.user.accessMode === 'readonly') {
       ranRef.current = true;
       publish({ ran: false });
       return;
@@ -356,7 +368,7 @@ export function useOnboardHosxpWebhook(): {
         publish({ ran: true, error: message });
       }
     })();
-  }, [config, userInfo, marketplaceToken, isReady, session?.user?.authProvider, session?.user?.accessMode]);
+  }, [config, userInfo, marketplaceToken, isReady, status, session?.user, session?.user?.authProvider, session?.user?.accessMode]);
 
   return { state };
 }
