@@ -673,6 +673,49 @@ describe('ANC/Referral Webhook Integration', () => {
       expect(journey[0].hiv_result).toBe(longHiv);
     });
 
+    it('dedupes visits that share a date so the unique (journey, date) index cannot trip', async () => {
+      // HOSxP can hold two ANC service rows on the same calendar date for one
+      // patient. processAncWebhook DELETEs then INSERTs each visit, so duplicate
+      // dates violated idx_cav_journey_date (journey_id, visit_date) and aborted
+      // the whole ANC batch (observed in prod once the varchar overflows were
+      // fixed). Same-date visits collapse to the one with the highest visit_number.
+      const payload: WebhookAncPayload = {
+        type: 'anc_data',
+        hospitalCode: '99902',
+        patients: [{
+          hn: 'VISIT-DUP',
+          name: 'นาง ซ้ำวัน',
+          cid: '1100700090000', // valid Thai-CID checksum
+          birthday: '1990-01-01',
+          pregNo: 1,
+          lmp: '2025-09-01',
+          visits: [
+            { date: '2025-12-01', visitNumber: 1, gaWeeks: 13, weightKg: 50 },
+            { date: '2025-12-01', visitNumber: 2, gaWeeks: 13, weightKg: 52 },
+            { date: '2026-02-01', visitNumber: 3, gaWeeks: 22 },
+          ],
+        }],
+      };
+
+      await processAncWebhook(db, webhookHospitalId, payload, asSse(sseManager));
+
+      const journey = await db.query<{ id: string }>(
+        'SELECT id FROM maternal_journeys WHERE hn = ? AND hospital_id = ?',
+        ['VISIT-DUP', webhookHospitalId],
+      );
+      expect(journey).toHaveLength(1);
+
+      const visits = await db.query<{ visit_number: number; weight_kg: number | null }>(
+        'SELECT visit_number, weight_kg FROM cached_anc_visits WHERE journey_id = ? ORDER BY visit_date',
+        [journey[0].id],
+      );
+      // 2025-12-01 collapses to one row (visit_number 2 wins), plus 2026-02-01.
+      expect(visits).toHaveLength(2);
+      expect(visits[0].visit_number).toBe(2);
+      expect(visits[0].weight_kg).toBe(52);
+      expect(visits[1].visit_number).toBe(3);
+    });
+
     it('replaces visits on re-send (no duplicates)', async () => {
       // First send: 2 visits
       const p1: WebhookAncPayload = {

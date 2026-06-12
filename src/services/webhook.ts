@@ -905,9 +905,23 @@ export async function processAncWebhook(
     // (anc_visit_count, last_anc_date, ga_weeks) so the list UI shows the
     // right "ANC# / LAST ANC / GA" without a separate aggregate query.
     if (patient.visits?.length) {
+      // Collapse visits sharing a calendar date: cached_anc_visits has a UNIQUE
+      // (journey_id, visit_date) index, but HOSxP can hold two ANC service rows
+      // on the same date for one patient (e.g. a same-day correction). Inserting
+      // both violated the constraint and aborted the whole ANC batch. Keep the
+      // highest visit_number per date (the latest/most-complete entry).
+      const visitsByDate = new Map<string, NonNullable<typeof patient.visits>[number]>();
+      for (const v of patient.visits) {
+        const prev = visitsByDate.get(v.date);
+        if (!prev || (v.visitNumber ?? 0) >= (prev.visitNumber ?? 0)) {
+          visitsByDate.set(v.date, v);
+        }
+      }
+      const dedupedVisits = [...visitsByDate.values()];
+
       await db.execute(`DELETE FROM cached_anc_visits WHERE journey_id = ?`, [journeyId]);
       const visitNow = new Date().toISOString();
-      for (const visit of patient.visits) {
+      for (const visit of dedupedVisits) {
         await db.execute(
           `INSERT INTO cached_anc_visits
            (id, journey_id, hospital_id, visit_date, visit_number, ga_weeks,
@@ -960,8 +974,9 @@ export async function processAncWebhook(
       }
 
       // Summary roll-up. Last visit is the one with the highest visit_number;
-      // fall back to latest visit_date if numbers clash or are missing.
-      const sorted = [...patient.visits].sort((a, b) => {
+      // fall back to latest visit_date if numbers clash or are missing. Uses the
+      // deduped list so anc_visit_count counts distinct dates, not raw rows.
+      const sorted = [...dedupedVisits].sort((a, b) => {
         const bn = (b.visitNumber ?? 0) - (a.visitNumber ?? 0);
         if (bn !== 0) return bn;
         return (b.date ?? '').localeCompare(a.date ?? '');
@@ -975,7 +990,7 @@ export async function processAncWebhook(
                 updated_at = ?
           WHERE id = ?`,
         [
-          patient.visits.length,
+          dedupedVisits.length,
           lastVisit?.date ?? null,
           lastVisit?.gaWeeks ?? null,
           visitNow,
