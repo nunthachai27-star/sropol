@@ -31,9 +31,15 @@ export const maternalJourneysTable: TableDefinition = {
     // by HOSxP sync / webhook. Results are short codes (POS/NEG/PENDING/UNKNOWN).
     { name: 'blood_group', type: 'string', maxLength: 2, nullable: true },        // A / B / AB / O
     { name: 'rh_factor', type: 'string', maxLength: 3, nullable: true },          // POS / NEG
-    { name: 'hbsag_result', type: 'string', maxLength: 10, nullable: true },      // POS / NEG / PENDING
-    { name: 'vdrl_result', type: 'string', maxLength: 10, nullable: true },
-    { name: 'hiv_result', type: 'string', maxLength: 10, nullable: true },
+    { name: 'hbsag_result', type: 'string', maxLength: 10, nullable: true },      // POS / NEG / PENDING (webhook short codes)
+    // vdrl_result / hiv_result are fed RAW from HOSxP blood_vdrl/hiv_result via
+    // browser-poll (pickLatest, no length cap) — free-text like "Non-reactive
+    // (titre 1:1)" / "ตรวจไม่พบเชื้อ" that overflowed varchar(20) and aborted the
+    // ANC batch, exactly like urine_protein. TEXT for the same reason; SchemaSync
+    // converts the live varchar columns on startup. (hbsag/ogtt above stay short:
+    // only the webhook path writes them, with controlled POS/NEG/PENDING codes.)
+    { name: 'vdrl_result', type: 'text', nullable: true },
+    { name: 'hiv_result', type: 'text', nullable: true },
     { name: 'ogtt_result', type: 'string', maxLength: 10, nullable: true },       // NORMAL / ABNORMAL / PENDING
     // GPAL / GTPAL obstetric history.
     { name: 'term_births', type: 'integer', nullable: true },

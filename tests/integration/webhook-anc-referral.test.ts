@@ -639,6 +639,40 @@ describe('ANC/Referral Webhook Integration', () => {
       expect(visits[0].urine_glucose).toBe(longGlucose);
     });
 
+    it('persists free-text VDRL/HIV lab results in full (no length cap)', async () => {
+      // Same class as the urine fields: browser-poll feeds maternal_journeys
+      // vdrl_result / hiv_result RAW from HOSxP blood_vdrl/hiv_result (free-text),
+      // which overflowed varchar(20) in prod (hcode 10668) once urine moved to
+      // TEXT. These columns are TEXT too so the full lab phrase persists.
+      const longVdrl = 'Non-reactive — ตรวจไม่พบเชื้อซิฟิลิส (titre 1:1, repeat advised)';
+      const longHiv = 'Negative — ไม่พบการติดเชื้อ HIV (4th-gen Ag/Ab, ครั้งที่ 2)';
+      expect(longVdrl.length).toBeGreaterThan(20); // guards the regression
+      const payload: WebhookAncPayload = {
+        type: 'anc_data',
+        hospitalCode: '99902',
+        patients: [{
+          hn: 'LAB-TEXT',
+          name: 'นาง แลป ยาว',
+          cid: '1100700090000', // valid Thai-CID checksum
+          birthday: '1992-02-02',
+          pregNo: 1,
+          lmp: '2025-09-01',
+          vdrlResult: longVdrl,
+          hivResult: longHiv,
+        }],
+      };
+
+      await processAncWebhook(db, webhookHospitalId, payload, asSse(sseManager));
+
+      const journey = await db.query<{ vdrl_result: string | null; hiv_result: string | null }>(
+        'SELECT vdrl_result, hiv_result FROM maternal_journeys WHERE hn = ? AND hospital_id = ?',
+        ['LAB-TEXT', webhookHospitalId],
+      );
+      expect(journey).toHaveLength(1);
+      expect(journey[0].vdrl_result).toBe(longVdrl);
+      expect(journey[0].hiv_result).toBe(longHiv);
+    });
+
     it('replaces visits on re-send (no duplicates)', async () => {
       // First send: 2 visits
       const p1: WebhookAncPayload = {
