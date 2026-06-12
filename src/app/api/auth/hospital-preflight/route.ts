@@ -83,7 +83,14 @@ export async function POST(request: NextRequest) {
   // (which holds `auth_key` and is used elsewhere as the marketplace-token).
   if (identity.tunnelUrl) {
     const versionCheck = await checkBmsApiVersion(identity.tunnelUrl, sessionId);
-    if (!versionCheck.ok) {
+    // Block ONLY on a confirmed-too-old version. 'unreachable' / 'invalid_response'
+    // mean we couldn't determine the version at all — typically an expired BMS
+    // session (the bearer is the session UUID), a momentary tunnel outage, or an
+    // account with no real HOSxP (e.g. the provincial-admin login). Treating those
+    // as 'hosxp_too_old' locked users out and told them to "update HOSxP" when the
+    // version was simply unknown. Fail open: let login proceed and let the
+    // downstream sync paths surface any real connectivity/version problem.
+    if (!versionCheck.ok && versionCheck.reason === 'too_old') {
       logger.info('hospital_preflight_hosxp_version_rejected', {
         hospitalCode: identity.hospitalCode,
         hospitalName: identity.hospitalName,
@@ -101,6 +108,14 @@ export async function POST(request: NextRequest) {
         currentVersion: versionCheck.version,
         minVersion: MIN_BMS_API_VERSION,
         message: buildVersionRejectionMessage(versionCheck),
+      });
+    }
+    if (!versionCheck.ok) {
+      logger.warn('hospital_preflight_hosxp_version_indeterminate', {
+        hospitalCode: identity.hospitalCode,
+        hospitalName: identity.hospitalName,
+        reason: versionCheck.reason,
+        httpStatus: versionCheck.httpStatus,
       });
     }
   }
