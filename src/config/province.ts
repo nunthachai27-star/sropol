@@ -6,7 +6,18 @@
 // Admins can still switch the live province at runtime via
 // /admin · จังหวัดหลัก (persisted to system_config.active_province_code); this
 // constant only supplies the initial/fallback value before that row exists.
-export const DEFAULT_PROVINCE_CODE = process.env.NEXT_PUBLIC_DEFAULT_PROVINCE_CODE ?? '32';
+//
+// `||` (not `??`) is deliberate: the Docker build passes
+// `NEXT_PUBLIC_DEFAULT_PROVINCE_CODE: ${...:-}` so an unset var arrives as an
+// EMPTY STRING, and `'' ?? '32'` would keep '' — which made every Surin
+// hospital fall into "จังหวัดอื่น". Treat empty/whitespace as unset.
+export function resolveProvinceCode(raw: string | undefined, fallback = '32'): string {
+  return raw?.trim() || fallback;
+}
+
+export const DEFAULT_PROVINCE_CODE = resolveProvinceCode(
+  process.env.NEXT_PUBLIC_DEFAULT_PROVINCE_CODE,
+);
 
 // MOPH province code -> Thai name. Imports ONLY provinces.json (~5 KB), not the
 // thai-geo index (which pulls in the ~1.8 MB districts/tambons/hospitals JSON),
