@@ -51,6 +51,9 @@ describe('SqliteAdapter', () => {
     const nameCol = cols.find((c) => c.name === 'name');
     expect(nameCol).toBeDefined();
     expect(nameCol!.nullable).toBe(false);
+    // SQLite TEXT carries no enforced width — report null so SchemaSync's
+    // widening pass treats it as "unknown" and never tries to ALTER it.
+    expect(nameCol!.maxLength).toBeNull();
   });
 
   it('should support transactions', async () => {

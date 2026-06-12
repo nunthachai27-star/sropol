@@ -25,8 +25,14 @@ export const cachedAncVisitsTable: TableDefinition = {
     { name: 'pass_quality', type: 'boolean', nullable: true },
     { name: 'provider_code', type: 'string', maxLength: 20, nullable: true },
     // WHO 2016 ANC data elements (L2).
-    { name: 'urine_protein', type: 'string', maxLength: 10, nullable: true },  // '-', 'trace', '+', '++', '+++'
-    { name: 'urine_glucose', type: 'string', maxLength: 10, nullable: true },
+    // TEXT, not a short varchar: HOSxP anc_service.albumin / sugar are free-text
+    // and arrive as full phrases ("negative — ตรวจไม่พบโปรตีน…"), which overflowed
+    // first varchar(10) then varchar(20) in prod and aborted the whole ANC batch.
+    // Unbounded TEXT stores the value whole (clinicians see the full lab phrase)
+    // and ends the overflow class entirely. SchemaSync converts the live varchar
+    // columns to TEXT on startup. Nominal dipstick codes: '-','trace','+','++','+++'.
+    { name: 'urine_protein', type: 'text', nullable: true },
+    { name: 'urine_glucose', type: 'text', nullable: true },
     { name: 'hb_g_dl', type: 'decimal', nullable: true },
     { name: 'hct_pct', type: 'decimal', nullable: true },
     { name: 'tt_dose_no', type: 'integer', nullable: true },                   // tetanus toxoid dose number 0-5
@@ -43,7 +49,7 @@ export const cachedAncVisitsTable: TableDefinition = {
     { name: 'vaccines_given_json', type: 'json', nullable: true },
 
     // Urinalysis additions.
-    { name: 'urine_ketone', type: 'string', maxLength: 10, nullable: true },   // '-','trace','+','++','+++'
+    { name: 'urine_ketone', type: 'text', nullable: true },   // free-text from HOSxP — see urine_protein note
     { name: 'urine_culture_result', type: 'string', maxLength: 20, nullable: true }, // NEGATIVE / POSITIVE / PENDING
 
     // Full RTCOG supplementation checklist.

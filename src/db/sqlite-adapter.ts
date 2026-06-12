@@ -48,6 +48,9 @@ export class SqliteAdapter extends DatabaseAdapter {
       type: r.type,
       nullable: r.notnull === 0,
       defaultValue: r.dflt_value,
+      // SQLite columns are dynamically typed (TEXT has no width) — report null
+      // so SchemaSync never attempts a VARCHAR widening on the SQLite path.
+      maxLength: null,
     }));
   }
 

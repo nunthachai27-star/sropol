@@ -597,6 +597,48 @@ describe('ANC/Referral Webhook Integration', () => {
       expect(visits[1].ga_weeks).toBe(22);
     });
 
+    it('persists free-text dipstick lab values in full (no length cap)', async () => {
+      // Regression: HOSxP anc_service.albumin/sugar are free-text — observed in
+      // prod (hcode 10668) overflowing first varchar(10), then varchar(20),
+      // throwing "value too long for type character varying" and aborting the
+      // whole ANC persist batch. The urine_* columns are TEXT so any length
+      // stores whole, preserving the full lab phrase shown to clinicians.
+      const longProtein = 'negative — ตรวจไม่พบโปรตีนในปัสสาวะ (albumin trace ruled out)';
+      const longGlucose = 'negative — ตรวจไม่พบน้ำตาลในปัสสาวะ (random glucose normal)';
+      expect(longProtein.length).toBeGreaterThan(20); // guards the regression
+      const payload: WebhookAncPayload = {
+        type: 'anc_data',
+        hospitalCode: '99902',
+        patients: [{
+          hn: 'VISIT-TEXT',
+          name: 'นาง ยาว เกิน',
+          cid: '1100700090000', // valid Thai-CID checksum (passes the ingest gate)
+          birthday: '1994-01-01',
+          pregNo: 1,
+          lmp: '2025-09-01',
+          visits: [
+            { date: '2025-12-01', visitNumber: 1, gaWeeks: 13, urineProtein: longProtein, urineGlucose: longGlucose },
+          ],
+        }],
+      };
+
+      await processAncWebhook(db, webhookHospitalId, payload, asSse(sseManager));
+
+      const journey = await db.query<{ id: string }>(
+        'SELECT id FROM maternal_journeys WHERE hn = ? AND hospital_id = ?',
+        ['VISIT-TEXT', webhookHospitalId],
+      );
+      expect(journey).toHaveLength(1);
+
+      const visits = await db.query<{ urine_protein: string | null; urine_glucose: string | null }>(
+        'SELECT urine_protein, urine_glucose FROM cached_anc_visits WHERE journey_id = ?',
+        [journey[0].id],
+      );
+      expect(visits).toHaveLength(1);
+      expect(visits[0].urine_protein).toBe(longProtein);
+      expect(visits[0].urine_glucose).toBe(longGlucose);
+    });
+
     it('replaces visits on re-send (no duplicates)', async () => {
       // First send: 2 visits
       const p1: WebhookAncPayload = {

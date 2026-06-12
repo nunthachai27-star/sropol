@@ -93,7 +93,7 @@ export class PostgresAdapter extends DatabaseAdapter {
 
   async getColumnInfo(table: string): Promise<ColumnInfo[]> {
     const result = await this.pool.query(
-      `SELECT column_name, data_type, is_nullable, column_default
+      `SELECT column_name, data_type, is_nullable, column_default, character_maximum_length
        FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = $1
        ORDER BY ordinal_position`,
@@ -105,11 +105,15 @@ export class PostgresAdapter extends DatabaseAdapter {
         data_type: string;
         is_nullable: string;
         column_default: string | null;
+        character_maximum_length: number | null;
       }) => ({
         name: r.column_name,
         type: r.data_type,
         nullable: r.is_nullable === 'YES',
         defaultValue: r.column_default,
+        // Drives SchemaSync's column-widening pass. Null for unbounded types
+        // (TEXT, INTEGER, …) — those are never width-altered.
+        maxLength: r.character_maximum_length,
       }),
     );
   }
