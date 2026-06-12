@@ -37,7 +37,10 @@ vi.mock('next/navigation', () => ({ usePathname: () => '/hospital-maternity-ward
 vi.mock('@/services/maternity-ward', () => ({
   listMaternityWards: vi.fn(),
   listWardBedsInventory: vi.fn(),
-  listWardBedsOccupancy: vi.fn(),
+  // The page's hook (useMaternityWardStateFull) reads the *Full* occupancy
+  // variant; mocking the old name left it undefined → occupancy fetch threw →
+  // the page fell into its error branch instead of rendering the header.
+  listWardBedsOccupancyFull: vi.fn(),
   // Task 51-52: page now lazy-loads bed-move reasons and triggers movePatientBed
   // on drag-drop confirm. Stub both with safe defaults so the page render path
   // is independent of these flows in this Task 25 test.
@@ -48,11 +51,11 @@ vi.mock('@/services/maternity-ward', () => ({
 import {
   listMaternityWards,
   listWardBedsInventory,
-  listWardBedsOccupancy,
+  listWardBedsOccupancyFull,
 } from '@/services/maternity-ward';
 const mockListWards = listMaternityWards as unknown as ReturnType<typeof vi.fn>;
 const mockListInventory = listWardBedsInventory as unknown as ReturnType<typeof vi.fn>;
-const mockListOccupancy = listWardBedsOccupancy as unknown as ReturnType<typeof vi.fn>;
+const mockListOccupancy = listWardBedsOccupancyFull as unknown as ReturnType<typeof vi.fn>;
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
@@ -70,6 +73,11 @@ beforeEach(() => {
   mockListWards.mockReset();
   mockListInventory.mockReset();
   mockListOccupancy.mockReset();
+  // Safe default for every fetch — chiefly the layout's TopNavBar presence
+  // heartbeat, which fires on mount and does fetch(...).catch(...). Without a
+  // resolved default it returns undefined and throws. Session tests override
+  // with their own payload below.
+  mockFetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
   document.cookie = 'bms-session-id=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
   document.cookie = 'marketplace_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
   localStorage.clear();
@@ -83,7 +91,7 @@ describe('Hospital maternity ward page (full render)', () => {
   });
 
   it('renders header summary + 4 bed tiles when session resolves', async () => {
-    mockFetch.mockResolvedValueOnce({
+    mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({
@@ -157,20 +165,23 @@ describe('Hospital maternity ward page (full render)', () => {
 
     render(PAGE);
 
-    await waitFor(() => expect(screen.getByText('ห้องคลอด')).toBeInTheDocument(), {
+    // Wait on a KPI label unique to the loaded header (the clinical-density
+    // redesign replaced the old "X เตียง · ใช้งาน Y" subtitle with a 5-card
+    // Total Beds / Occupied / Available / Locked / High-risk strip).
+    await waitFor(() => expect(screen.getByText('Total Beds')).toBeInTheDocument(), {
       timeout: 2000,
     });
-    await waitFor(
-      () => expect(screen.getByText(/4 เตียง · ใช้งาน 1 · ว่าง 3/)).toBeInTheDocument(),
-      { timeout: 2000 },
-    );
+    // (hospital) route group has no nav bar → the ward header carries its own
+    // back link to the provincial dashboard.
+    const backLink = screen.getByRole('link', { name: /แดชบอร์ด/ });
+    expect(backLink).toHaveAttribute('href', '/');
     expect(screen.getByText('LR1')).toBeInTheDocument();
     expect(screen.getByText('LR2')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /รีเฟรช/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /refresh/i })).toBeInTheDocument();
   });
 
   it('clicks bed → opens drawer with patient header + tabs', async () => {
-    mockFetch.mockResolvedValueOnce({
+    mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({
@@ -216,24 +227,30 @@ describe('Hospital maternity ward page (full render)', () => {
     window.history.replaceState({}, '', 'http://localhost/?bms-session-id=SID');
 
     render(PAGE);
-    // Task 52: the DnD wrapper around an occupied tile also exposes role="button"
-    // (via @dnd-kit's attributes), so disambiguate via aria-label which only the
-    // inner BedTile carries.
+    // BedTileFull tags each tile with data-testid="bed-<bedno>" and fires
+    // onClick(occupant.an) → opens the drawer. (The DnD wrapper also exposes
+    // role="button", so target the stable testid rather than a role.)
+    // Both the DnD wrapper and the inner BedTileFull <article> carry the
+    // testid; the inner one holds the onClick that opens the drawer, so click
+    // the last (innermost) match.
     await waitFor(
-      () => expect(screen.getByLabelText('เตียง 01')).toBeInTheDocument(),
+      () => expect(screen.getAllByTestId('bed-01').length).toBeGreaterThan(0),
       { timeout: 2000 },
     );
-    fireEvent.click(screen.getByLabelText('เตียง 01'));
+    const bedTiles = screen.getAllByTestId('bed-01');
+    fireEvent.click(bedTiles[bedTiles.length - 1]);
 
-    // Drawer should now be visible with the patient's AN in header + 10 tabs
-    await waitFor(() => expect(screen.getByText(/AN1/)).toBeInTheDocument(), {
-      timeout: 2000,
-    });
-    expect(screen.getByRole('tab', { name: 'Partograph' })).toBeInTheDocument();
+    // Drawer should now be visible — the Partograph tab is unique to it, so it
+    // is the clearest "drawer opened" signal (AN1 also shows on the bed tile).
+    await waitFor(
+      () => expect(screen.getByRole('tab', { name: 'Partograph' })).toBeInTheDocument(),
+      { timeout: 2000 },
+    );
+    expect(screen.getAllByText(/AN1/).length).toBeGreaterThan(0);
   });
 
   it('shows error UI when ward query fails', async () => {
-    mockFetch.mockResolvedValueOnce({
+    mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({
