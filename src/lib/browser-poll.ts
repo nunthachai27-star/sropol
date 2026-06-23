@@ -147,6 +147,32 @@ export interface BrowserPollResult {
   permanentBlock?: boolean;
 }
 
+export type LaborPushMode = 'incremental' | 'full_snapshot';
+
+/**
+ * Decide the labor-push mode for a browser-poll cycle.
+ *
+ * 'full_snapshot' lets the server discharge cached ACTIVE patients that are
+ * absent from this payload (reconciliation). That is only safe when the push
+ * is a COMPLETE, verified view of the hospital's active set — i.e. identities
+ * round-tripped ('authentic') AND the name probe dropped nobody. Any other
+ * state (probe failed, some patients dropped, authenticity never established)
+ * means the payload may be a partial/unverified view, so we stay 'incremental'
+ * (upsert-only, never discharges) to avoid wrongly closing an active case.
+ *
+ * Without this, the browser path — now the central sync path — never
+ * reconciles discharges, so cached_patients accumulates stale ACTIVE rows and
+ * the labor-ward count diverges from HOSxP's true active set.
+ */
+export function decideLaborPushMode(opts: {
+  authenticityStatus: NonNullable<BrowserPollResult['authenticity']>['status'] | undefined;
+  droppedNameUnstable: number;
+}): LaborPushMode {
+  return opts.authenticityStatus === 'authentic' && opts.droppedNameUnstable === 0
+    ? 'full_snapshot'
+    : 'incremental';
+}
+
 // ─── SQL queries (MySQL flavour — HOSxP) ────────────────────────────────────
 //
 // Mirrors src/config/hosxp-queries.ts (server-side polling) but inlined so
@@ -912,11 +938,18 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
 
     const body: BrowserPushBody = {};
     if (laborPatients.length > 0) {
-      // 'incremental' — server-side full_snapshot semantics rely on a single
-      // payload covering every active patient at the hospital. The browser
-      // poll is per-user and per-tab, so several tabs may push partial views;
-      // incremental upserts are the safe default.
-      body.labor = { patients: laborPatients, mode: 'incremental' };
+      // full_snapshot only when this push is a complete, verified view of the
+      // active set (authentic + nobody dropped by the name probe), so the
+      // server can discharge cached ACTIVE patients no longer in HOSxP. Any
+      // partial/unverified view stays incremental (upsert-only) so we never
+      // wrongly close an active case. See decideLaborPushMode.
+      body.labor = {
+        patients: laborPatients,
+        mode: decideLaborPushMode({
+          authenticityStatus: result.authenticity?.status,
+          droppedNameUnstable: result.labor.droppedNameUnstable,
+        }),
+      };
     }
     if (partographs.length > 0) body.partograph = { observations: partographs };
     if (ancPatients.length > 0) body.anc = { patients: ancPatients };
