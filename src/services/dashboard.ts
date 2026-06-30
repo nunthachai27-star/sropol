@@ -849,6 +849,11 @@ export async function getIncomingTermPregnancies(
 ): Promise<IncomingTermPregnanciesResult> {
   // Pull every active-stage pregnancy from active spokes that's at or past
   // the threshold. JS filter then applies the capability rules.
+  // ISO cutoffs instead of `NOW() - INTERVAL …`: edc / last_anc_date are stored
+  // as ISO-8601 TEXT in existing deployments, so the timestamptz comparison
+  // throws on Postgres. ISO strings compare lexicographically = chronologically.
+  const edcCutoff = new Date(Date.now() - 14 * 86_400_000).toISOString();
+  const lastAncCutoff = new Date(Date.now() - 60 * 86_400_000).toISOString();
   const rows = await db.query<{
     id: string;
     hn: string;
@@ -891,11 +896,11 @@ export async function getIncomingTermPregnancies(
        AND mj.ga_weeks IS NOT NULL
        AND mj.ga_weeks >= ?
        AND mj.ga_weeks <= 42
-       AND (mj.edc IS NULL OR mj.edc >= NOW() - INTERVAL '14 days')
-       AND (mj.last_anc_date IS NULL OR mj.last_anc_date >= NOW() - INTERVAL '60 days')
+       AND (mj.edc IS NULL OR mj.edc >= ?)
+       AND (mj.last_anc_date IS NULL OR mj.last_anc_date >= ?)
        AND h.is_active = true
        AND h.hcode <> ?`,
-    [minGaWeeks, hubHcode],
+    [minGaWeeks, edcCutoff, lastAncCutoff, hubHcode],
   );
 
   const items: IncomingTermPregnancy[] = [];
