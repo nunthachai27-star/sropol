@@ -122,10 +122,25 @@ interface BrowserAncPatient {
   visits?: BrowserAncVisit[];
 }
 
+export interface BrowserReferralItem {
+  referralId: string;
+  hn: string;
+  cid: string;
+  name: string;
+  toHospitalCode: string;
+  reason: string;
+  diagnosisCode?: string;
+  urgencyLevel?: string;
+  changwatCode?: string;
+  amphurCode?: string;
+  tambonCode?: string;
+}
+
 export interface BrowserPushBody {
   labor?: { patients: BrowserLaborPatient[]; mode?: 'incremental' | 'full_snapshot' };
   anc?: { patients: BrowserAncPatient[] };
   partograph?: { observations: BrowserPartographObservation[] };
+  referrals?: BrowserReferralItem[];
 }
 
 export interface BrowserPollResult {
@@ -134,6 +149,7 @@ export interface BrowserPollResult {
   labor: { read: number; mapped: number; sent: number; droppedNameUnstable: number };
   partograph: { read: number; mapped: number; sent: number; droppedNameUnstable: number };
   anc: { read: number; mapped: number; sent: number; droppedNameUnstable: number };
+  referral: { read: number; mapped: number; sent: number };
   pushedToServer: boolean;
   /** Verdict of the name round-trip probe — present whenever a probe ran. */
   authenticity?: { status: 'authentic' | 'name_unstable' | 'no_data' | 'probe_failed'; detail: string };
@@ -262,6 +278,31 @@ export const SQL_PARTOGRAPH = `
    WHERE i.confirm_discharge = 'N'
      AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
    ORDER BY lp.an, lp.observe_datetime`;
+
+// Refer-out for OB patients in the last 7 days. Source HN/name/location from
+// `patient` (this HOSxP build carries pname/fname/lname/chwpart on patient, as
+// SQL_ACTIVE_LABOUR does). The OB predicate (ICD O*/Z3* or an ANC record) is a
+// COARSE volume filter only — the authoritative "is this pregnancy tracked?"
+// filter runs server-side in persistBrowserReferrals. Re-pulled every cycle;
+// the server upserts by (from_hospital_id, refer_number) so it is idempotent.
+//
+// NOTE: column names (pdx, refer_date, referout_emergency_type_id) and the
+// person_anc join mirror REFEROUT_PREGNANCY in src/config/hosxp-queries.ts and
+// KKLRMSWebhookUnit.pas. Validate against a live HOSxP before first rollout —
+// older builds may differ.
+export const SQL_REFEROUT_OB = `
+  SELECT ro.refer_number, ro.refer_date, ro.hn, ro.refer_hospcode,
+         ro.pdx, ro.pre_diagnosis, ro.referout_emergency_type_id,
+         p.cid, p.chwpart, p.amppart, p.tmbpart,
+         CONCAT(p.pname, p.fname, ' ', p.lname) AS patient_name
+    FROM referout ro
+    JOIN patient p ON p.hn = ro.hn
+   WHERE ro.refer_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+     AND (ro.pdx LIKE 'O%' OR ro.pdx LIKE 'Z3%'
+          OR EXISTS (SELECT 1 FROM person_anc pa
+                       INNER JOIN person pe ON pe.person_id = pa.person_id
+                      WHERE pe.cid = p.cid AND LENGTH(p.cid) = 13))
+   ORDER BY ro.refer_date DESC`;
 
 // ANC active window: edc within 45 days post-EDC OR lmp within 330 days.
 // Mirrors activeAncWhereClause() in src/services/sync/polling.ts so the
@@ -473,6 +514,41 @@ function mapPartograph(row: Record<string, unknown>): BrowserPartographObservati
     note: strOrNull(row.note),
     entryStaff: strOrNull(row.entry_staff),
     entryDatetime: strOrNull(row.entry_datetime),
+  };
+}
+
+// HOSxP referout_emergency_type_id → urgency. Mapping per BMS reference data:
+// 1 = ปกติ (ROUTINE), 2 = เร่งด่วน (URGENT), 3 = ฉุกเฉิน (EMERGENCY). Unknown/null
+// defaults to ROUTINE. CONFIRM the integer codes against a live HOSxP before
+// first rollout (see spec §4).
+export function mapReferralUrgency(id: unknown): 'ROUTINE' | 'URGENT' | 'EMERGENCY' {
+  const n = intOrNull(id);
+  if (n === 3) return 'EMERGENCY';
+  if (n === 2) return 'URGENT';
+  return 'ROUTINE';
+}
+
+export function mapReferral(row: Record<string, unknown>): BrowserReferralItem | null {
+  const referralId = strOrNull(row.refer_number);
+  const hn = strOrNull(row.hn);
+  const cid = strOrNull(row.cid);
+  const name = strOrNull(row.patient_name);
+  const toHospitalCode = strOrNull(row.refer_hospcode);
+  if (!referralId || !hn || !cid || !name || !toHospitalCode) return null;
+  if (!isValidCid13(cid)) return null;
+
+  return {
+    referralId,
+    hn,
+    cid,
+    name,
+    toHospitalCode,
+    reason: strOrNull(row.pre_diagnosis) ?? '',
+    diagnosisCode: strOrNull(row.pdx) ?? undefined,
+    urgencyLevel: mapReferralUrgency(row.referout_emergency_type_id),
+    changwatCode: strOrNull(row.chwpart) ?? undefined,
+    amphurCode: strOrNull(row.amppart) ?? undefined,
+    tambonCode: strOrNull(row.tmbpart) ?? undefined,
   };
 }
 
@@ -784,24 +860,27 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
     labor: { read: 0, mapped: 0, sent: 0, droppedNameUnstable: 0 },
     partograph: { read: 0, mapped: 0, sent: 0, droppedNameUnstable: 0 },
     anc: { read: 0, mapped: 0, sent: 0, droppedNameUnstable: 0 },
+    referral: { read: 0, mapped: 0, sent: 0 },
     pushedToServer: false,
   };
 
   try {
-    // Five queries in parallel — saves a couple of RTTs vs sequential. The
-    // BMS gateway tolerates up to 15 calls/sec/hospital, so 5 in parallel
+    // Six queries in parallel — saves a couple of RTTs vs sequential. The
+    // BMS gateway tolerates up to 15 calls/sec/hospital, so 6 in parallel
     // from one tab is well below the limit.
-    const [laborRows, partRows, ancMasters, ancVisits, ancClasses] = await Promise.all([
+    const [laborRows, partRows, ancMasters, ancVisits, ancClasses, referoutRows] = await Promise.all([
       runQuery<Record<string, unknown>>(SQL_ACTIVE_LABOUR, opts),
       runQuery<Record<string, unknown>>(SQL_PARTOGRAPH, opts),
       runQuery<Record<string, unknown>>(ancMastersSql(), opts),
       runQuery<Record<string, unknown>>(ancVisitsSql(), opts),
       runQuery<Record<string, unknown>>(ancClassifyingSql(), opts),
+      runQuery<Record<string, unknown>>(SQL_REFEROUT_OB, opts),
     ]);
 
     result.labor.read = laborRows.length;
     result.partograph.read = partRows.length;
     result.anc.read = ancMasters.length;
+    result.referral.read = referoutRows.length;
 
     // ─── Per-patient name authenticity gate ───────────────────────────────
     // Collect every fingerprintable (hn, fname, lname) candidate from
@@ -902,6 +981,10 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
       .map(mapPartograph)
       .filter((x): x is BrowserPartographObservation => x !== null);
     const ancPatients = mapAncBundle(ancMasters, ancVisits, ancClasses);
+    const referrals = referoutRows
+      .map(mapReferral)
+      .filter((x): x is BrowserReferralItem => x !== null);
+    result.referral.mapped = referrals.length;
 
     result.labor.mapped = laborPatients.length;
     result.partograph.mapped = partographs.length;
@@ -958,7 +1041,7 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
     // Skip the POST entirely when there's nothing to send — keeps the Sync
     // Log clean for hospitals with no active patients (would otherwise
     // record a "0 rows / 0 rows" run on every browser tick).
-    if (laborPatients.length === 0 && partographs.length === 0 && ancPatients.length === 0) {
+    if (laborPatients.length === 0 && partographs.length === 0 && ancPatients.length === 0 && referrals.length === 0) {
       result.durationMs = Date.now() - startedAt;
       return result;
     }
@@ -980,6 +1063,7 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
     }
     if (partographs.length > 0) body.partograph = { observations: partographs };
     if (ancPatients.length > 0) body.anc = { patients: ancPatients };
+    if (referrals.length > 0) body.referrals = referrals;
 
     const pushRes = await fetch(withBasePath('/api/sync/browser-push'), {
       method: 'POST',
@@ -1004,12 +1088,13 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
     }
 
     const pushed = (await pushRes.json().catch(() => null)) as
-      | { labor?: { processed: number }; anc?: { processed: number }; partograph?: { accepted: number } }
+      | { labor?: { processed: number }; anc?: { processed: number }; partograph?: { accepted: number }; referrals?: { processed: number } }
       | null;
 
     result.labor.sent = pushed?.labor?.processed ?? laborPatients.length;
     result.anc.sent = pushed?.anc?.processed ?? ancPatients.length;
     result.partograph.sent = pushed?.partograph?.accepted ?? partographs.length;
+    result.referral.sent = pushed?.referrals?.processed ?? referrals.length;
     result.pushedToServer = true;
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
