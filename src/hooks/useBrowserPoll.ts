@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useBmsSession } from '@/contexts/BmsSessionContext';
-import { runBrowserPoll, type BrowserPollResult } from '@/lib/browser-poll';
+import { runBrowserPoll, pollBackoffDelay, type BrowserPollResult } from '@/lib/browser-poll';
 
 const DEFAULT_INTERVAL_MS = 60_000;
 const MIN_INTERVAL_MS = 15_000;
@@ -58,6 +58,9 @@ export function useBrowserPoll(options: UseBrowserPollOptions = {}): {
 
   const runningRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Consecutive failed cycles, for the backoff schedule. Reset to 0 on any
+  // clean success so a recovered hospital snaps back to the base cadence.
+  const consecutiveFailuresRef = useRef(0);
   // Module-mount-level latch — once flipped, we don't run again. Kept in a
   // ref (not state) so the interval callback sees the latest value
   // synchronously without depending on a re-render.
@@ -104,6 +107,11 @@ export function useBrowserPoll(options: UseBrowserPollOptions = {}): {
       if (result.permanentBlock) {
         blockedRef.current = true;
       }
+      // Feed the backoff schedule: a clean cycle resets it, a soft error
+      // (e.g. a CORS-blocked / unreachable gateway surfaced as result.error)
+      // counts as a failure.
+      if (result.error) consecutiveFailuresRef.current += 1;
+      else consecutiveFailuresRef.current = 0;
       setState((prev) => ({
         ...prev,
         isRunning: false,
@@ -116,6 +124,7 @@ export function useBrowserPoll(options: UseBrowserPollOptions = {}): {
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      consecutiveFailuresRef.current += 1;
       setState((prev) => ({
         ...prev,
         isRunning: false,
@@ -135,30 +144,31 @@ export function useBrowserPoll(options: UseBrowserPollOptions = {}): {
     setState((prev) => (prev.isReady === !skip ? prev : { ...prev, isReady: !skip }));
   }, [skip]);
 
-  // Fire-and-interval — first cycle on the next tick after gating clears,
-  // then every `intervalMs` afterwards. The interval tears itself down
-  // when blockedRef latches true (permanent server rejection) so we don't
-  // spam Chrome's network panel with a fresh red 403 every cycle.
+  // Fire-and-reschedule — first cycle right after gating clears, then the next
+  // is scheduled once the current finishes, at a delay that backs off
+  // exponentially while cycles keep failing (see pollBackoffDelay). A self-
+  // rescheduling setTimeout (not a fixed setInterval) means an unreachable
+  // gateway slows down instead of re-firing the whole query set every 60s
+  // forever. It also tears down on blockedRef (permanent 403) so we don't spam
+  // Chrome's network panel.
   useEffect(() => {
     if (skip || !autoStart) return;
     let cancelled = false;
-    let id: ReturnType<typeof setInterval> | null = null;
+    let id: ReturnType<typeof setTimeout> | null = null;
 
     const tick = async () => {
       if (cancelled) return;
       await runNow();
-      if (blockedRef.current && id !== null) {
-        clearInterval(id);
-        id = null;
-      }
+      if (cancelled || blockedRef.current) return;
+      const delay = pollBackoffDelay(consecutiveFailuresRef.current, intervalMs);
+      id = setTimeout(() => void tick(), delay);
     };
 
     void tick();
-    id = setInterval(() => void tick(), intervalMs);
 
     return () => {
       cancelled = true;
-      if (id !== null) clearInterval(id);
+      if (id !== null) clearTimeout(id);
       abortRef.current?.abort();
       abortRef.current = null;
     };

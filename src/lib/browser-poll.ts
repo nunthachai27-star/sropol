@@ -173,6 +173,28 @@ export function decideLaborPushMode(opts: {
     : 'incremental';
 }
 
+/**
+ * Effective poll delay given how many cycles have failed back-to-back. Healthy
+ * polls (and the first couple of transient failures) keep the base cadence;
+ * once failures cross `thresholdFailures` the delay doubles each cycle, capped
+ * at `maxMs`. A returning success resets the caller's counter to 0 → base.
+ *
+ * This stops a persistently-unreachable hospital (down gateway, CORS-blocked
+ * tunnel from a remote tab) from re-firing the whole query set every 60s
+ * forever — failing every time and flooding the console/tunnel for nothing.
+ */
+export function pollBackoffDelay(
+  consecutiveFailures: number,
+  baseMs: number,
+  opts: { thresholdFailures?: number; maxMs?: number } = {},
+): number {
+  const threshold = opts.thresholdFailures ?? 3;
+  const maxMs = opts.maxMs ?? 10 * 60_000;
+  if (consecutiveFailures < threshold) return baseMs;
+  const steps = consecutiveFailures - threshold + 1;
+  return Math.min(baseMs * 2 ** steps, maxMs);
+}
+
 // ─── SQL queries (MySQL flavour — HOSxP) ────────────────────────────────────
 //
 // Mirrors src/config/hosxp-queries.ts (server-side polling) but inlined so
