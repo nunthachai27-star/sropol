@@ -28,12 +28,19 @@ export async function GET(request: NextRequest) {
       // rationale. Excludes stale PREGNANCY rows (delivered/lost to follow-up
       // but never transitioned). EDC 2010–2019 cases were inflating counts.
       if (stage === 'PREGNANCY') {
+        // JS-computed ISO cutoffs instead of `NOW() - INTERVAL …` — edc /
+        // last_anc_date are ISO-8601 TEXT in existing deployments, so the
+        // timestamptz comparison throws on Postgres (and NOW() is non-portable
+        // to SQLite). ISO strings compare lexicographically = chronologically.
+        const edcCutoff = new Date(Date.now() - 14 * 86_400_000).toISOString();
+        const lastAncCutoff = new Date(Date.now() - 60 * 86_400_000).toISOString();
         const freshClause = `
           AND (mj.ga_weeks IS NULL OR mj.ga_weeks <= 42)
-          AND (mj.edc IS NULL OR mj.edc >= NOW() - INTERVAL '14 days')
-          AND (mj.last_anc_date IS NULL OR mj.last_anc_date >= NOW() - INTERVAL '60 days')`;
+          AND (mj.edc IS NULL OR mj.edc >= ?)
+          AND (mj.last_anc_date IS NULL OR mj.last_anc_date >= ?)`;
         countSql += freshClause;
         dataSql += freshClause;
+        params.push(edcCutoff, lastAncCutoff);
       }
     }
     if (riskLevel) {
