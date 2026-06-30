@@ -45,7 +45,7 @@ Append to `tests/integration/webhook-anc-referral.test.ts`, inside the top-level
     it('skips an untracked patient — no referral row, no phantom journey', async () => {
       const payload: WebhookReferralCreatePayload = {
         type: 'referral', hospitalCode: '99902', referralId: 'REF-SKIP-001',
-        hn: 'SKIP-HN-001', cid: '1409901066400', name: 'นาง ไม่ติดตาม',
+        hn: 'SKIP-HN-001', cid: '1409901066438', name: 'นาง ไม่ติดตาม',
         toHospitalCode: '99903', reason: 'ส่งต่อ ไม่มีในระบบ',
       };
 
@@ -58,7 +58,7 @@ Append to `tests/integration/webhook-anc-referral.test.ts`, inside the top-level
       expect(refs).toHaveLength(0);
 
       const { createHash: h } = await import('crypto');
-      const cidHash = h('sha256').update('1409901066400').digest('hex');
+      const cidHash = h('sha256').update('1409901066438').digest('hex');
       const journeys = await db.query('SELECT id FROM maternal_journeys WHERE cid_hash = ?', [cidHash]);
       expect(journeys).toHaveLength(0);
     });
@@ -67,7 +67,7 @@ Append to `tests/integration/webhook-anc-referral.test.ts`, inside the top-level
       const ancPayload: WebhookAncPayload = {
         type: 'anc_data', hospitalCode: '99902',
         patients: [{
-          hn: 'SKIP-HN-002', name: 'นาง มี ANC', cid: '1409901066419',
+          hn: 'SKIP-HN-002', name: 'นาง มี ANC', cid: '1409901066411',
           birthday: '1996-01-01', pregNo: 1, lmp: '2025-08-01', riskLevel: 'HR1',
         }],
       };
@@ -75,7 +75,7 @@ Append to `tests/integration/webhook-anc-referral.test.ts`, inside the top-level
 
       const payload: WebhookReferralCreatePayload = {
         type: 'referral', hospitalCode: '99902', referralId: 'REF-SKIP-002',
-        hn: 'SKIP-HN-002', cid: '1409901066419', name: 'นาง มี ANC',
+        hn: 'SKIP-HN-002', cid: '1409901066411', name: 'นาง มี ANC',
         toHospitalCode: '99903', reason: 'ส่งต่อ HR1',
       };
       const result = await processReferralCreate(
@@ -90,7 +90,7 @@ Append to `tests/integration/webhook-anc-referral.test.ts`, inside the top-level
     it('default (no opts) still creates a phantom journey for an untracked patient', async () => {
       const payload: WebhookReferralCreatePayload = {
         type: 'referral', hospitalCode: '99902', referralId: 'REF-SKIP-003',
-        hn: 'SKIP-HN-003', cid: '1409901066427', name: 'นาง ค่าเริ่มต้น',
+        hn: 'SKIP-HN-003', cid: '1409901066420', name: 'นาง ค่าเริ่มต้น',
         toHospitalCode: '99903', reason: 'ส่งต่อ default',
       };
       const result = await processReferralCreate(db, webhookHospitalId, payload, asSse(sseManager));
@@ -102,7 +102,7 @@ Append to `tests/integration/webhook-anc-referral.test.ts`, inside the top-level
   });
 ```
 
-> The CIDs above (`1409901066400`, `...419`, `...427`) are valid Thai-CID checksums. If any fails the checksum gate during a later task, regenerate with a known-valid 13-digit CID — these are only used to exercise the path, not real people.
+> The CIDs above (`1409901066438`, `...419`, `...427`) are valid Thai-CID checksums. If any fails the checksum gate during a later task, regenerate with a known-valid 13-digit CID — these are only used to exercise the path, not real people.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -242,15 +242,15 @@ describe('persistBrowserReferrals', () => {
     // Track one pregnancy via ANC (valid checksum CID)
     const anc: WebhookAncPayload = {
       type: 'anc_data', hospitalCode: '99902',
-      patients: [{ hn: 'T-001', name: 'นาง ติดตาม', cid: '1409901066419',
+      patients: [{ hn: 'T-001', name: 'นาง ติดตาม', cid: '1409901066411',
         birthday: '1996-01-01', pregNo: 1, lmp: '2025-08-01', riskLevel: 'LOW' }],
     };
     await processAncWebhook(db, senderId, anc, asSse(sse));
 
     const referrals: BrowserReferral[] = [
-      { referralId: 'R-TRACKED', hn: 'T-001', cid: '1409901066419', name: 'นาง ติดตาม',
+      { referralId: 'R-TRACKED', hn: 'T-001', cid: '1409901066411', name: 'นาง ติดตาม',
         toHospitalCode: '99903', reason: 'ส่งต่อ tracked' },
-      { referralId: 'R-UNTRACKED', hn: 'U-002', cid: '1409901066427', name: 'นาง ไม่ติดตาม',
+      { referralId: 'R-UNTRACKED', hn: 'U-002', cid: '1409901066420', name: 'นาง ไม่ติดตาม',
         toHospitalCode: '99903', reason: 'ส่งต่อ untracked' },
       { referralId: 'R-BADCID', hn: 'B-003', cid: '1234567890123', name: 'นาง ซีไอดีเสีย',
         toHospitalCode: '99903', reason: 'ส่งต่อ bad cid' },
@@ -264,7 +264,7 @@ describe('persistBrowserReferrals', () => {
     expect(refs).toHaveLength(1);
 
     const { createHash: h } = await import('crypto');
-    const untrackedHash = h('sha256').update('1409901066427').digest('hex');
+    const untrackedHash = h('sha256').update('1409901066420').digest('hex');
     const phantom = await db.query('SELECT id FROM maternal_journeys WHERE cid_hash = ?', [untrackedHash]);
     expect(phantom).toHaveLength(0);
   });
@@ -272,13 +272,13 @@ describe('persistBrowserReferrals', () => {
   it('counts a missing destination hospital as failed, not a thrown batch', async () => {
     const anc: WebhookAncPayload = {
       type: 'anc_data', hospitalCode: '99902',
-      patients: [{ hn: 'T-010', name: 'นาง ปลายทางหาย', cid: '1409901066419',
+      patients: [{ hn: 'T-010', name: 'นาง ปลายทางหาย', cid: '1409901066411',
         birthday: '1995-01-01', pregNo: 1, lmp: '2025-08-01', riskLevel: 'LOW' }],
     };
     await processAncWebhook(db, senderId, anc, asSse(sse));
 
     const referrals: BrowserReferral[] = [
-      { referralId: 'R-NODEST', hn: 'T-010', cid: '1409901066419', name: 'นาง ปลายทางหาย',
+      { referralId: 'R-NODEST', hn: 'T-010', cid: '1409901066411', name: 'นาง ปลายทางหาย',
         toHospitalCode: '00000', reason: 'ปลายทางไม่อยู่ในระบบ' },
     ];
 
@@ -453,7 +453,7 @@ describe('mapReferral', () => {
     pdx: 'O14.1',
     pre_diagnosis: 'Severe preeclampsia',
     referout_emergency_type_id: 2,
-    cid: '1409901066419',
+    cid: '1409901066411',
     chwpart: '32',
     amppart: '01',
     tmbpart: '05',
@@ -464,7 +464,7 @@ describe('mapReferral', () => {
     expect(mapReferral(row)).toEqual({
       referralId: 'REF-2026-0001',
       hn: '000123',
-      cid: '1409901066419',
+      cid: '1409901066411',
       name: 'นาง ทดสอบ ส่งต่อ',
       toHospitalCode: '10669',
       reason: 'Severe preeclampsia',
@@ -755,7 +755,7 @@ beforeEach(() => vi.clearAllMocks());
 describe('POST /api/sync/browser-push — referrals', () => {
   it('dispatches body.referrals to persistBrowserReferrals and records the step', async () => {
     const referrals = [
-      { referralId: 'R1', hn: 'H1', cid: '1409901066419', name: 'n', toHospitalCode: '99903', reason: 'r' },
+      { referralId: 'R1', hn: 'H1', cid: '1409901066411', name: 'n', toHospitalCode: '99903', reason: 'r' },
     ];
     const res = await POST(req({ referrals }) as never);
     const json = await res.json();
