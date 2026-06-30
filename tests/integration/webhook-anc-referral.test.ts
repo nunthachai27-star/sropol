@@ -1419,6 +1419,11 @@ describe('ANC/Referral Webhook Integration', () => {
       };
       await processAncWebhook(db, webhookHospitalId, ancPayload, asSse(sseManager));
 
+      const { createHash: hTracked } = await import('crypto');
+      const trackedHash = hTracked('sha256').update('1409901066411').digest('hex');
+      const seeded = await db.query('SELECT id FROM maternal_journeys WHERE cid_hash = ?', [trackedHash]);
+      expect(seeded).toHaveLength(1); // ANC ingested before the referral call — proves the "tracked" branch
+
       const payload: WebhookReferralCreatePayload = {
         type: 'referral', hospitalCode: '99902', referralId: 'REF-SKIP-002',
         hn: 'SKIP-HN-002', cid: '1409901066411', name: 'นาง มี ANC',
@@ -1444,6 +1449,11 @@ describe('ANC/Referral Webhook Integration', () => {
 
       const refs = await db.query('SELECT id FROM cached_referrals WHERE refer_number = ?', ['REF-SKIP-003']);
       expect(refs).toHaveLength(1);
+
+      const { createHash: hPhantom } = await import('crypto');
+      const phantomHash = hPhantom('sha256').update('1409901066420').digest('hex');
+      const phantom = await db.query('SELECT id FROM maternal_journeys WHERE cid_hash = ?', [phantomHash]);
+      expect(phantom).toHaveLength(1);
     });
   });
 });
