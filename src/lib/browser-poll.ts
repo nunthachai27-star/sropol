@@ -181,16 +181,21 @@ export function decideLaborPushMode(opts: {
 // Scope:
 //   - i.confirm_discharge = 'N'   → still admitted
 //   - w.is_maternity_ward = 'Y'   → per-site scope flag set in HOSxP ward admin
-//   - i.ipt_admit_type_id = 3     → "delivery admission" specifically. Without
-//                                    this, we pick up early-pregnancy management
-//                                    (miscarriage / threatened abortion, G1 GA
-//                                    10 weeks at hcode 11004 was the first
-//                                    real-world hit), post-partum readmissions,
-//                                    and gynae procedures — all show up under
-//                                    "ACTIVE LABOR · PROVINCE" with clinically
-//                                    nonsensical GA values. Matches the
-//                                    Pascal client (KKLRMSWebhookUnit.pas L594).
-const SQL_ACTIVE_LABOUR = `
+//   - i.ipt_admit_type_id = 3 OR IS NULL → prefer "delivery admission", but
+//                                    tolerate hospitals that don't code the
+//                                    admit type at all. At hcode 11004, coding
+//                                    it = 3 keeps out early-pregnancy management
+//                                    (miscarriage / threatened abortion),
+//                                    post-partum readmissions, and gynae cases
+//                                    that would otherwise show "ACTIVE LABOR ·
+//                                    PROVINCE" with nonsensical GA values. But
+//                                    รพ.ปราสาท (10918) leaves ipt_admit_type_id
+//                                    NULL on EVERY admission, so a bare "= 3"
+//                                    hid all 6 of its current labor patients —
+//                                    the is_maternity_ward flag is the reliable
+//                                    labor-ward signal, so NULL is admitted.
+//                                    Cf. Pascal client (KKLRMSWebhookUnit.pas L594).
+export const SQL_ACTIVE_LABOUR = `
   SELECT i.an, i.hn, i.regdate, i.regtime, i.dchdate,
          CONCAT(p.pname, p.fname, ' ', p.lname) AS patient_name,
          p.pname, p.fname, p.lname,
@@ -215,10 +220,10 @@ const SQL_ACTIVE_LABOUR = `
     LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
     LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
    WHERE i.confirm_discharge = 'N'
-     AND i.ipt_admit_type_id = 3
+     AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
    ORDER BY i.regdate DESC`;
 
-const SQL_PARTOGRAPH = `
+export const SQL_PARTOGRAPH = `
   SELECT lp.ipt_labour_partograph_id, lp.an,
          lp.observe_datetime, lp.hour_no,
          lp.fetal_heart_rate,
@@ -233,7 +238,7 @@ const SQL_PARTOGRAPH = `
     JOIN ipt i ON i.an = lp.an
     JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
    WHERE i.confirm_discharge = 'N'
-     AND i.ipt_admit_type_id = 3
+     AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
    ORDER BY lp.an, lp.observe_datetime`;
 
 // ANC active window: edc within 45 days post-EDC OR lmp within 330 days.

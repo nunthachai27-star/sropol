@@ -14,10 +14,12 @@ describe('PARTOGRAPH_OBSERVATIONS', () => {
   });
 
   it('filters to currently-admitted patients', () => {
+    // The query gates on i.confirm_discharge = 'N' (the assertion previously
+    // looked for a `dchdate IS NULL` form the query no longer uses).
     expect(getQuery(PARTOGRAPH_OBSERVATIONS, 'postgresql'))
-      .toMatch(/dchdate IS NULL/);
+      .toMatch(/confirm_discharge = 'N'/);
     expect(getQuery(PARTOGRAPH_OBSERVATIONS, 'mysql'))
-      .toMatch(/dchdate IS NULL/);
+      .toMatch(/confirm_discharge = 'N'/);
   });
 
   it('orders by AN then observe_datetime', () => {
