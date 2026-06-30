@@ -1422,6 +1422,93 @@ export async function processReferralUpdate(
   return { referralId: payload.referralId, status: payload.status };
 }
 
+// ─── Browser-poll referral bundle ───
+//
+// The browser-poll path (src/lib/browser-poll.ts) pulls refer-out rows for a
+// hospital and POSTs them here via /api/sync/browser-push. Unlike the webhook
+// .pas path, we only surface referrals for pregnancies the system already
+// tracks — so each item runs through processReferralCreate with
+// skipIfUntracked, and untracked / bad-CID / dest-missing items are counted,
+// not allowed to abort the batch.
+
+export interface BrowserReferral {
+  referralId: string;
+  hn: string;
+  cid: string;
+  name: string;
+  toHospitalCode: string;
+  reason: string;
+  diagnosisCode?: string;
+  urgencyLevel?: string;
+  changwatCode?: string;
+  amphurCode?: string;
+  tambonCode?: string;
+}
+
+export interface BrowserReferralResult {
+  processed: number;
+  skippedUntracked: number;
+  skippedBadCid: number;
+  failed: number;
+}
+
+export async function persistBrowserReferrals(
+  db: DatabaseAdapter,
+  hospitalId: string,
+  hcode: string,
+  referrals: BrowserReferral[],
+  sseManager: SseManager,
+): Promise<BrowserReferralResult> {
+  const result: BrowserReferralResult = {
+    processed: 0,
+    skippedUntracked: 0,
+    skippedBadCid: 0,
+    failed: 0,
+  };
+
+  for (const r of referrals) {
+    // Strict checksum gate at the boundary — a malformed CID can never match a
+    // real journey, so persisting it would only create noise.
+    if (!isValidThaiCidChecksum(r.cid)) {
+      result.skippedBadCid += 1;
+      continue;
+    }
+
+    const payload: WebhookReferralCreatePayload = {
+      type: 'referral',
+      hospitalCode: hcode,
+      referralId: r.referralId,
+      hn: r.hn,
+      cid: r.cid,
+      name: r.name,
+      toHospitalCode: r.toHospitalCode,
+      reason: r.reason,
+      diagnosisCode: r.diagnosisCode,
+      urgencyLevel: r.urgencyLevel,
+      changwatCode: r.changwatCode,
+      amphurCode: r.amphurCode,
+      tambonCode: r.tambonCode,
+    };
+
+    try {
+      const res = await processReferralCreate(db, hospitalId, payload, sseManager, {
+        skipIfUntracked: true,
+      });
+      if (res.status === 'SKIPPED_UNTRACKED') result.skippedUntracked += 1;
+      else result.processed += 1;
+    } catch (e) {
+      // e.g. destination hcode not registered — one item fails, batch continues.
+      result.failed += 1;
+      logger.warn('browser_referral_failed', {
+        referralId: r.referralId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  return result;
+}
+
 // ─── Partograph webhook validation + processing ───
 //
 // Mirrors validatePayload() / processWebhookPayload() patterns. Validation is
