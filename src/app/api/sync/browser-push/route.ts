@@ -21,6 +21,8 @@ import {
   validatePayload,
   validateAncPayload,
   validatePartographPayload,
+  persistBrowserReferrals,
+  type BrowserReferral,
   type WebhookPayload,
   type WebhookAncPayload,
   type WebhookPartographPayload,
@@ -36,6 +38,7 @@ interface BrowserPushBody {
   labor?: Omit<WebhookPayload, 'hospitalCode'>;
   anc?: Omit<WebhookAncPayload, 'hospitalCode' | 'type'>;
   partograph?: Omit<WebhookPartographPayload, 'hospitalCode' | 'type'>;
+  referrals?: BrowserReferral[];
 }
 
 export async function POST(request: NextRequest) {
@@ -96,6 +99,7 @@ export async function POST(request: NextRequest) {
       labor?: { processed: number; newAdmissions: number; discharges: number; transfers: number };
       anc?: { processed: number };
       partograph?: { accepted: number; skipped: number };
+      referrals?: { processed: number; skippedUntracked: number; skippedBadCid: number; failed: number };
     } = {};
 
     // Labor — main payload, mirrors webhook 'labor' default route.
@@ -261,6 +265,36 @@ export async function POST(request: NextRequest) {
           name: 'persist_partograph',
           status: 'warning',
           message: 'Partograph persist failed.',
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    // Referrals — refer-out pulled by the browser. persistBrowserReferrals
+    // validates CID + journey-match per item (skipIfUntracked), so a bad/
+    // untracked row is counted, never aborts the bundle.
+    if (Array.isArray(body.referrals) && body.referrals.length > 0) {
+      await appendSyncStep(hospitalId, runId, {
+        name: 'persist_referrals',
+        status: 'running',
+        message: `Persisting ${body.referrals.length} refer-out rows.`,
+        counts: { rows: body.referrals.length },
+      });
+      try {
+        const r = await persistBrowserReferrals(db, hospitalId, hcode, body.referrals, sseManager);
+        result.referrals = r;
+        await appendSyncStep(hospitalId, runId, {
+          name: 'persist_referrals',
+          status: 'success',
+          message: `Upserted ${r.processed} referrals (${r.skippedUntracked} untracked, ${r.skippedBadCid} bad CID, ${r.failed} failed).`,
+          counts: { ...r },
+        });
+      } catch (e) {
+        hadWarning = true;
+        await appendSyncStep(hospitalId, runId, {
+          name: 'persist_referrals',
+          status: 'error',
+          message: 'Referral persist failed.',
           detail: e instanceof Error ? e.message : String(e),
         });
       }
