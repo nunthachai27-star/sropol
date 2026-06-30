@@ -1170,6 +1170,7 @@ export async function processReferralCreate(
   hospitalId: string,
   payload: WebhookReferralCreatePayload,
   sseManager: SseManager,
+  opts: { skipIfUntracked?: boolean } = {},
 ): Promise<WebhookReferralResult> {
   const fromHospital = await resolveHospitalByHcode(db, payload.hospitalCode);
   const fromHcode = fromHospital?.hcode ?? payload.hospitalCode;
@@ -1237,7 +1238,16 @@ export async function processReferralCreate(
       [encryptedName, encryptedCid, cidHash, hospitalId, now2, journeyId],
     );
   } else {
-    // No monitoring data — create minimal journey but warn
+    // No monitoring data in the system for this patient.
+    if (opts.skipIfUntracked) {
+      // Browser-poll path: only surface referrals for pregnancies the system
+      // already tracks (ANC/labor). Don't manufacture a phantom journey from a
+      // bare refer-out row — the caller counts this as skipped. Returning here
+      // short-circuits the warn broadcast, location update, and the
+      // cached_referrals upsert, so NOTHING is persisted for an untracked CID.
+      return { referralId: payload.referralId, status: 'SKIPPED_UNTRACKED' };
+    }
+    // Webhook path (default): create minimal journey but warn (unchanged).
     const { randomUUID } = await import('crypto');
     journeyId = randomUUID();
     const now = new Date().toISOString();

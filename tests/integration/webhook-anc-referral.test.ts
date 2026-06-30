@@ -1385,4 +1385,65 @@ describe('ANC/Referral Webhook Integration', () => {
       expect(result.patientsProcessed).toBe(0);
     });
   });
+
+  // ─── Referral skipIfUntracked (browser-poll path) ───
+  describe('Scenario 12: processReferralCreate skipIfUntracked', () => {
+    it('skips an untracked patient — no referral row, no phantom journey', async () => {
+      const payload: WebhookReferralCreatePayload = {
+        type: 'referral', hospitalCode: '99902', referralId: 'REF-SKIP-001',
+        hn: 'SKIP-HN-001', cid: '1409901066438', name: 'นาง ไม่ติดตาม',
+        toHospitalCode: '99903', reason: 'ส่งต่อ ไม่มีในระบบ',
+      };
+
+      const result = await processReferralCreate(
+        db, webhookHospitalId, payload, asSse(sseManager), { skipIfUntracked: true },
+      );
+      expect(result.status).toBe('SKIPPED_UNTRACKED');
+
+      const refs = await db.query('SELECT id FROM cached_referrals WHERE refer_number = ?', ['REF-SKIP-001']);
+      expect(refs).toHaveLength(0);
+
+      const { createHash: h } = await import('crypto');
+      const cidHash = h('sha256').update('1409901066438').digest('hex');
+      const journeys = await db.query('SELECT id FROM maternal_journeys WHERE cid_hash = ?', [cidHash]);
+      expect(journeys).toHaveLength(0);
+    });
+
+    it('still creates the referral when the patient IS tracked (ANC journey exists)', async () => {
+      const ancPayload: WebhookAncPayload = {
+        type: 'anc_data', hospitalCode: '99902',
+        patients: [{
+          hn: 'SKIP-HN-002', name: 'นาง มี ANC', cid: '1409901066411',
+          birthday: '1996-01-01', pregNo: 1, lmp: '2025-08-01', riskLevel: 'HR1',
+        }],
+      };
+      await processAncWebhook(db, webhookHospitalId, ancPayload, asSse(sseManager));
+
+      const payload: WebhookReferralCreatePayload = {
+        type: 'referral', hospitalCode: '99902', referralId: 'REF-SKIP-002',
+        hn: 'SKIP-HN-002', cid: '1409901066411', name: 'นาง มี ANC',
+        toHospitalCode: '99903', reason: 'ส่งต่อ HR1',
+      };
+      const result = await processReferralCreate(
+        db, webhookHospitalId, payload, asSse(sseManager), { skipIfUntracked: true },
+      );
+      expect(result.status).toBe('INITIATED');
+
+      const refs = await db.query('SELECT id FROM cached_referrals WHERE refer_number = ?', ['REF-SKIP-002']);
+      expect(refs).toHaveLength(1);
+    });
+
+    it('default (no opts) still creates a phantom journey for an untracked patient', async () => {
+      const payload: WebhookReferralCreatePayload = {
+        type: 'referral', hospitalCode: '99902', referralId: 'REF-SKIP-003',
+        hn: 'SKIP-HN-003', cid: '1409901066420', name: 'นาง ค่าเริ่มต้น',
+        toHospitalCode: '99903', reason: 'ส่งต่อ default',
+      };
+      const result = await processReferralCreate(db, webhookHospitalId, payload, asSse(sseManager));
+      expect(result.status).toBe('INITIATED');
+
+      const refs = await db.query('SELECT id FROM cached_referrals WHERE refer_number = ?', ['REF-SKIP-003']);
+      expect(refs).toHaveLength(1);
+    });
+  });
 });
