@@ -211,7 +211,15 @@ export function pollBackoffDelay(
 //     MySQL/HOSxP zero-dates ('0000-00-00' for un-discharged, which is < any
 //     real regdate) without a literal that Postgres cannot represent — so the
 //     one query stays correct on MySQL and PostgreSQL alike.
-//   - w.is_maternity_ward = 'Y'   → per-site scope flag set in HOSxP ward admin
+//   - (w.is_maternity_ward = 'Y' OR ip.an IS NOT NULL OR l.an IS NOT NULL) →
+//     a maternity patient by DATA SIGNAL, not ward config alone: in the flagged
+//     maternity ward, OR has an ipt_pregnancy admission record, OR has an
+//     ipt_labour delivery record. Relying only on is_maternity_ward missed live
+//     labor at hospitals that never flag their current ward — รพ.ท่าตูม
+//     abandoned its flagged ward W40 in 2015 and now delivers in an unflagged
+//     ward; hcode 99999 records labor in unflagged wards 10/89/61. The obstetric
+//     records identify them without per-site ward-admin setup. Additive: every
+//     patient the old flag-only path captured is still captured.
 //   - i.ipt_admit_type_id = 3 OR IS NULL → prefer "delivery admission", but
 //                                    tolerate hospitals that don't code the
 //                                    admit type at all. At hcode 11004, coding
@@ -245,13 +253,14 @@ export const SQL_ACTIVE_LABOUR = `
            WHERE pe.cid = p.cid AND LENGTH(p.cid) = 13 AND pas.bw IS NOT NULL AND pas.bw > 0
            ORDER BY pasv.person_anc_service_id ASC LIMIT 1) AS pre_preg_weight
     FROM ipt i
-    JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
     JOIN patient p ON p.hn = i.hn
+    LEFT JOIN ward w ON w.ward = i.ward
     LEFT JOIN ipt_labour l ON l.an = i.an
     LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
     LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
    WHERE i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
      AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
+     AND (w.is_maternity_ward = 'Y' OR ip.an IS NOT NULL OR l.an IS NOT NULL)
    ORDER BY i.regdate DESC`;
 
 export const SQL_PARTOGRAPH = `
@@ -267,9 +276,12 @@ export const SQL_PARTOGRAPH = `
          lp.note, lp.entry_staff, lp.entry_datetime
     FROM ipt_labour_partograph lp
     JOIN ipt i ON i.an = lp.an
-    JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
+    LEFT JOIN ward w ON w.ward = i.ward
+    LEFT JOIN ipt_labour l ON l.an = i.an
+    LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
    WHERE i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
      AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
+     AND (w.is_maternity_ward = 'Y' OR ip.an IS NOT NULL OR l.an IS NOT NULL)
    ORDER BY lp.an, lp.observe_datetime`;
 
 // ANC active window: edc within 45 days post-EDC OR lmp within 330 days.
