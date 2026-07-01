@@ -201,7 +201,13 @@ export function pollBackoffDelay(
 // the browser bundle doesn't drag in PG-only types.
 //
 // Scope:
-//   - i.confirm_discharge = 'N'   → still admitted
+//   - i.confirm_discharge = 'N' AND i.dchdate IS NULL → still admitted.
+//     dchdate (clinical discharge date) is the reliable "still in ward" signal:
+//     hospitals that skip the "ยืนยันการจำหน่าย" workflow (e.g. รพ.ท่าตูม on
+//     HOSxP V.3) leave confirm_discharge='N' forever, so relying on it alone
+//     bloats the ward with every past admission. dchdate flips on discharge at
+//     every site, so requiring it NULL is correct on confirming and
+//     non-confirming hospitals alike.
 //   - w.is_maternity_ward = 'Y'   → per-site scope flag set in HOSxP ward admin
 //   - i.ipt_admit_type_id = 3 OR IS NULL → prefer "delivery admission", but
 //                                    tolerate hospitals that don't code the
@@ -241,7 +247,7 @@ export const SQL_ACTIVE_LABOUR = `
     LEFT JOIN ipt_labour l ON l.an = i.an
     LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
     LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
-   WHERE i.confirm_discharge = 'N'
+   WHERE i.confirm_discharge = 'N' AND i.dchdate IS NULL
      AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
    ORDER BY i.regdate DESC`;
 
@@ -259,7 +265,7 @@ export const SQL_PARTOGRAPH = `
     FROM ipt_labour_partograph lp
     JOIN ipt i ON i.an = lp.an
     JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
-   WHERE i.confirm_discharge = 'N'
+   WHERE i.confirm_discharge = 'N' AND i.dchdate IS NULL
      AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
    ORDER BY lp.an, lp.observe_datetime`;
 
