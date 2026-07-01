@@ -38,14 +38,21 @@ async function seedHosxp() {
     INSERT INTO ward VALUES ('11','สูติกรรม','Y');
     INSERT INTO patient VALUES ('HN1','นาง','ก','ข','1234567890123','1995-01-01',158);
     INSERT INTO patient VALUES ('HN2','นาง','ค','ง','1234567890124','1994-01-01',160);
+    INSERT INTO patient VALUES ('HN3','นาง','จ','ฉ','1234567890125','1996-01-01',162);
     -- still in ward: dchdate NULL, confirm 'N'
     INSERT INTO ipt VALUES ('AN-ACTIVE','HN1','2026-06-30','08:00',NULL,'11','N',3);
     -- discharged long ago but never confirm-discharged (ท่าตูม case):
     -- dchdate SET, confirm still 'N'
     INSERT INTO ipt VALUES ('AN-DISCH','HN2','2026-01-01','08:00','2026-01-03','11','N',3);
+    -- still admitted but dchdate stored as a "zero/sentinel" date BEFORE regdate.
+    -- Proxy for MySQL/HOSxP V.3 storing un-discharged dchdate as '0000-00-00'
+    -- (PGlite/Postgres cannot hold '0000-00-00', so we use an early date < regdate
+    -- to exercise the same "not really discharged" branch). Must be treated ACTIVE.
+    INSERT INTO ipt VALUES ('AN-ZERO','HN3','2026-06-30','08:00','1900-01-01','11','N',3);
     -- a partograph row for each so the partograph query has candidates
     INSERT INTO ipt_labour_partograph (ipt_labour_partograph_id, an, observe_datetime) VALUES (1,'AN-ACTIVE','2026-06-30T09:00:00Z');
     INSERT INTO ipt_labour_partograph (ipt_labour_partograph_id, an, observe_datetime) VALUES (2,'AN-DISCH','2026-01-02T09:00:00Z');
+    INSERT INTO ipt_labour_partograph (ipt_labour_partograph_id, an, observe_datetime) VALUES (3,'AN-ZERO','2026-06-30T09:00:00Z');
   `);
   return db;
 }
@@ -56,6 +63,7 @@ describe('active-labor queries exclude discharged (dchdate) patients', () => {
     const rows = (await db.query<{ an: string }>(SQL_ACTIVE_LABOUR)).rows;
     const ans = rows.map((r) => r.an);
     expect(ans).toContain('AN-ACTIVE');
+    expect(ans).toContain('AN-ZERO'); // zero/sentinel dchdate = still admitted
     expect(ans).not.toContain('AN-DISCH');
   });
 
@@ -64,6 +72,7 @@ describe('active-labor queries exclude discharged (dchdate) patients', () => {
     const rows = (await db.query<{ an: string }>(SQL_PARTOGRAPH)).rows;
     const ans = rows.map((r) => r.an);
     expect(ans).toContain('AN-ACTIVE');
+    expect(ans).toContain('AN-ZERO'); // zero/sentinel dchdate = still admitted
     expect(ans).not.toContain('AN-DISCH');
   });
 });

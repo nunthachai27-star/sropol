@@ -49,7 +49,7 @@ export const ACTIVE_LABOR_PATIENTS: SqlQueryTemplate = {
     LEFT JOIN ipt_labour il ON il.an = i.an
     LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
     LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
-    WHERE i.confirm_discharge = 'N' AND i.dchdate IS NULL
+    WHERE i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
       AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
     ORDER BY i.regdate DESC`,
   mysql: `
@@ -83,7 +83,7 @@ export const ACTIVE_LABOR_PATIENTS: SqlQueryTemplate = {
     LEFT JOIN ipt_labour il ON il.an = i.an
     LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
     LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
-    WHERE i.confirm_discharge = 'N' AND i.dchdate IS NULL
+    WHERE i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
       AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
     ORDER BY i.regdate DESC`,
 };
@@ -378,7 +378,7 @@ export const PARTOGRAPH_OBSERVATIONS: SqlQueryTemplate = {
              ON lat.labour_amniotic_type_id = lp.labour_amniotic_type_id
       JOIN ipt i ON i.an = lp.an
       JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
-     WHERE i.confirm_discharge = 'N' AND i.dchdate IS NULL
+     WHERE i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
        AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
      ORDER BY lp.an, lp.observe_datetime`,
   mysql: `
@@ -416,7 +416,7 @@ export const PARTOGRAPH_OBSERVATIONS: SqlQueryTemplate = {
              ON lat.labour_amniotic_type_id = lp.labour_amniotic_type_id
       JOIN ipt i ON i.an = lp.an
       JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
-     WHERE i.confirm_discharge = 'N' AND i.dchdate IS NULL
+     WHERE i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
        AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
      ORDER BY lp.an, lp.observe_datetime`,
 };
@@ -488,7 +488,7 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
   LEFT JOIN doctor di ON di.code = i.incharge_doctor
   LEFT JOIN pttype py ON py.pttype = i.pttype
   LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
- WHERE i.ward = :ward AND i.confirm_discharge = 'N' AND i.dchdate IS NULL
+ WHERE i.ward = :ward AND i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
  ORDER BY iptadm.bedno`,
   mysql: `SELECT i.an, i.hn, i.regdate, i.regtime, i.ward,
        iptadm.bedno, iptadm.roomno, iptadm.bedtype,
@@ -511,7 +511,7 @@ export const WARD_BEDS_OCCUPANCY: SqlQueryTemplate = {
   LEFT JOIN doctor di ON di.code = i.incharge_doctor
   LEFT JOIN pttype py ON py.pttype = i.pttype
   LEFT JOIN roomno ON roomno.roomno = iptadm.roomno
- WHERE i.ward = :ward AND i.confirm_discharge = 'N' AND i.dchdate IS NULL
+ WHERE i.ward = :ward AND i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
  ORDER BY iptadm.bedno`,
 };
 
@@ -604,7 +604,7 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
        WHERE an = i.an
        ORDER BY note_date DESC, note_time DESC, nurse_note_id DESC
        LIMIT 1)
- WHERE i.ward = :ward AND i.confirm_discharge = 'N' AND i.dchdate IS NULL
+ WHERE i.ward = :ward AND i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
  ORDER BY iptadm.bedno`,
   mysql: `SELECT i.an, i.hn, i.regdate, i.regtime, i.ward,
        iptadm.bedno, iptadm.roomno, iptadm.bedtype,
@@ -660,7 +660,7 @@ export const WARD_BEDS_OCCUPANCY_FULL: SqlQueryTemplate = {
        WHERE an = i.an
        ORDER BY note_date DESC, note_time DESC, nurse_note_id DESC
        LIMIT 1)
- WHERE i.ward = :ward AND i.confirm_discharge = 'N' AND i.dchdate IS NULL
+ WHERE i.ward = :ward AND i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
  ORDER BY iptadm.bedno`,
 };
 
