@@ -3,7 +3,14 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# --ignore-scripts skips native install scripts (better-sqlite3's prebuild /
+# node-gyp compile). better-sqlite3 is a DEV-ONLY dep (SQLite for unit tests);
+# production uses Postgres and never loads it (dynamic import gated on
+# USE_SQLITE, and it's in next.config serverExternalPackages). Skipping the
+# compile keeps the module's JS present so `next build` still resolves it, while
+# avoiding the node-header/prebuild network fetch that fails on air-gapped /
+# restricted build hosts (unofficial-builds.nodejs.org ETIMEDOUT).
+RUN npm ci --ignore-scripts
 
 # Stage 2: Build
 FROM node:20-alpine AS builder
