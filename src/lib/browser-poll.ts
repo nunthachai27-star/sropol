@@ -215,7 +215,7 @@ export interface BrowserPollResult {
 //                                    "ACTIVE LABOR · PROVINCE" with clinically
 //                                    nonsensical GA values. Matches the
 //                                    Pascal client (KKLRMSWebhookUnit.pas L594).
-const SQL_ACTIVE_LABOUR = `
+export const SQL_ACTIVE_LABOUR = `
   SELECT i.an, i.hn, i.regdate, i.regtime, i.dchdate,
          CONCAT(p.pname, p.fname, ' ', p.lname) AS patient_name,
          p.pname, p.fname, p.lname,
@@ -243,7 +243,7 @@ const SQL_ACTIVE_LABOUR = `
      AND i.ipt_admit_type_id = 3
    ORDER BY i.regdate DESC`;
 
-const SQL_PARTOGRAPH = `
+export const SQL_PARTOGRAPH = `
   SELECT lp.ipt_labour_partograph_id, lp.an,
          lp.observe_datetime, lp.hour_no,
          lp.fetal_heart_rate,
