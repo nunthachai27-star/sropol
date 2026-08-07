@@ -1,7 +1,9 @@
-// GET /api/dashboard/outcomes — neonatal KPIs, optionally filtered by hospital
+// GET /api/dashboard/outcomes — neonatal outcomes board payload.
+// Query: ?range=mtd|30d|all (default mtd — matches the UI's month labels)
+//        ?hospital_id=<uuid> optional scope for KPIs/recent (facets ignore it)
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDatabase } from '@/db/connection';
-import { getNewbornKPIs } from '@/services/newborn';
+import { getOutcomes } from '@/services/newborn';
 import { ensureInit } from '@/lib/ensure-init';
 import { logger } from '@/lib/logger';
 
@@ -9,10 +11,13 @@ export async function GET(request: NextRequest) {
   try {
     await ensureInit();
     const db = await getDatabase();
-    const hospitalId = request.nextUrl.searchParams.get('hospital_id') ?? undefined;
+    const searchParams = request.nextUrl.searchParams;
 
-    const kpis = await getNewbornKPIs(db, hospitalId);
-    return NextResponse.json(kpis);
+    const outcomes = await getOutcomes(db, {
+      hospitalId: searchParams.get('hospital_id') ?? undefined,
+      range: searchParams.get('range') ?? 'mtd',
+    });
+    return NextResponse.json(outcomes);
   } catch (error) {
     logger.error('outcomes_api_failed', { error });
     return NextResponse.json(

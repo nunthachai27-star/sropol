@@ -199,6 +199,17 @@ describe('upsertPartograph', () => {
   const userInfo: UserInfo = { loginname: 'nurse1', fullname: 'Nurse', hospcode: '10670' };
 
   it('insert: mints serial via callFunction then restInsert + audit', async () => {
+    // 0) getPatientLabour SELECT → resolves the ipt_labour_id FK. The insert
+    //    path resolves it via a SQL SELECT when the caller omits row.ipt_labour_id
+    //    (the Add dialog only carries clinical fields, not the labour PK).
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      clone: function () {
+        return this;
+      },
+      json: async () => ({ data: [{ ipt_labour_id: 5 }], MessageCode: 200, Message: 'ok' }),
+    });
     // 1) callFunction → returns Value 99
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -227,21 +238,23 @@ describe('upsertPartograph', () => {
     );
     expect(result.ipt_labour_partograph_id).toBe(99);
 
-    // Verify call sequence
-    expect(mockFetch.mock.calls[0][0]).toContain('/api/function?name=get_serialnumber');
-    expect(mockFetch.mock.calls[1][0]).toBe('https://t.example/api/api/rest/ipt_labour_partograph');
-    expect(mockFetch.mock.calls[1][1].method).toBe('POST');
-    const insertBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+    // Verify call sequence: SELECT labour → mint serial → insert → audit.
+    expect(mockFetch.mock.calls[0][0]).toBe('https://t.example/api/api/sql');
+    expect(mockFetch.mock.calls[1][0]).toContain('/api/function?name=get_serialnumber');
+    expect(mockFetch.mock.calls[2][0]).toBe('https://t.example/api/api/rest/ipt_labour_partograph');
+    expect(mockFetch.mock.calls[2][1].method).toBe('POST');
+    const insertBody = JSON.parse(mockFetch.mock.calls[2][1].body);
     expect(insertBody).toMatchObject({
       ipt_labour_partograph_id: 99,
+      ipt_labour_id: 5, // resolved from the getPatientLabour SELECT
       an: 'AN1',
       cervical_dilation_cm: 4,
     });
 
     // Audit call (fire-and-forget — let microtask queue drain)
     await new Promise((r) => setTimeout(r, 0));
-    expect(mockFetch.mock.calls[2][0]).toBe('/api/hospital/audit-log');
-    const auditBody = JSON.parse(mockFetch.mock.calls[2][1].body);
+    expect(mockFetch.mock.calls[3][0]).toBe('/api/hospital/audit-log');
+    const auditBody = JSON.parse(mockFetch.mock.calls[3][1].body);
     expect(auditBody).toMatchObject({
       entity: 'ipt_labour_partograph',
       op: 'insert',
@@ -270,7 +283,9 @@ describe('upsertPartograph', () => {
       { ipt_labour_partograph_id: 7, cervical_dilation_cm: 5 },
       '10670',
     );
-    expect(mockFetch.mock.calls[0][0]).toBe('https://t.example/api/api/rest/ipt_labour_partograph/7');
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      'https://t.example/api/api/rest/ipt_labour_partograph/7',
+    );
     expect(mockFetch.mock.calls[0][1].method).toBe('PUT');
     const putBody = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(putBody).toEqual({ cervical_dilation_cm: 5 });
@@ -365,7 +380,9 @@ describe('upsertVitalSign', () => {
     const result = await upsertVitalSign(cfg, userInfo, 'AN1', { hr: 88, bps: 120 }, '10670');
     expect(result.ipt_pregnancy_vital_sign_id).toBe(55);
     expect(mockFetch.mock.calls[0][0]).toContain('/api/function?name=get_serialnumber');
-    expect(mockFetch.mock.calls[1][0]).toBe('https://t.example/api/api/rest/ipt_pregnancy_vital_sign');
+    expect(mockFetch.mock.calls[1][0]).toBe(
+      'https://t.example/api/api/rest/ipt_pregnancy_vital_sign',
+    );
     const insertBody = JSON.parse(mockFetch.mock.calls[1][1].body);
     expect(insertBody).toMatchObject({
       ipt_pregnancy_vital_sign_id: 55,
@@ -663,9 +680,7 @@ describe('upsertLabourMedication', () => {
       { labour_medication_id: 9, qty: 5 },
       '10670',
     );
-    expect(mockFetch.mock.calls[0][0]).toBe(
-      'https://t.example/api/api/rest/labour_medication/9',
-    );
+    expect(mockFetch.mock.calls[0][0]).toBe('https://t.example/api/api/rest/labour_medication/9');
     expect(mockFetch.mock.calls[0][1].method).toBe('PUT');
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body).toEqual({ qty: 5 });
@@ -679,13 +694,7 @@ describe('upsertLabourMedication', () => {
     });
     mockFetch.mockRejectedValueOnce(new Error('audit endpoint down'));
     await expect(
-      upsertLabourMedication(
-        cfg,
-        userInfo,
-        'AN1',
-        { labour_medication_id: 1, qty: 2 },
-        '10670',
-      ),
+      upsertLabourMedication(cfg, userInfo, 'AN1', { labour_medication_id: 1, qty: 2 }, '10670'),
     ).resolves.toBeDefined();
   });
 });
@@ -966,13 +975,7 @@ describe('upsertNewborn', () => {
       json: async () => ({ ok: true }),
     });
 
-    const r = await upsertNewborn(
-      cfg,
-      userInfo,
-      'AN1',
-      { sex: 'M', birth_weight: 3200 },
-      '10670',
-    );
+    const r = await upsertNewborn(cfg, userInfo, 'AN1', { sex: 'M', birth_weight: 3200 }, '10670');
     expect(r.ipt_newborn_id).toBe(200);
     expect(mockFetch.mock.calls[0][0]).toContain('/api/function?name=get_serialnumber');
     expect(mockFetch.mock.calls[1][0]).toBe('https://t.example/api/api/rest/ipt_newborn');
@@ -991,13 +994,7 @@ describe('upsertNewborn', () => {
       status: 200,
       json: async () => ({ ok: true }),
     });
-    await upsertNewborn(
-      cfg,
-      userInfo,
-      'AN1',
-      { ipt_newborn_id: 11, sex: 'F' },
-      '10670',
-    );
+    await upsertNewborn(cfg, userInfo, 'AN1', { ipt_newborn_id: 11, sex: 'F' }, '10670');
     expect(mockFetch.mock.calls[0][0]).toBe('https://t.example/api/api/rest/ipt_newborn/11');
     expect(mockFetch.mock.calls[0][1].method).toBe('PUT');
   });
@@ -1008,6 +1005,17 @@ describe('upsertLabourInfant', () => {
   const userInfo: UserInfo = { loginname: 'nurse1', fullname: 'Nurse', hospcode: '10670' };
 
   it('insert: mints serial + restInsert + audit', async () => {
+    // getPatientLabour SELECT → resolves the ipt_labour_id FK (NOT NULL on
+    // ipt_labour_infant). The insert path resolves it when the caller omits
+    // row.ipt_labour_id — same shape as upsertPartograph.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      clone: function () {
+        return this;
+      },
+      json: async () => ({ data: [{ ipt_labour_id: 5 }], MessageCode: 200, Message: 'ok' }),
+    });
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -1031,9 +1039,15 @@ describe('upsertLabourInfant', () => {
       '10670',
     );
     expect(r.ipt_labour_infant_id).toBe(300);
-    expect(mockFetch.mock.calls[1][0]).toBe(
-      'https://t.example/api/api/rest/ipt_labour_infant',
-    );
+    // SELECT labour (calls[0]) → mint (calls[1]) → restInsert (calls[2]).
+    expect(mockFetch.mock.calls[2][0]).toBe('https://t.example/api/api/rest/ipt_labour_infant');
+    const insertBody = JSON.parse(mockFetch.mock.calls[2][1].body);
+    expect(insertBody).toMatchObject({
+      ipt_labour_infant_id: 300,
+      ipt_labour_id: 5, // resolved from the getPatientLabour SELECT
+      an: 'AN1',
+      sex: 'M',
+    });
   });
 
   it('update: skips serial mint, calls restUpdate', async () => {
@@ -1047,16 +1061,8 @@ describe('upsertLabourInfant', () => {
       status: 200,
       json: async () => ({ ok: true }),
     });
-    await upsertLabourInfant(
-      cfg,
-      userInfo,
-      'AN1',
-      { ipt_labour_infant_id: 22, sex: 'F' },
-      '10670',
-    );
-    expect(mockFetch.mock.calls[0][0]).toBe(
-      'https://t.example/api/api/rest/ipt_labour_infant/22',
-    );
+    await upsertLabourInfant(cfg, userInfo, 'AN1', { ipt_labour_infant_id: 22, sex: 'F' }, '10670');
+    expect(mockFetch.mock.calls[0][0]).toBe('https://t.example/api/api/rest/ipt_labour_infant/22');
   });
 });
 

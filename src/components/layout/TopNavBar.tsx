@@ -11,9 +11,8 @@ import { usePathname } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import { LogOut, Menu, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { withBasePath } from '@/lib/base-path';
 import { NAV_ITEMS, ROLE_LABELS, filterNavByRole } from '@/config/nav';
-import { removeSessionCookie, removeMarketplaceToken } from '@/utils/bms-session-storage';
+import { CallDirectoryButton } from '@/components/calls/CallDirectoryButton';
 
 export type TopNavBarVariant = 'hospital' | 'provincial';
 
@@ -61,7 +60,7 @@ export function TopNavBar({ variant = 'provincial' }: TopNavBarProps = {}) {
 
     const sendHeartbeat = () => {
       if (document.visibilityState === 'hidden') return;
-      fetch(withBasePath('/api/presence/heartbeat'), {
+      fetch('/api/presence/heartbeat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: pathname || '/' }),
@@ -92,17 +91,6 @@ export function TopNavBar({ variant = 'provincial' }: TopNavBarProps = {}) {
   );
 
   const handleLogout = useCallback(() => {
-    // Clear the persisted BMS session cookie + marketplace token BEFORE
-    // signOut redirects to /login. The login page now auto-logs in from this
-    // cookie when no URL param is present (so an 8h app-session lapse doesn't
-    // force a re-type); without this clear, that same fallback would sign the
-    // user straight back in and make logout a no-op. The localStorage
-    // auth-provider flag also signals BmsSessionProvider not to re-hydrate.
-    removeSessionCookie();
-    removeMarketplaceToken();
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem('kk-lrms:auth-provider');
-    }
     signOut({ callbackUrl: '/login' });
   }, []);
 
@@ -206,6 +194,13 @@ export function TopNavBar({ variant = 'provincial' }: TopNavBarProps = {}) {
               {roleLabel && <span className="text-[10px] text-white/60">{roleLabel}</span>}
             </div>
           )}
+          <Link
+            href="/profile"
+            className="inline-flex items-center rounded-sm border border-white/25 bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-white/20"
+          >
+            การตั้งค่าการแจ้งเตือน
+          </Link>
+          <CallDirectoryButton />
           <button
             onClick={handleLogout}
             className="rounded-sm p-1.5 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
@@ -250,6 +245,14 @@ export function TopNavBar({ variant = 'provincial' }: TopNavBarProps = {}) {
               </Link>
             );
           })}
+          <Link
+            href="/profile"
+            onClick={() => setMobileOpen(false)}
+            className="mt-2 flex w-full items-center gap-2 rounded-sm px-3 py-2 text-[14px]"
+            style={{ color: 'var(--ink-navy-dim)' }}
+          >
+            การตั้งค่าการแจ้งเตือน
+          </Link>
           <button
             onClick={handleLogout}
             className="mt-2 flex w-full items-center gap-2 rounded-sm px-3 py-2 text-[14px] text-red-600 hover:bg-red-50"

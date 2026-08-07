@@ -1,56 +1,14 @@
 // T021: SchemaSync engine — introspects DB schema and creates/alters tables to match definitions
 
-import type { DatabaseAdapter, ColumnInfo } from './adapter';
+import type { DatabaseAdapter } from './adapter';
 import type { TableDefinition, FieldDefinition, AbstractFieldType } from './table-definition';
 
-export type DriverType = 'sqlite' | 'postgresql';
-
-/**
- * Returns the `ALTER TABLE ... ALTER COLUMN ... TYPE …` needed to widen an
- * existing column to match the table definition, or `null` when no change is
- * needed/safe. Two widening cases:
- *
- *   - `string` def with a larger `maxLength` than the live column → VARCHAR(n)
- *   - `text` def over a live bounded VARCHAR → TEXT (HOSxP free-text columns
- *     that outgrew every fixed width; TEXT ⊇ any VARCHAR, so this never loses
- *     data and Postgres treats varchar→text as a no-rewrite, binary-coercible
- *     change)
- *
- * Only ever widens — never shrinks (that would truncate live data). Postgres
- * only: SQLite stores strings as TEXT with no enforced width, so there is
- * nothing to alter. A column whose live width is unknown (`maxLength` null —
- * already TEXT or a non-string type) is left untouched.
- */
-export function columnWidenSql(
-  tableName: string,
-  field: FieldDefinition,
-  existing: ColumnInfo,
-  driver: DriverType,
-): string | null {
-  if (driver !== 'postgresql') return null;
-  // Only a live *bounded* VARCHAR can be too narrow; null width means TEXT or a
-  // non-string type, both already wide enough.
-  if (existing.maxLength == null) return null;
-  if (field.type === 'text') {
-    return `ALTER TABLE ${tableName} ALTER COLUMN ${field.name} TYPE TEXT`;
-  }
-  if (field.type !== 'string' || !field.maxLength) return null;
-  if (field.maxLength <= existing.maxLength) return null;
-  return `ALTER TABLE ${tableName} ALTER COLUMN ${field.name} TYPE VARCHAR(${field.maxLength})`;
-}
+// PostgreSQL is the only dialect: PostgresAdapter in production, pglite
+// (a real Postgres engine) in dev/test. The SQLite mapping was removed with
+// the SQLite driver.
+type DriverType = 'postgresql';
 
 const TYPE_MAP: Record<DriverType, Record<AbstractFieldType, string>> = {
-  sqlite: {
-    uuid: 'TEXT',
-    string: 'TEXT',
-    text: 'TEXT',
-    integer: 'INTEGER',
-    decimal: 'REAL',
-    boolean: 'INTEGER',
-    datetime: 'TEXT',
-    json: 'TEXT',
-    'string[]': 'TEXT',
-  },
   postgresql: {
     uuid: 'VARCHAR(36)',
     string: 'VARCHAR',
@@ -70,7 +28,7 @@ const TYPE_MAP: Record<DriverType, Record<AbstractFieldType, string>> = {
 
 function mapFieldType(field: FieldDefinition, driver: DriverType): string {
   const baseType = TYPE_MAP[driver][field.type];
-  if (field.type === 'string' && field.maxLength && driver === 'postgresql') {
+  if (field.type === 'string' && field.maxLength) {
     return `VARCHAR(${field.maxLength})`;
   }
   return baseType;
@@ -95,12 +53,6 @@ function buildColumnDef(field: FieldDefinition, driver: DriverType): string {
     const val = field.defaultValue;
     if (typeof val === 'string') {
       parts.push(`DEFAULT '${val}'`);
-    } else if (typeof val === 'boolean') {
-      if (driver === 'sqlite') {
-        parts.push(`DEFAULT ${val ? 1 : 0}`);
-      } else {
-        parts.push(`DEFAULT ${val}`);
-      }
     } else {
       parts.push(`DEFAULT ${val}`);
     }
@@ -155,25 +107,16 @@ export class SchemaSync {
     driver: DriverType,
   ): Promise<void> {
     const existingCols = await db.getColumnInfo(table.name);
-    const existingByName = new Map(existingCols.map((c) => [c.name, c]));
+    const existingNames = existingCols.map((c) => c.name);
 
     for (const field of table.fields) {
-      const existing = existingByName.get(field.name);
-      if (!existing) {
+      if (!existingNames.includes(field.name)) {
         const colDef = buildColumnDef(field, driver);
         // ALTER TABLE ADD COLUMN — remove PRIMARY KEY and UNIQUE constraints
         const alterDef = colDef
           .replace(' PRIMARY KEY', '')
           .replace(' UNIQUE', '');
         await db.execute(`ALTER TABLE ${table.name} ADD COLUMN ${alterDef}`);
-        continue;
-      }
-      // Column exists — widen it if the definition outgrew the live width.
-      // (ADD COLUMN above never runs for existing columns, so a bumped
-      // maxLength would otherwise never reach a deployed Postgres DB.)
-      const widenSql = columnWidenSql(table.name, field, existing, driver);
-      if (widenSql) {
-        await db.execute(widenSql);
       }
     }
   }

@@ -6,8 +6,8 @@ import { simulationOrchestrator } from '@/services/dev-simulation/orchestrator';
 import type { SimulationConfig } from '@/services/dev-simulation/types';
 
 export async function POST(request: NextRequest) {
-  const guard = simulationGuard();
-  if (guard) return guard;
+  const guard = await simulationGuard();
+  if (guard instanceof NextResponse) return guard;
 
   let body: Partial<SimulationConfig>;
   try {
@@ -19,7 +19,8 @@ export async function POST(request: NextRequest) {
   const config: SimulationConfig = {
     hospitals: Array.isArray(body.hospitals) ? body.hospitals : [],
     eventTypes: Array.isArray(body.eventTypes) ? body.eventTypes : ['labor'],
-    ratePerHospitalPerMin: typeof body.ratePerHospitalPerMin === 'number' ? body.ratePerHospitalPerMin : 2,
+    ratePerHospitalPerMin:
+      typeof body.ratePerHospitalPerMin === 'number' ? body.ratePerHospitalPerMin : 2,
     durationMin: typeof body.durationMin === 'number' ? body.durationMin : 10,
     model: typeof body.model === 'string' && body.model ? body.model : 'gemma4',
     scenario: typeof body.scenario === 'string' ? body.scenario : undefined,

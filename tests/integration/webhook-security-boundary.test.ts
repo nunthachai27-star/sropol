@@ -6,12 +6,14 @@
 // touched service tests would slip through unnoticed.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import { generateKey } from '@/lib/encryption';
 import { createApiKey } from '@/services/webhook';
+import { createJourney } from '@/services/journey';
+import { AncRiskLevel } from '@/types/domain';
+import { SseManager } from '@/lib/sse';
 import * as connection from '@/db/connection';
 import * as ensureInit from '@/lib/ensure-init';
 
@@ -20,16 +22,17 @@ process.env.ENCRYPTION_KEY = TEST_ENCRYPTION_KEY;
 
 const HOSPITAL_A_ID = '11111111-1111-1111-1111-111111111111';
 const HOSPITAL_B_ID = '22222222-2222-2222-2222-222222222222';
+const HOSPITAL_C_ID = '33333333-3333-3333-3333-333333333333';
 const HOSPITAL_A_HCODE = '99901';
 const HOSPITAL_B_HCODE = '99902';
+const HOSPITAL_C_HCODE = '99903';
 
 describe('Webhook Route — security boundaries', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let keyForHospitalA: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
 
     // Two distinct hospitals, each with their own HCODE.
@@ -37,12 +40,17 @@ describe('Webhook Route — security boundaries', () => {
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [HOSPITAL_A_ID, HOSPITAL_A_HCODE, 'Hospital A', 'M2', 1, 'UNKNOWN', now, now],
+      [HOSPITAL_A_ID, HOSPITAL_A_HCODE, 'Hospital A', 'M2', true, 'UNKNOWN', now, now],
     );
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [HOSPITAL_B_ID, HOSPITAL_B_HCODE, 'Hospital B', 'M2', 1, 'UNKNOWN', now, now],
+      [HOSPITAL_B_ID, HOSPITAL_B_HCODE, 'Hospital B', 'M2', true, 'UNKNOWN', now, now],
+    );
+    await db.execute(
+      `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [HOSPITAL_C_ID, HOSPITAL_C_HCODE, 'Hospital C', 'M2', true, 'UNKNOWN', now, now],
     );
 
     // API key bound to hospital A only — sending it with payload.hospitalCode = "B"
@@ -61,10 +69,7 @@ describe('Webhook Route — security boundaries', () => {
   });
 
   // Helper: build a NextRequest the way the route expects
-  function buildRequest(
-    body: unknown,
-    opts: { auth?: string } = {},
-  ): NextRequest {
+  function buildRequest(body: unknown, opts: { auth?: string } = {}): NextRequest {
     return new NextRequest('http://localhost/api/webhooks/patient-data', {
       method: 'POST',
       headers: {
@@ -75,16 +80,28 @@ describe('Webhook Route — security boundaries', () => {
     });
   }
 
+  // Helper: POST a webhook payload authenticated with the given raw API key.
+  async function postWebhook(rawKey: string, body: unknown) {
+    const { POST } = await import('@/app/api/webhooks/patient-data/route');
+    return POST(buildRequest(body, { auth: `Bearer ${rawKey}` }));
+  }
+
   describe('hospitalCode vs API key', () => {
     it('returns 403 when payload.hospitalCode does not match API key hospital', async () => {
       const { POST } = await import('@/app/api/webhooks/patient-data/route');
       const req = buildRequest(
         {
           hospitalCode: HOSPITAL_B_HCODE, // sender claims to be hospital B
-          patients: [{
-            hn: 'HN1', an: 'AN1', name: 'Test', cid: '1100500090099',
-            age: 28, admit_date: '2026-03-08T10:00:00+07:00',
-          }],
+          patients: [
+            {
+              hn: 'HN1',
+              an: 'AN1',
+              name: 'Test',
+              cid: '1100500090099',
+              age: 28,
+              admit_date: '2026-03-08T10:00:00+07:00',
+            },
+          ],
         },
         { auth: `Bearer ${keyForHospitalA}` }, // ...but uses hospital A's key
       );
@@ -103,10 +120,16 @@ describe('Webhook Route — security boundaries', () => {
       const req = buildRequest(
         {
           hospitalCode: HOSPITAL_A_HCODE, // matches the key
-          patients: [{
-            hn: 'HN1', an: 'AN1', name: 'Test', cid: '1100500090099',
-            age: 28, admit_date: '2026-03-08T10:00:00+07:00',
-          }],
+          patients: [
+            {
+              hn: 'HN1',
+              an: 'AN1',
+              name: 'Test',
+              cid: '1100500090099',
+              age: 28,
+              admit_date: '2026-03-08T10:00:00+07:00',
+            },
+          ],
         },
         { auth: `Bearer ${keyForHospitalA}` },
       );
@@ -169,10 +192,16 @@ describe('Webhook Route — security boundaries', () => {
       const req = buildRequest(
         {
           hospitalCode: HOSPITAL_A_HCODE,
-          patients: [{
-            hn: 'HN1', an: 'AN1', name: 'Test', cid: '12345', // too short
-            age: 28, admit_date: '2026-03-08T10:00:00+07:00',
-          }],
+          patients: [
+            {
+              hn: 'HN1',
+              an: 'AN1',
+              name: 'Test',
+              cid: '12345', // too short
+              age: 28,
+              admit_date: '2026-03-08T10:00:00+07:00',
+            },
+          ],
         },
         { auth: `Bearer ${keyForHospitalA}` },
       );
@@ -182,7 +211,126 @@ describe('Webhook Route — security boundaries', () => {
 
       expect(res.status).toBe(400);
       expect(body.code).toBe('VALIDATION_FAILED');
-      expect(body.details).toContain('cid must be exactly 13 digits');
+      expect(body.details).toContain('CID must be exactly 13 digits');
+    });
+  });
+
+  describe('referral_update tenant boundary', () => {
+    let hospA: { id: string; hcode: string };
+    let hospB: { id: string; hcode: string };
+    let keyB: string;
+    let keyC: string;
+    let referralId: string;
+    let journeyId: string;
+
+    beforeEach(async () => {
+      // db seeded by the file-level beforeEach; resolve the three hospitals
+      const rows = await db.query<{ id: string; hcode: string }>(
+        `SELECT id, hcode FROM hospitals WHERE hcode IN ('99901','99902','99903')`,
+      );
+      hospA = rows.find((r) => r.hcode === '99901')!;
+      hospB = rows.find((r) => r.hcode === '99902')!;
+      const hospC = rows.find((r) => r.hcode === '99903')!;
+      keyB = (await createApiKey(db, hospB.id, 'boundary-b')).rawKey;
+      keyC = (await createApiKey(db, hospC.id, 'boundary-c')).rawKey;
+
+      const journey = await createJourney(db, {
+        hospitalId: hospA.id,
+        hn: 'HN-A7',
+        personAncId: null,
+        name: '',
+        cid: '',
+        cidHash: 'hash-a7',
+        age: 30,
+        gravida: 1,
+        para: 0,
+        lmp: null,
+        edc: null,
+        ancRiskLevel: AncRiskLevel.LOW,
+      });
+      journeyId = journey.id;
+      referralId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      await db.execute(
+        `INSERT INTO cached_referrals
+           (id, journey_id, refer_number, from_hospital_id, to_hospital_id, status,
+            reason, urgency_level, initiated_at, created_at, updated_at)
+         VALUES (?, ?, 'RF-A7', ?, ?, 'INITIATED', 'ทดสอบ', 'URGENT', ?, ?, ?)`,
+        [referralId, journeyId, hospA.id, hospB.id, now, now, now],
+      );
+    });
+
+    function updatePayload(status: string, extra: Record<string, unknown> = {}) {
+      return {
+        type: 'referral_update',
+        referralId: 'RF-A7',
+        fromHospitalCode: '99901',
+        status,
+        ...extra,
+      };
+    }
+
+    it('404s a third hospital updating another pair referral, with no mutation and no SSE', async () => {
+      const sseSpy = vi.spyOn(SseManager.getInstance(), 'broadcast');
+      const res = await postWebhook(keyC, updatePayload('REJECTED'));
+      expect(res.status).toBe(404);
+      const rows = await db.query<{ status: string }>(
+        'SELECT status FROM cached_referrals WHERE id = ?',
+        [referralId],
+      );
+      expect(rows[0].status).toBe('INITIATED');
+      expect(sseSpy).not.toHaveBeenCalled();
+    });
+
+    it('404s the SOURCE hospital sending a status update (destination-only)', async () => {
+      const sseSpy = vi.spyOn(SseManager.getInstance(), 'broadcast');
+      const keyA = (await createApiKey(db, hospA.id, 'boundary-a')).rawKey;
+      const res = await postWebhook(keyA, updatePayload('ACCEPTED'));
+      expect(res.status).toBe(404);
+      const rows = await db.query<{ status: string }>(
+        'SELECT status FROM cached_referrals WHERE id = ?',
+        [referralId],
+      );
+      expect(rows[0].status).toBe('INITIATED');
+      expect(sseSpy).not.toHaveBeenCalled();
+    });
+
+    it('allows the destination hospital to accept', async () => {
+      const res = await postWebhook(keyB, updatePayload('ACCEPTED'));
+      expect(res.status).toBe(200);
+      const rows = await db.query<{ status: string }>(
+        'SELECT status FROM cached_referrals WHERE id = ?',
+        [referralId],
+      );
+      expect(rows[0].status).toBe('ACCEPTED');
+    });
+
+    it('400s an unknown status with no mutation and no broadcast', async () => {
+      const sseSpy = vi.spyOn(SseManager.getInstance(), 'broadcast');
+      const res = await postWebhook(keyB, updatePayload('TOTALLY_FAKE'));
+      expect(res.status).toBe(400);
+      const rows = await db.query<{ status: string }>(
+        'SELECT status FROM cached_referrals WHERE id = ?',
+        [referralId],
+      );
+      expect(rows[0].status).toBe('INITIATED');
+      expect(sseSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects a third hospital deleting the referral; parties may delete', async () => {
+      const sseSpy = vi.spyOn(SseManager.getInstance(), 'broadcast');
+      const resC = await postWebhook(keyC, updatePayload('', { action: 'delete' }));
+      expect(resC.status).toBe(404);
+      expect(
+        (await db.query('SELECT id FROM cached_referrals WHERE id = ?', [referralId])).length,
+      ).toBe(1);
+      expect(sseSpy).not.toHaveBeenCalled();
+
+      const resB = await postWebhook(keyB, updatePayload('', { action: 'delete' }));
+      expect(resB.status).toBe(200);
+      expect(
+        (await db.query('SELECT id FROM cached_referrals WHERE id = ?', [referralId])).length,
+      ).toBe(0);
     });
   });
 });

@@ -13,6 +13,8 @@ import {
   processReferralCreate,
   processReferralUpdate,
   processPartographWebhook,
+  WebhookReferralError,
+  REFERRAL_UPDATE_STATUSES,
 } from '@/services/webhook';
 import type {
   WebhookReferralCreatePayload,
@@ -21,8 +23,12 @@ import type {
 import { SseManager } from '@/lib/sse';
 import { logger } from '@/lib/logger';
 import { apiError } from '@/lib/api-errors';
+import { drainMophAlerts } from '@/services/moph-alert-drain';
 
 export async function POST(request: NextRequest) {
+  // Captured for the catch-all error log — without sender identity the
+  // 2026-07-14 "value too long" incident was undiagnosable from app logs.
+  const logCtx: { hospitalId?: string; payloadType?: string } = {};
   try {
     await ensureInit();
     const db = await getDatabase();
@@ -50,6 +56,8 @@ export async function POST(request: NextRequest) {
     const sseManager = SseManager.getInstance();
     const payloadType = (body as Record<string, unknown>).type;
     const payloadHospCode = (body as Record<string, unknown>).hospitalCode;
+    logCtx.hospitalId = keyInfo.hospitalId;
+    logCtx.payloadType = typeof payloadType === 'string' ? payloadType : undefined;
 
     // Validate hospitalCode matches API key's hospital (if provided)
     if (payloadHospCode && typeof payloadHospCode === 'string') {
@@ -59,7 +67,10 @@ export async function POST(request: NextRequest) {
       );
       if (hospRows.length > 0 && hospRows[0].hcode !== payloadHospCode) {
         return NextResponse.json(
-          apiError('HOSPITAL_CODE_MISMATCH', { expected: hospRows[0].hcode, received: payloadHospCode }),
+          apiError('HOSPITAL_CODE_MISMATCH', {
+            expected: hospRows[0].hcode,
+            received: payloadHospCode,
+          }),
           { status: 403 },
         );
       }
@@ -91,12 +102,18 @@ export async function POST(request: NextRequest) {
     if (payloadType === 'referral') {
       const referralPayload = body as WebhookReferralCreatePayload;
       const missing: string[] = [];
-      if (!referralPayload.referralId || typeof referralPayload.referralId !== 'string') missing.push('referralId');
+      if (!referralPayload.referralId || typeof referralPayload.referralId !== 'string')
+        missing.push('referralId');
       if (!referralPayload.hn || typeof referralPayload.hn !== 'string') missing.push('hn');
       if (!referralPayload.cid || typeof referralPayload.cid !== 'string') missing.push('cid');
       if (!referralPayload.name || typeof referralPayload.name !== 'string') missing.push('name');
-      if (!referralPayload.toHospitalCode || typeof referralPayload.toHospitalCode !== 'string') missing.push('toHospitalCode');
-      if (referralPayload.action !== 'delete' && (!referralPayload.reason || typeof referralPayload.reason !== 'string')) missing.push('reason');
+      if (!referralPayload.toHospitalCode || typeof referralPayload.toHospitalCode !== 'string')
+        missing.push('toHospitalCode');
+      if (
+        referralPayload.action !== 'delete' &&
+        (!referralPayload.reason || typeof referralPayload.reason !== 'string')
+      )
+        missing.push('reason');
       if (missing.length > 0) {
         return NextResponse.json(apiError('REFERRAL_FIELD_REQUIRED', { missing }), { status: 400 });
       }
@@ -105,12 +122,14 @@ export async function POST(request: NextRequest) {
       // "missing field" error.
       const cidCheck = validateReferralCid(referralPayload.cid);
       if (!cidCheck.ok) {
-        return NextResponse.json(
-          apiError('VALIDATION_FAILED', cidCheck.message),
-          { status: 400 },
-        );
+        return NextResponse.json(apiError('VALIDATION_FAILED', cidCheck.message), { status: 400 });
       }
-      const result = await processReferralCreate(db, keyInfo.hospitalId, referralPayload, sseManager);
+      const result = await processReferralCreate(
+        db,
+        keyInfo.hospitalId,
+        referralPayload,
+        sseManager,
+      );
       return NextResponse.json({
         success: true,
         ...result,
@@ -122,13 +141,43 @@ export async function POST(request: NextRequest) {
     if (payloadType === 'referral_update') {
       const referralPayload = body as WebhookReferralUpdatePayload;
       const missing: string[] = [];
-      if (!referralPayload.referralId || typeof referralPayload.referralId !== 'string') missing.push('referralId');
-      if (!referralPayload.fromHospitalCode || typeof referralPayload.fromHospitalCode !== 'string') missing.push('fromHospitalCode');
-      if (referralPayload.action !== 'delete' && (!referralPayload.status || typeof referralPayload.status !== 'string')) missing.push('status (ACCEPTED|IN_TRANSIT|ARRIVED|REJECTED)');
+      if (!referralPayload.referralId || typeof referralPayload.referralId !== 'string')
+        missing.push('referralId');
+      if (!referralPayload.fromHospitalCode || typeof referralPayload.fromHospitalCode !== 'string')
+        missing.push('fromHospitalCode');
+      if (
+        referralPayload.action !== 'delete' &&
+        (!referralPayload.status || typeof referralPayload.status !== 'string')
+      )
+        missing.push('status (ACCEPTED|IN_TRANSIT|ARRIVED|REJECTED)');
       if (missing.length > 0) {
         return NextResponse.json(apiError('REFERRAL_FIELD_REQUIRED', { missing }), { status: 400 });
       }
-      const result = await processReferralUpdate(db, keyInfo.hospitalId, referralPayload, sseManager);
+      if (
+        referralPayload.action !== undefined &&
+        referralPayload.action !== 'update' &&
+        referralPayload.action !== 'delete'
+      ) {
+        return NextResponse.json(
+          apiError('INVALID_REFERRAL_ACTION', { received: referralPayload.action }),
+          { status: 400 },
+        );
+      }
+      if (
+        referralPayload.action !== 'delete' &&
+        !REFERRAL_UPDATE_STATUSES.has(referralPayload.status)
+      ) {
+        return NextResponse.json(
+          apiError('INVALID_REFERRAL_STATUS', { received: referralPayload.status }),
+          { status: 400 },
+        );
+      }
+      const result = await processReferralUpdate(
+        db,
+        keyInfo.hospitalId,
+        referralPayload,
+        sseManager,
+      );
       return NextResponse.json({
         success: true,
         ...result,
@@ -146,7 +195,10 @@ export async function POST(request: NextRequest) {
         );
       }
       const result = await processPartographWebhook(
-        db, keyInfo.hospitalId, validation.payload, sseManager,
+        db,
+        keyInfo.hospitalId,
+        validation.payload,
+        sseManager,
       );
       return NextResponse.json({
         success: true,
@@ -171,16 +223,34 @@ export async function POST(request: NextRequest) {
       sseManager,
     );
 
+    // Bounded MOPH alert drain (codex #1 first-week risk: webhook EMERGENCY
+    // alerts would otherwise sit pending until a browser-push drain runs — the
+    // webhook path has no drain of its own). Best-effort: a failure never
+    // breaks the webhook response; pending rows retry on the next drain.
+    try {
+      await drainMophAlerts(db, keyInfo.hospitalId);
+    } catch (e) {
+      logger.warn('webhook_moph_alert_drain_failed', {
+        hospitalId: keyInfo.hospitalId,
+        error: e,
+      });
+    }
+
     return NextResponse.json({
       success: true,
       ...result,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error('webhook_processing_failed', { error });
-    return NextResponse.json(
-      apiError('INTERNAL_ERROR'),
-      { status: 500 },
-    );
+    if (error instanceof WebhookReferralError) {
+      const status = error.code === 'REFERRAL_NOT_FOUND' ? 404 : 400;
+      return NextResponse.json(apiError(error.code), { status });
+    }
+    logger.error('webhook_processing_failed', {
+      error,
+      hospitalId: logCtx.hospitalId ?? null,
+      payloadType: logCtx.payloadType ?? null,
+    });
+    return NextResponse.json(apiError('INTERNAL_ERROR'), { status: 500 });
   }
 }

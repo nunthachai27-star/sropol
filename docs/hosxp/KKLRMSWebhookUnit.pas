@@ -24,6 +24,30 @@
 
     // Periodic snapshot (timer, every 5 min recommended):
     SendKKLRMSLabourSnapshot;
+
+  Optional `maternal_screening` object (H2, v1 — 2026-07-17):
+    Every labor patient object (BuildLabourPatient) can optionally carry a
+    `maternal_screening` sub-object with a preeclampsia/eclampsia/hemorrhage/
+    obstructed-labor triage snapshot. OFF by default — see
+    KKLRMS_SEND_MATERNAL_SCREENING below. Built STRICTLY from the field map
+    in docs/hosxp/maternal-screening-field-map.md (H1): only 8 fields have a
+    verified structured HOSxP source today (identity/anchor fields,
+    proteinuria_grade, FHR, maternal pulse, RR, SpO2); everything else is
+    omitted (no structured source, or pending per-site config / clinical
+    sign-off — never inferred from free text, per GC-H1).
+    Contract (frozen, `MS_KNOWN_TRANSPORT_KEYS` in src/services/webhook.ts):
+      - Only documented snake_case keys are emitted; unknown keys cause the
+        server to reject the WHOLE screening object (the labor upsert itself
+        is unaffected).
+      - `assessed_at` is always a REAL observation timestamp (never Now),
+        strict ISO-8601 with UTC+7 offset via the existing ISO8601() helper.
+      - `source_pk` is a stable HOSxP row-PK-derived key so replays are
+        idempotent (see BuildMaternalScreeningJson for the exact format).
+    See docs/hosxp/maternal-screening-field-map.md (H1, source-of-truth
+    mapping) and docs/WEBHOOK-SPEC.md (payload contract + examples).
+    Enabling this flag here does NOTHING on the server unless the KK-LRMS
+    side also has MATERNAL_SCREEN_INGEST_ENABLED=true (default OFF) — until
+    both are on, sending the object is a harmless no-op.
 }
 
 interface
@@ -66,6 +90,17 @@ function SendKKLRMSReferralUpdate(const ReferinVN: String;
   const Action: String = 'update'): Variant;
 
 var  KKLRMS_UAT : Boolean = false;
+
+{ Optional `maternal_screening` object on the labor payload (H2, v1). OFF by
+  default — flip to True per-site only AFTER: (1) confirming this hospital's
+  ipt_labour_partograph / ipd_nurse_note charting matches the H1 field map
+  (docs/hosxp/maternal-screening-field-map.md), and (2) the KK-LRMS side has
+  set MATERNAL_SCREEN_INGEST_ENABLED=true — with either side off, the object
+  is either not sent or silently ignored server-side (harmless no-op either
+  way). Turning this on alone does NOT enable the PARTIAL fields (pih
+  diagnosis, labs, contraction/membrane/presentation derivations) — those
+  stay null in v1 pending per-site config + clinical sign-off (see H1). }
+var  KKLRMS_SEND_MATERNAL_SCREENING : Boolean = false;
 
 implementation
 
@@ -376,12 +411,252 @@ begin
   Result := Q.FindField(Name);
 end;
 
+{ ── Maternal Screening (optional, H2) ──────────────────────────────────────
+
+  Builds the OPTIONAL `maternal_screening` sub-object attached to a labor
+  patient (see BuildLabourPatient below), STRICTLY from the H1 field map
+  (docs/hosxp/maternal-screening-field-map.md). Gated by
+  KKLRMS_SEND_MATERNAL_SCREENING (default False) — the caller only invokes
+  this when the flag is on.
+
+  Anchor row (H1 §2 recommendation):
+    1. PRIMARY: latest ipt_labour_partograph row for the AN
+       (ORDER BY observe_datetime DESC, ipt_labour_partograph_id DESC LIMIT 1).
+       assessed_at := observe_datetime, assessed_by := entry_staff,
+       source_pk := 'AN:{an}:LP:{id}'. Directly supplies proteinuria_grade
+       (raw urine_protein string — server normalizes), fetal_heart_rate_bpm,
+       maternal_pulse_bpm. respiratory_rate_per_min / oxygen_saturation_pct
+       have NO partograph column, so they are supplemented from the latest
+       ipd_nurse_note ONLY when that note falls within 60 minutes of the
+       anchor's observe_datetime (H1 §2 "context window" — never silently mix
+       a fresh anchor with a stale vital); when a supplement is used the key
+       is extended to 'AN:{an}:LP:{id}:NN:{nnid}' so a newer nurse note
+       correctly registers as a new observation rather than a duplicate.
+    2. FALLBACK (no partograph rows yet): latest ipd_nurse_note row
+       (ORDER BY note_date DESC, note_time DESC, nurse_note_id DESC LIMIT 1).
+       assessed_at := note_date+note_time, assessed_by := doctor_code,
+       source_pk := 'AN:{an}:NN:{id}'. Supplies maternal_pulse_bpm
+       (COALESCE pulse, heart_rate), respiratory_rate_per_min,
+       oxygen_saturation_pct (COALESCE spo2_ra, spo2_o2).
+       proteinuria_grade / fetal_heart_rate_bpm have no source on this
+       anchor — omitted.
+    3. Neither row exists -> returns Null (Unassigned); caller attaches
+       nothing. assessed_at is REQUIRED and must be a real observation time
+       — NEVER Now (that would assert an assessment that never happened).
+
+  PARTIAL fields (H1 — structured source verified but pending per-site
+  item/master mapping, a unit check, or clinical sign-off): pih_diagnosed,
+  creatinine_mg_dl, platelet_per_ul, ast_iu_l, alt_iu_l,
+  urine_output_ml_per_hour, frequent_contractions,
+  contraction_duration_exceeds_interval, membranes_ruptured,
+  abnormal_presentation, fetal_tracing_pattern.
+  TODO(H1): enable per-site, one field at a time, only after its named
+  precondition in the field map is signed off. NOT implemented in v1.
+
+  NOT AVAILABLE fields (H1 — no structured HOSxP source anywhere; GC-H1
+  forbids inferring from free text/nurse narrative): creatinine_baseline_mg_dl,
+  headache, blurred_vision, epigastric_pain, pulmonary_edema,
+  right_upper_quadrant_pain, vaginal_bleeding, estimated_bleeding_ml,
+  bleeding_rate, concealed_bleeding_suspected, abdominal_or_back_pain,
+  uterine_tenderness, suprapubic_tenderness, bandls_ring, consciousness,
+  shock_signs_present, placenta_previa_excluded, placenta_location_source.
+
+  Convention: every field above (PARTIAL + NOT AVAILABLE) is OMITTED from
+  the JSON object entirely — this unit's existing style (BuildLabourPatient)
+  never emits an explicit JSON null for an absent optional field, and the
+  server treats an omitted key identically to an explicit null
+  (`v === undefined || v === null` in src/services/webhook.ts's bool/num/enum
+  parsers) — so omission is contract-safe and matches this unit's idiom.
+
+  Never breaks the main labor payload: any exception here is caught, logged,
+  and the object is omitted (Result := Null) — the labor upsert proceeds
+  without it.
+
+  Cannot be unit-tested here — this is reference Pascal shipped to hospitals,
+  no Delphi compiler in this repo. Task H3's dev-simulation profiles exercise
+  the IDENTICAL transport shape end-to-end against the real webhook
+  validator; that is the executable test for this function's output
+  contract. }
+function BuildMaternalScreeningJson(const AN: String): Variant;
+const
+  SUPPLEMENT_WINDOW_MINUTES = 60;
+var
+  cLp, cNn: TClientDataSet;
+  haveNn: Boolean;
+  dtAnchor, dtNn: TDateTime;
+  sSourcePk, sAssessedBy, sProtein: String;
+begin
+  Result := Null;
+  try
+    cLp := TClientDataSet.Create(nil);
+    try
+      cNn := TClientDataSet.Create(nil);
+    except
+      // M4: if the second Create raises (e.g. resource exhaustion), free
+      // the first before re-raising so it doesn't leak — the outer except
+      // below still catches and logs the re-raised exception.
+      cLp.Free;
+      raise;
+    end;
+    try
+      // PRIMARY anchor candidate: latest partograph row.
+      cLp.Data := hosxp_getdataset(
+        'SELECT lp.ipt_labour_partograph_id, lp.observe_datetime, lp.entry_staff, ' +
+        'lp.urine_protein, lp.fetal_heart_rate, lp.pulse ' +
+        'FROM ipt_labour_partograph lp ' +
+        'WHERE lp.an = ''' + AN + ''' ' +
+        'ORDER BY lp.observe_datetime DESC, lp.ipt_labour_partograph_id DESC LIMIT 1');
+
+      // I1: a partograph row can exist with a NULL observe_datetime (bad
+      // data entry) — AsDateTime on a null field returns the Delphi epoch
+      // (0 = 1899-12-30), which would fabricate assessed_at rather than
+      // report a real observation. Require a non-null timestamp to take
+      // the primary path; otherwise fall through to the nurse-note
+      // fallback below exactly as if there were no partograph row at all.
+      if (cLp.RecordCount > 0) and (not cLp.FieldByName('observe_datetime').IsNull) then
+      begin
+        // ── Primary anchor: ipt_labour_partograph ──────────────────────
+        dtAnchor := cLp.FieldByName('observe_datetime').AsDateTime;
+        sSourcePk := 'AN:' + AN + ':LP:' +
+          vartostr(cLp.FieldByName('ipt_labour_partograph_id').AsVariant);
+
+        Result := _obj([
+          'source_pk',   sSourcePk,
+          'assessed_at', ISO8601(dtAnchor)
+        ]);
+
+        if not cLp.FieldByName('entry_staff').IsNull then
+        begin
+          sAssessedBy := Trim(vartostr(cLp.FieldByName('entry_staff').AsVariant));
+          if sAssessedBy <> '' then Result.assessed_by := sAssessedBy;
+        end;
+
+        // Raw dipstick string ("1+", "trace", "ลบ", ...) — server normalizes
+        // via normalizeProteinuriaGrade; we never interpret it here.
+        if not cLp.FieldByName('urine_protein').IsNull then
+        begin
+          sProtein := Trim(vartostr(cLp.FieldByName('urine_protein').AsVariant));
+          if sProtein <> '' then Result.proteinuria_grade := sProtein;
+        end;
+
+        // 0 is a real finding (documented absent FHR) — send whenever the
+        // column is non-null; never guarded by "> 0" like admission vitals.
+        if not cLp.FieldByName('fetal_heart_rate').IsNull then
+          Result.fetal_heart_rate_bpm := cLp.FieldByName('fetal_heart_rate').AsFloat;
+
+        if not cLp.FieldByName('pulse').IsNull then
+          Result.maternal_pulse_bpm := cLp.FieldByName('pulse').AsFloat;
+
+        // RR / SpO2 supplement: latest nurse note, only inside the context
+        // window (H1 §2) — a stale nurse note outside the window is left
+        // null rather than silently mixed with a fresh partograph anchor.
+        cNn.Data := hosxp_getdataset(
+          'SELECT nn.nurse_note_id, nn.note_date, nn.note_time, ' +
+          'nn.respiratory_rate, nn.spo2_ra, nn.spo2_o2 ' +
+          'FROM ipd_nurse_note nn ' +
+          'WHERE nn.an = ''' + AN + ''' ' +
+          'ORDER BY nn.note_date DESC, nn.note_time DESC, nn.nurse_note_id DESC LIMIT 1');
+        haveNn := cNn.RecordCount > 0;
+
+        if haveNn and (not cNn.FieldByName('note_date').IsNull) then
+        begin
+          dtNn := cNn.FieldByName('note_date').AsDateTime;
+          if not cNn.FieldByName('note_time').IsNull then
+            dtNn := Trunc(dtNn) + Frac(cNn.FieldByName('note_time').AsDateTime);
+
+          if MinutesBetween(dtNn, dtAnchor) <= SUPPLEMENT_WINDOW_MINUTES then
+          begin
+            // Extend the idempotency key so a newer nurse note (same
+            // partograph anchor) registers as a new observation.
+            sSourcePk := sSourcePk + ':NN:' +
+              vartostr(cNn.FieldByName('nurse_note_id').AsVariant);
+            Result.source_pk := sSourcePk;
+
+            if not cNn.FieldByName('respiratory_rate').IsNull then
+              Result.respiratory_rate_per_min := cNn.FieldByName('respiratory_rate').AsFloat;
+
+            if not cNn.FieldByName('spo2_ra').IsNull then
+              Result.oxygen_saturation_pct := cNn.FieldByName('spo2_ra').AsFloat
+            else if not cNn.FieldByName('spo2_o2').IsNull then
+              Result.oxygen_saturation_pct := cNn.FieldByName('spo2_o2').AsFloat;
+          end;
+        end;
+      end
+      else
+      begin
+        // ── Fallback anchor: latest ipd_nurse_note (no partograph yet) ──
+        cNn.Data := hosxp_getdataset(
+          'SELECT nn.nurse_note_id, nn.note_date, nn.note_time, nn.doctor_code, ' +
+          'nn.pulse, nn.heart_rate, nn.respiratory_rate, nn.spo2_ra, nn.spo2_o2 ' +
+          'FROM ipd_nurse_note nn ' +
+          'WHERE nn.an = ''' + AN + ''' ' +
+          'ORDER BY nn.note_date DESC, nn.note_time DESC, nn.nurse_note_id DESC LIMIT 1');
+
+        if (cNn.RecordCount = 0) or cNn.FieldByName('note_date').IsNull then
+        begin
+          // H1 §2.3: neither anchor exists (or the only candidate row has no
+          // real timestamp) — send no object at all. NEVER fabricate with Now.
+          Result := Null;
+          Exit;
+        end;
+
+        dtAnchor := cNn.FieldByName('note_date').AsDateTime;
+        if not cNn.FieldByName('note_time').IsNull then
+          dtAnchor := Trunc(dtAnchor) + Frac(cNn.FieldByName('note_time').AsDateTime);
+
+        sSourcePk := 'AN:' + AN + ':NN:' +
+          vartostr(cNn.FieldByName('nurse_note_id').AsVariant);
+
+        Result := _obj([
+          'source_pk',   sSourcePk,
+          'assessed_at', ISO8601(dtAnchor)
+        ]);
+
+        if not cNn.FieldByName('doctor_code').IsNull then
+        begin
+          sAssessedBy := Trim(vartostr(cNn.FieldByName('doctor_code').AsVariant));
+          if sAssessedBy <> '' then Result.assessed_by := sAssessedBy;
+        end;
+
+        if not cNn.FieldByName('pulse').IsNull then
+          Result.maternal_pulse_bpm := cNn.FieldByName('pulse').AsFloat
+        else if not cNn.FieldByName('heart_rate').IsNull then
+          Result.maternal_pulse_bpm := cNn.FieldByName('heart_rate').AsFloat;
+
+        if not cNn.FieldByName('respiratory_rate').IsNull then
+          Result.respiratory_rate_per_min := cNn.FieldByName('respiratory_rate').AsFloat;
+
+        if not cNn.FieldByName('spo2_ra').IsNull then
+          Result.oxygen_saturation_pct := cNn.FieldByName('spo2_ra').AsFloat
+        else if not cNn.FieldByName('spo2_o2').IsNull then
+          Result.oxygen_saturation_pct := cNn.FieldByName('spo2_o2').AsFloat;
+
+        // proteinuria_grade / fetal_heart_rate_bpm: no source on the
+        // nurse-note anchor (H1 §2.2) — omitted.
+      end;
+    finally
+      cLp.Free;
+      cNn.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      // A screening-build failure must NEVER break the main labor payload —
+      // log and omit the object; the labor upsert proceeds without it.
+      SIMain.LogWarning(Format('%s MaternalScreening: build failed for an=%s: %s: %s — omitting object',
+        [LOG_TAG, AN, E.ClassName, E.Message]));
+      Result := Null;
+    end;
+  end;
+end;
+
 function BuildLabourPatient(Q: TClientDataSet; const Action: String): Variant;
 var
   age: Integer;
   dtAdmit: TDateTime;
   f: TField;
   sStation: String;
+  msObj: Variant;
 begin
   age := CalcAge(Q.FieldByName('birthday').AsDateTime);
 
@@ -473,6 +748,18 @@ begin
   begin
     sStation := Trim(f.AsString);
     if sStation <> '' then Result.station_admit := sStation;
+  end;
+
+  // Optional maternal_screening object (H2) — off by default; see
+  // KKLRMS_SEND_MATERNAL_SCREENING. Never attached on a 'delete' action (we
+  // already Exit'ed above for that case) and never allowed to break this
+  // payload on failure — BuildMaternalScreeningJson catches its own errors
+  // and returns Null, in which case we simply omit the key.
+  if KKLRMS_SEND_MATERNAL_SCREENING then
+  begin
+    msObj := BuildMaternalScreeningJson(vartostr(Q.FieldByName('an').AsVariant));
+    if not VarIsNull(msObj) then
+      Result.maternal_screening := msObj;
   end;
 end;
 

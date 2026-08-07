@@ -96,7 +96,7 @@ describe('RiskDistributionChart', () => {
   it('title has correct styling classes', () => {
     render(<RiskDistributionChart summary={summary} />);
     const title = screen.getByText('การกระจายระดับความเสี่ยง');
-    expect(title.className).toContain('text-xs');
+    expect(title.className).toContain('text-sm');
     expect(title.className).toContain('uppercase');
     expect(title.className).toContain('tracking-wider');
     expect(title.className).toContain('font-semibold');

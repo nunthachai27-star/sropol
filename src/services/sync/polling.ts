@@ -5,7 +5,13 @@ import { BmsSessionClient } from '@/lib/bms-session';
 import { SseManager } from '@/lib/sse';
 import { encrypt } from '@/lib/encryption';
 import { calculateAge } from '@/lib/utils';
-import { getQuery, ACTIVE_LABOR_PATIENTS, PARTOGRAPH_OBSERVATIONS } from '@/config/hosxp-queries';
+import {
+  getQuery,
+  ACTIVE_LABOR_PATIENTS,
+  PARTOGRAPH_OBSERVATIONS,
+  LABOUR_INFANTS_SINCE,
+  IPT_PREGNANCY_DELIVERIES_SINCE,
+} from '@/config/hosxp-queries';
 import type { DatabaseDialect } from '@/config/hosxp-queries';
 import {
   upsertCachedPatients,
@@ -15,8 +21,15 @@ import {
   type SyncPatientData,
 } from './patient';
 import { upsertPartographObservations, type PartographRow } from './partograph';
+import { autoArriveReferrals } from '@/services/referral';
+import {
+  newbornSyncCutoffDate,
+  syncNewbornsFromRows,
+  syncNewbornsFromPregnancyRows,
+} from './newborn';
+import type { HosxpLabourInfantRow, HosxpIptPregnancyRow } from '@/types/hosxp';
 import { calculateAndStoreCpdScores } from './cpd-persist';
-import { syncAncData } from './anc';
+import { syncAncData, linkJourneyToLabor } from './anc';
 import { logger } from '@/lib/logger';
 import { APP_IDENTIFIER } from '@/lib/bms-browser-client';
 import { decryptSafe } from '@/lib/encryption';
@@ -155,11 +168,7 @@ export async function recordAuthenticityVerdict(
 const SAFE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 type AuthenticityFailureStatus =
-  | 'cid_unstable'
-  | 'hn_unstable'
-  | 'cid_invalid_checksum'
-  | 'no_id_field'
-  | 'probe_failed';
+  'cid_unstable' | 'hn_unstable' | 'cid_invalid_checksum' | 'no_id_field' | 'probe_failed';
 
 class HospitalDataUnauthenticError extends Error {
   status: AuthenticityFailureStatus;
@@ -743,7 +752,11 @@ export async function requestImmediateSync(
         const sessionConfig = await client.validateSession(sessionId, validateUrl);
         jwt = sessionConfig.jwt;
         bmsUrl = sessionConfig.bmsUrl;
-        dbType = (await client.getDatabaseType(bmsUrl, jwt)) as DatabaseDialect;
+        // getDatabaseType returns null when detection fails — keep the prior
+        // dbType rather than persisting a null/guessed dialect (matches C5:
+        // never overwrite a working database_type with an unconfirmed value).
+        const detectedDbType = await client.getDatabaseType(bmsUrl, jwt);
+        if (detectedDbType) dbType = detectedDbType;
 
         await db.execute(
           'UPDATE hospital_bms_config SET session_jwt = ?, database_type = ?, session_expires_at = ? WHERE hospital_id = ?',
@@ -1017,6 +1030,20 @@ export async function pollHospital(
       counts: { rows: count },
     });
 
+    // Parity with processWebhookPayload: link + LABOR-transition each active
+    // admission (prod runs browser-only sync; this path must not diverge).
+    for (const p of patients) {
+      if ((p.laborStatus ?? 'ACTIVE') !== 'ACTIVE') continue;
+      const rows = await db.query<{ id: string }>(
+        'SELECT id FROM cached_patients WHERE hospital_id = ? AND an = ?',
+        [hospitalId, p.an],
+      );
+      if (rows.length === 0) continue;
+      await db.transaction((tx) =>
+        linkJourneyToLabor(tx, hospitalId, p.hn, rows[0].id, p.cidHash ?? null, p.cid ?? null),
+      );
+    }
+
     emitStep(options, {
       name: 'detect_transfers',
       status: 'running',
@@ -1109,6 +1136,21 @@ export async function pollHospital(
         name: 'auto_discharge',
         status: 'success',
         message: 'No stale ACTIVE patients to close out — cache matches HOSxP.',
+      });
+    }
+
+    // ─── Auto-arrive: infer referral arrivals from journey ownership ─────
+    // Hospitals rarely drive the accept/transit/arrive endpoints, so
+    // INITIATED referrals whose patient journey is now owned by the
+    // destination hospital are reconciled to ARRIVED. Evidence rule and
+    // config gate live in src/config/referral-sla.ts / services/referral.ts.
+    const autoArrived = await autoArriveReferrals(db);
+    if (autoArrived > 0) {
+      emitStep(options, {
+        name: 'auto_arrive_referrals',
+        status: 'success',
+        message: `Reconciled ${autoArrived} referral(s) to ARRIVED based on journey ownership evidence.`,
+        counts: { arrived: autoArrived },
       });
     }
 
@@ -1244,6 +1286,106 @@ export async function pollHospital(
         hospitalId,
         error: partographError,
       });
+    }
+
+    // ─── Newborn outcomes: HOSxP labour_infant → cached_newborns ─────────
+    // Fetches every infant born since the self-healing cutoff (one-year
+    // backfill on first run, 2-day overlap after) and fans the batch out to
+    // journeys via cached_patients.an. Own try/catch: a failure here must
+    // not abort the rest of the cycle.
+    try {
+      const cutoff = await newbornSyncCutoffDate(db, hospitalId);
+      // Defense in depth — the cutoff is generated above, but never inline
+      // anything that doesn't look like a plain date.
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(cutoff)) {
+        throw new Error(`invalid newborn sync cutoff: ${cutoff}`);
+      }
+      const infantSql = getQuery(LABOUR_INFANTS_SINCE, databaseType).replace('{{CUTOFF}}', cutoff);
+      emitStep(options, {
+        name: 'sync_newborns',
+        status: 'running',
+        message: `Querying HOSxP labour infants born since ${cutoff}.`,
+      });
+      const infantResult = await client.executeQuery(infantSql, bmsUrl, jwt, undefined, {
+        appIdentifier: APP_IDENTIFIER,
+        marketplaceToken: options.marketplaceToken,
+      });
+      const newbornResult = await syncNewbornsFromRows(
+        db,
+        hospitalId,
+        infantResult.data as unknown as HosxpLabourInfantRow[],
+      );
+
+      // Fallback: the IPD pregnancy summary (ipt_pregnancy) — HOSxP's own
+      // Account 2 module closes pregnancies from it, and some sites never
+      // fill ipt_labour_infant at all. Journeys that already gained detailed
+      // rows above are skipped inside the service. Own try/catch so an odd
+      // schema at one site can't take down the primary counts.
+      let fallback = {
+        rowsRead: 0,
+        upserted: 0,
+        journeys: 0,
+        skippedNoJourney: 0,
+        skippedHasDetail: 0,
+        createdJourneys: 0,
+      };
+      let fallbackError: string | null = null;
+      try {
+        const pregSql = getQuery(IPT_PREGNANCY_DELIVERIES_SINCE, databaseType).replace(
+          '{{CUTOFF}}',
+          cutoff,
+        );
+        const pregResult = await client.executeQuery(pregSql, bmsUrl, jwt, undefined, {
+          appIdentifier: APP_IDENTIFIER,
+          marketplaceToken: options.marketplaceToken,
+        });
+        fallback = await syncNewbornsFromPregnancyRows(
+          db,
+          hospitalId,
+          pregResult.data as unknown as HosxpIptPregnancyRow[],
+        );
+      } catch (pregError) {
+        fallbackError = pregError instanceof Error ? pregError.message : String(pregError);
+        logger.warn('newborn_pregnancy_fallback_failed', { hospitalId, error: pregError });
+      }
+
+      // Info-level so the counts are diagnosable from docker logs — the
+      // emitStep stream only reaches the SSE progress store.
+      logger.info('newborn_sync_cycle', {
+        hospitalId,
+        cutoff,
+        rows: newbornResult.rowsRead,
+        upserted: newbornResult.upserted,
+        journeys: newbornResult.journeys,
+        skippedNoJourney: newbornResult.skippedNoJourney,
+        createdJourneys: newbornResult.createdJourneys,
+        fallbackRows: fallback.rowsRead,
+        fallbackUpserted: fallback.upserted,
+        fallbackJourneys: fallback.journeys,
+        fallbackSkippedHasDetail: fallback.skippedHasDetail,
+        fallbackError,
+      });
+      emitStep(options, {
+        name: 'sync_newborns',
+        status: 'success',
+        message: `Upserted ${newbornResult.upserted} newborns across ${newbornResult.journeys} journeys (${newbornResult.skippedNoJourney} ANs without a journey); ipt_pregnancy fallback added ${fallback.upserted} across ${fallback.journeys} journeys.`,
+        counts: {
+          rows: newbornResult.rowsRead,
+          upserted: newbornResult.upserted,
+          journeys: newbornResult.journeys,
+          skipped: newbornResult.skippedNoJourney,
+          fallbackRows: fallback.rowsRead,
+          fallbackUpserted: fallback.upserted,
+        },
+      });
+    } catch (newbornError) {
+      emitStep(options, {
+        name: 'sync_newborns',
+        status: 'warning',
+        message: 'Newborn sync failed — continuing the cycle.',
+        detail: newbornError instanceof Error ? newbornError.message : String(newbornError),
+      });
+      logger.warn('newborn_sync_failed', { hospitalId, error: newbornError });
     }
 
     try {
@@ -1594,7 +1736,11 @@ export async function startPolling(db: DatabaseAdapter, sseManager: SseManager):
               const sessionConfig = await client.validateSession(sessionId, validateUrl);
               jwt = sessionConfig.jwt;
               bmsUrl = sessionConfig.bmsUrl;
-              dbType = (await client.getDatabaseType(bmsUrl, jwt)) as DatabaseDialect;
+              // See comment at the other getDatabaseType call site above —
+              // null means detection failed; keep the prior dbType instead
+              // of persisting an unconfirmed dialect.
+              const detectedDbType = await client.getDatabaseType(bmsUrl, jwt);
+              if (detectedDbType) dbType = detectedDbType;
 
               await db.execute(
                 'UPDATE hospital_bms_config SET session_jwt = ?, database_type = ?, session_expires_at = ? WHERE hospital_id = ?',

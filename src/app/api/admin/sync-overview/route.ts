@@ -4,15 +4,13 @@
 // via progress-store.ts. One row per active hospital, even if it's never
 // been polled (so admins can see "still NEVER_SYNCED" hospitals too).
 //
-// Admin-gated by middleware.
+// Admin-gated by both the Edge middleware and the handler-level requireAdmin().
 import { NextResponse } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { logger } from '@/lib/logger';
-import {
-  getLatestSyncRun,
-  type SyncProgressRun,
-} from '@/services/sync/progress-store';
+import { getLatestSyncRun, type SyncProgressRun } from '@/services/sync/progress-store';
 import { isSyncFailureStatus } from '@/config/sync-status';
 
 interface HospitalRow {
@@ -54,6 +52,9 @@ export interface SyncOverviewEntry {
 
 export async function GET() {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const db = await getDatabase();
 
@@ -103,9 +104,6 @@ export async function GET() {
     });
   } catch (error) {
     logger.error('admin_sync_overview_failed', { error });
-    return NextResponse.json(
-      { error: 'failed to load sync overview' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'failed to load sync overview' }, { status: 500 });
   }
 }

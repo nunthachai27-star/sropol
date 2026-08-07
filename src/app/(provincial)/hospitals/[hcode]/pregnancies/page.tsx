@@ -7,6 +7,7 @@ import Link from 'next/link';
 import useSWR from 'swr';
 import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
 import { LoadingState } from '@/components/shared/LoadingState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import {
   Table,
   TableBody,
@@ -18,44 +19,11 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Building2 } from 'lucide-react';
 import { maskName } from '@/lib/pii-mask';
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface JourneyRow {
-  id: string;
-  hn: string;
-  name: string;
-  age: number;
-  gravida: number | null;
-  gaWeeks: number | null;
-  ancRiskLevel: string | null;
-  ancVisitCount: number;
-  lastAncDate: string | null;
-  careStage: string;
-}
-
-interface HospitalJourneysResponse {
-  hospital: { name: string; level: string; hcode: string } | null;
-  journeys: JourneyRow[];
-}
+import { ANC_RISK_CONFIGS } from '@/config/anc-risk-rules';
+import { AncRiskLevel } from '@/types/domain';
+import type { JourneyListItem, JourneyListResponse } from '@/types/api';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
-
-const ANC_RISK_COLORS: Record<string, string> = {
-  LOW:  'bg-green-100 text-green-700 border-green-200',
-  HR1:  'bg-yellow-100 text-yellow-700 border-yellow-200',
-  HR2:  'bg-orange-100 text-orange-700 border-orange-200',
-  HR3:  'bg-red-100 text-red-700 border-red-200',
-};
-
-const ANC_RISK_LABELS: Record<string, string> = {
-  LOW:  'เสี่ยงต่ำ',
-  HR1:  'HR1',
-  HR2:  'HR2',
-  HR3:  'HR3',
-};
 
 const RISK_FILTER_OPTIONS = [
   { value: '', label: 'ทุกระดับ' },
@@ -85,13 +53,16 @@ export default function HospitalPregnanciesPage({
   const router = useRouter();
   const [riskFilter, setRiskFilter] = useState('');
 
-  const { data, isLoading } = useSWR<HospitalJourneysResponse>(
-    `/api/hospitals/${hcode}/journeys`,
-    fetcher,
+  // Stage + per_page must be on the key so the API applies the PREGNANCY
+  // care-stage filter and its freshness gates (matches the hospital console's
+  // ANC tab). No local fetcher — the global SWRProvider fetcher throws on
+  // non-2xx so failures surface as `error` instead of a broken JSON body.
+  const { data, isLoading, error, mutate } = useSWR<JourneyListResponse>(
+    `/api/hospitals/${hcode}/journeys?stage=PREGNANCY&per_page=1000`,
     { refreshInterval: 60000 },
   );
 
-  const hospitalName = data?.hospital?.name ?? `รหัส ${hcode}`;
+  const hospitalName = `รหัส ${hcode}`;
   useSetBreadcrumbs([
     { label: 'แดชบอร์ด', href: '/' },
     { label: hospitalName, href: `/hospitals/${hcode}` },
@@ -102,7 +73,21 @@ export default function HospitalPregnanciesPage({
     return <LoadingState message="กำลังโหลดรายชื่อผู้ฝากครรภ์..." />;
   }
 
-  const allJourneys: JourneyRow[] = data?.journeys ?? [];
+  if (error) {
+    return (
+      <ErrorState
+        message="ไม่สามารถโหลดรายชื่อผู้ฝากครรภ์ได้"
+        detail={error instanceof Error ? error.message : String(error)}
+        onRetry={() => mutate()}
+      />
+    );
+  }
+
+  const allJourneys: JourneyListItem[] = data?.journeys ?? [];
+  // Server-side count for the whole care stage — the rows array is a single
+  // page (per_page=200), so its length would under-report once a hospital
+  // exceeds the page size.
+  const totalCount = data?.pagination?.total ?? allJourneys.length;
   const filtered = riskFilter
     ? allJourneys.filter((j) => j.ancRiskLevel === riskFilter)
     : allJourneys;
@@ -124,20 +109,9 @@ export default function HospitalPregnanciesPage({
             <Building2 size={20} />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-slate-800">
-              ฝากครรภ์ — {hospitalName}
-            </h1>
+            <h1 className="text-lg font-semibold text-slate-800">ฝากครรภ์ — {hospitalName}</h1>
             <p className="text-sm text-slate-500">
-              ทั้งหมด{' '}
-              <span className="font-semibold text-slate-700">{allJourneys.length}</span> ราย
-              {data?.hospital?.level && (
-                <>
-                  &ensp;·&ensp;
-                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium">
-                    {data.hospital.level}
-                  </span>
-                </>
-              )}
+              ทั้งหมด <span className="font-semibold text-slate-700">{totalCount}</span> ราย
             </p>
           </div>
         </div>
@@ -159,7 +133,7 @@ export default function HospitalPregnanciesPage({
         </select>
         {riskFilter && (
           <span className="text-xs text-slate-400">
-            แสดง {filtered.length} / {allJourneys.length} ราย
+            แสดง {filtered.length} / {totalCount} ราย
           </span>
         )}
       </div>
@@ -186,40 +160,41 @@ export default function HospitalPregnanciesPage({
             </TableHeader>
             <TableBody>
               {filtered.map((j) => (
-                <TableRow
-                  key={j.id}
-                  className="cursor-pointer hover:bg-muted/50"
-                >
+                <TableRow key={j.id} className="cursor-pointer hover:bg-muted/50">
                   <TableCell className="font-mono text-xs">
-                    <Link
-                      href={`/pregnancies/${j.id}`}
-                      className="text-teal-700 hover:underline"
-                    >
+                    <Link href={`/pregnancies/${j.id}`} className="text-teal-700 hover:underline">
                       {j.hn}
                     </Link>
                   </TableCell>
                   <TableCell className="font-medium">
-                    <Link
-                      href={`/pregnancies/${j.id}`}
-                      className="hover:text-teal-600"
-                    >
+                    <Link href={`/pregnancies/${j.id}`} className="hover:text-teal-600">
                       {maskName(j.name)}
                     </Link>
                   </TableCell>
                   <TableCell>{j.age} ปี</TableCell>
-                  <TableCell>
-                    {j.gravida != null ? `G${j.gravida}` : '-'}
-                  </TableCell>
-                  <TableCell>
-                    {j.gaWeeks != null ? `${j.gaWeeks} สัปดาห์` : '-'}
-                  </TableCell>
+                  <TableCell>{j.gravida != null ? `G${j.gravida}` : '-'}</TableCell>
+                  <TableCell>{j.gaWeeks != null ? `${j.gaWeeks} สัปดาห์` : '-'}</TableCell>
                   <TableCell>
                     {j.ancRiskLevel ? (
-                      <span
-                        className={`rounded-full border px-2 py-0.5 text-xs font-medium ${ANC_RISK_COLORS[j.ancRiskLevel] ?? 'bg-slate-100 text-slate-700 border-slate-200'}`}
-                      >
-                        {ANC_RISK_LABELS[j.ancRiskLevel] ?? j.ancRiskLevel}
-                      </span>
+                      (() => {
+                        const cfg = ANC_RISK_CONFIGS[j.ancRiskLevel as AncRiskLevel];
+                        return (
+                          <span
+                            className="rounded-full border px-2 py-0.5 text-xs font-medium"
+                            style={
+                              cfg
+                                ? {
+                                    background: cfg.bgColor,
+                                    color: cfg.color,
+                                    borderColor: cfg.color,
+                                  }
+                                : undefined
+                            }
+                          >
+                            {cfg?.labelTh ?? j.ancRiskLevel}
+                          </span>
+                        );
+                      })()
                     ) : (
                       <span className="text-slate-400">-</span>
                     )}

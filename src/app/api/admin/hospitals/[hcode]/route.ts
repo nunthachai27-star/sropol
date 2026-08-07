@@ -3,6 +3,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { logger } from '@/lib/logger';
 import { HospitalLevel, HospitalServiceType } from '@/types/domain';
 
@@ -25,6 +26,9 @@ export async function PUT(
   { params }: { params: Promise<{ hcode: string }> },
 ) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const { hcode } = await params;
     const body = (await request.json()) as UpdateHospitalBody;
@@ -47,10 +51,9 @@ export async function PUT(
     }
 
     const db = await getDatabase();
-    const existing = await db.query<{ id: string }>(
-      'SELECT id FROM hospitals WHERE hcode = ?',
-      [hcode],
-    );
+    const existing = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [
+      hcode,
+    ]);
     if (existing.length === 0) {
       return NextResponse.json({ error: 'hospital not found' }, { status: 404 });
     }
@@ -96,10 +99,7 @@ export async function PUT(
     vals.push(new Date().toISOString());
     vals.push(hcode);
 
-    await db.execute(
-      `UPDATE hospitals SET ${updates.join(', ')} WHERE hcode = ?`,
-      vals,
-    );
+    await db.execute(`UPDATE hospitals SET ${updates.join(', ')} WHERE hcode = ?`, vals);
 
     return NextResponse.json({ hcode, updated: true });
   } catch (error) {
@@ -113,14 +113,16 @@ export async function DELETE(
   { params }: { params: Promise<{ hcode: string }> },
 ) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const { hcode } = await params;
     const db = await getDatabase();
 
-    const existing = await db.query<{ id: string }>(
-      'SELECT id FROM hospitals WHERE hcode = ?',
-      [hcode],
-    );
+    const existing = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [
+      hcode,
+    ]);
     if (existing.length === 0) {
       return NextResponse.json({ error: 'hospital not found' }, { status: 404 });
     }
@@ -130,10 +132,11 @@ export async function DELETE(
     // Hard DELETE is blocked by FK constraints from 6 child tables; preserving
     // history matches the file-header intent ("deactivate / soft-delete") and
     // keeps audit trails usable. To resurrect, PUT { isActive: true }.
-    await db.execute(
-      'UPDATE hospitals SET is_active = ?, updated_at = ? WHERE hcode = ?',
-      [false, new Date().toISOString(), hcode],
-    );
+    await db.execute('UPDATE hospitals SET is_active = ?, updated_at = ? WHERE hcode = ?', [
+      false,
+      new Date().toISOString(),
+      hcode,
+    ]);
 
     return NextResponse.json({ hcode, deactivated: true });
   } catch (error) {

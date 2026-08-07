@@ -4,7 +4,7 @@ import { simulationGuard } from '../_guard';
 import { simulationOrchestrator } from '@/services/dev-simulation/orchestrator';
 
 export async function GET() {
-  const guard = simulationGuard();
-  if (guard) return guard;
+  const guard = await simulationGuard();
+  if (guard instanceof NextResponse) return guard;
   return NextResponse.json(simulationOrchestrator.status());
 }

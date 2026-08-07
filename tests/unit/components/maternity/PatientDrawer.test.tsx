@@ -58,7 +58,8 @@ describe('PatientDrawer', () => {
     render(<PatientDrawer open occupant={occupant} onClose={() => {}} />);
     expect(screen.getByText(/AN1/)).toBeInTheDocument();
     expect(screen.getByText(/HN HN1/)).toBeInTheDocument();
-    expect(screen.getByText(/นาง ทดสอบ ระบบ|ทดสอบ ระบบ/)).toBeInTheDocument();
+    // Name is masked for PDPA display (maskName) → "นาง ทดสอบ ร.".
+    expect(screen.getByText(/นาง ทดสอบ ร\./)).toBeInTheDocument();
     expect(screen.getByText(/30 ปี/)).toBeInTheDocument(); // age
     expect(screen.getByText(/G2/)).toBeInTheDocument();
     expect(screen.getByText(/GA 38/)).toBeInTheDocument();

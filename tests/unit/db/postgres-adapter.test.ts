@@ -1,4 +1,4 @@
-// T020: PostgresAdapter tests — uses SqliteAdapter as mock since PG requires running DB
+// T020: PostgresAdapter tests — uses a stub client since PG requires running DB
 // These tests verify the adapter interface contract, not PG-specific behavior
 import { describe, it, expect } from 'vitest';
 import { PostgresAdapter } from '@/db/postgres-adapter';

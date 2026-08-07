@@ -10,6 +10,7 @@ import { ConnectionStatus as ConnectionStatusEnum } from '@/types/domain';
 import { RiskBar } from './shared';
 import { cn } from '@/lib/utils';
 import { formatRelativeAge } from '@/lib/relative-time';
+import { combinedWorkload } from '@/config/hospital-network';
 
 interface HospitalTableProps {
   hospitals: DashboardHospital[];
@@ -85,8 +86,17 @@ export function HospitalTable({
     const dir = sortDir === 'asc' ? 1 : -1;
     return [...hospitals].sort((a, b) => {
       switch (sortKey) {
-        case 'severity':
-          return (severityRank(a) - severityRank(b)) * dir;
+        case 'severity': {
+          const bySeverity = (severityRank(a) - severityRank(b)) * dir;
+          if (bySeverity !== 0) return bySeverity;
+          // Tie-break by combined workload (labor + weighted ANC) so the
+          // busiest hospitals lead even when the labor floor is quiet and
+          // every severity rank is zero.
+          return (
+            (combinedWorkload(a.counts, a.ancCounts) - combinedWorkload(b.counts, b.ancCounts)) *
+            dir
+          );
+        }
         case 'name':
           return a.name.localeCompare(b.name, 'th') * dir;
         case 'total':
@@ -145,7 +155,7 @@ export function HospitalTable({
     <div className="border" style={{ borderColor: ruleStrong }}>
       {/* Sort chips */}
       <div
-        className="flex items-center gap-3 border-b px-3 py-2 font-mono text-[10px] tracking-[0.1em]"
+        className="flex items-center gap-3 border-b px-3 py-2 font-mono text-[12px] tracking-[0.1em]"
         style={{ color: inkMuted, borderColor: ruleStrong }}
       >
         <span>SORT:</span>
@@ -264,13 +274,13 @@ export function HospitalTable({
                   {h.name}
                 </span>
                 <span
-                  className="shrink-0 border px-1 font-mono text-[9px]"
+                  className="shrink-0 border px-1 font-mono text-[11px]"
                   style={{ color: inkMuted, borderColor: ruleHair }}
                 >
                   {h.level}
                 </span>
                 <span
-                  className="inline-flex shrink-0 items-center gap-1 font-mono text-[9px] uppercase tracking-wide"
+                  className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] uppercase tracking-wide"
                   style={{ color: statusColor }}
                   aria-label={`สถานะ: ${statusLabel}`}
                   title={statusTitle || undefined}
@@ -313,7 +323,7 @@ export function HospitalTable({
                   title={`Active labor: ${h.counts.total} ราย`}
                 >
                   <span
-                    className="font-mono text-[9px] uppercase tracking-[0.08em]"
+                    className="font-mono text-[11px] uppercase tracking-[0.08em]"
                     style={{ color: inkMuted }}
                   >
                     LB
@@ -326,7 +336,7 @@ export function HospitalTable({
                   title={`ANC registry: ${h.ancCounts.total} · HR3: ${h.ancCounts.hr3}`}
                 >
                   <span
-                    className="font-mono text-[9px] uppercase tracking-[0.08em]"
+                    className="font-mono text-[11px] uppercase tracking-[0.08em]"
                     style={{ color: inkMuted }}
                   >
                     ANC
@@ -334,7 +344,7 @@ export function HospitalTable({
                   <span>{h.ancCounts.total || '–'}</span>
                   {h.ancCounts.hr3 > 0 && (
                     <span
-                      className="rounded-sm px-1 text-[9px] font-bold"
+                      className="rounded-sm px-1 text-[11px] font-bold"
                       style={{
                         background: '#fde2dc',
                         color: '#9b2c1c',
@@ -370,10 +380,7 @@ export function HospitalTable({
           );
         })}
         {sorted.length === 0 && (
-          <div
-            className="p-6 text-center font-mono text-[11px]"
-            style={{ color: inkMuted }}
-          >
+          <div className="p-6 text-center font-mono text-[13px]" style={{ color: inkMuted }}>
             ไม่มีโรงพยาบาลในรายการ
           </div>
         )}

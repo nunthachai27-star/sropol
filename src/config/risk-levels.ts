@@ -108,3 +108,12 @@ export function classifyRiskLevel(score: number): RiskLevel {
 export function getRiskConfig(level: RiskLevel): RiskLevelConfig {
   return RISK_LEVELS[level];
 }
+
+/**
+ * Single config-derived predicate for "should the high-risk alert fire?".
+ * Tracks the HIGH classification boundary (RISK_LEVELS[HIGH].minScore) via
+ * classifyRiskLevel so UI call sites never repeat a bare numeric threshold.
+ */
+export function isHighRisk(score: number): boolean {
+  return classifyRiskLevel(score) === RiskLevel.HIGH;
+}

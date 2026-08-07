@@ -4,8 +4,35 @@
 // up an external server. The codebase canonicalises on `?` placeholders, so
 // this adapter rewrites them to `$N` before handing the query to pglite.
 
-import type { PGlite, Transaction as PgliteTransaction } from '@electric-sql/pglite';
+import {
+  PGlite,
+  types as pgliteTypes,
+  type Transaction as PgliteTransaction,
+} from '@electric-sql/pglite';
 import { DatabaseAdapter, type ColumnInfo } from './adapter';
+
+/**
+ * Construct a PGlite instance whose type parsing matches production
+ * PostgresAdapter. `pg` is configured with setTypeParser(20, parseInt) and
+ * setTypeParser(1700, parseFloat) — see src/db/postgres-adapter.ts — but
+ * pglite's default NUMERIC parser returns strings ("3.50"), so decimal
+ * columns (CPD scores, vitals, partograph measurements) would diverge from
+ * what services see in production. Every PGlite used by this codebase MUST
+ * be created through this factory.
+ */
+export function createPglite(dataDir?: string): PGlite {
+  // Single options-object form on purpose: `new PGlite(dataDir, options)`
+  // silently IGNORES options when dataDir is undefined (verified against
+  // @electric-sql/pglite 0.4.x — the two-arg overload drops the second
+  // argument unless the first is a string).
+  return new PGlite({
+    dataDir,
+    parsers: {
+      [pgliteTypes.INT8]: (value: string) => parseInt(value, 10),
+      [pgliteTypes.NUMERIC]: (value: string) => parseFloat(value),
+    },
+  });
+}
 
 /** Thrown when PGlite's WASM runtime has aborted and cannot serve further
  *  queries. Callers should surface this in the UI as "DB unavailable" rather
@@ -59,7 +86,9 @@ export class PgliteAdapter extends DatabaseAdapter {
     }
     const prev = _lock.writeLock;
     let release: () => void = () => {};
-    _lock.writeLock = new Promise<void>((r) => { release = r; });
+    _lock.writeLock = new Promise<void>((r) => {
+      release = r;
+    });
     try {
       await prev;
       return await fn();
@@ -67,10 +96,10 @@ export class PgliteAdapter extends DatabaseAdapter {
       const msg = e instanceof Error ? e.message : String(e);
       if (/Aborted\(\)|RuntimeError/.test(msg)) {
         _lock.aborted = true;
-        // eslint-disable-next-line no-console
         console.error(
           '[pglite] WASM aborted — every subsequent DB call will reject until the server restarts.',
-          '\n    cause:', msg,
+          '\n    cause:',
+          msg,
         );
         throw new DatabaseUnavailableError('pglite_wasm_aborted', e);
       }
@@ -94,38 +123,37 @@ export class PgliteAdapter extends DatabaseAdapter {
     await this.serialized(() => this.pg.query(rewritePlaceholders(sql), params));
   }
 
-  async query<T = Record<string, unknown>>(
-    sql: string,
-    params: unknown[] = [],
-  ): Promise<T[]> {
-    const result = await this.serialized(() =>
-      this.pg.query<T>(rewritePlaceholders(sql), params),
-    );
+  async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
+    const result = await this.serialized(() => this.pg.query<T>(rewritePlaceholders(sql), params));
     return result.rows;
   }
 
   async getTableNames(): Promise<string[]> {
     // MUST go through the mutex — metadata queries racing with concurrent
     // writes was triggering the Emscripten abort under sim load.
-    const result = await this.serialized(() => this.pg.query<{ table_name: string }>(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
-    ));
+    const result = await this.serialized(() =>
+      this.pg.query<{ table_name: string }>(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
+      ),
+    );
     return result.rows.map((r) => r.table_name);
   }
 
   async getColumnInfo(table: string): Promise<ColumnInfo[]> {
-    const result = await this.serialized(() => this.pg.query<{
-      column_name: string;
-      data_type: string;
-      is_nullable: string;
-      column_default: string | null;
-    }>(
-      `SELECT column_name, data_type, is_nullable, column_default
+    const result = await this.serialized(() =>
+      this.pg.query<{
+        column_name: string;
+        data_type: string;
+        is_nullable: string;
+        column_default: string | null;
+      }>(
+        `SELECT column_name, data_type, is_nullable, column_default
          FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = $1
         ORDER BY ordinal_position`,
-      [table],
-    ));
+        [table],
+      ),
+    );
     return result.rows.map((r) => ({
       name: r.column_name,
       type: r.data_type,
@@ -161,10 +189,7 @@ class PgliteTransactionAdapter extends DatabaseAdapter {
     await this.tx.query(rewritePlaceholders(sql), params);
   }
 
-  async query<T = Record<string, unknown>>(
-    sql: string,
-    params: unknown[] = [],
-  ): Promise<T[]> {
+  async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
     const result = await this.tx.query<T>(rewritePlaceholders(sql), params);
     return result.rows;
   }

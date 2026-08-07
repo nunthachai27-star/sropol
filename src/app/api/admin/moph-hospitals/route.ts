@@ -4,10 +4,14 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const province = request.nextUrl.searchParams.get('province');
     const db = await getDatabase();

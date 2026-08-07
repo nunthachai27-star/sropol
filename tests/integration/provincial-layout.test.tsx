@@ -40,6 +40,7 @@ vi.mock('next-auth/react', () => ({
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/',
+  useRouter: () => ({ push: () => {}, back: () => {}, replace: () => {}, prefetch: () => {} }),
 }));
 
 describe('Provincial layout (post-migration)', () => {

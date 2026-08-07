@@ -1,20 +1,18 @@
 // Hospital patients API route logic tests — tests getHospitalPatientList service
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import { getHospitalPatientList } from '@/services/dashboard';
 import { v4 as uuidv4 } from 'uuid';
 
 describe('Hospital Patients API Logic', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let hospitalId: string;
   const hcode = '10670';
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
 
     // Get hospital ID

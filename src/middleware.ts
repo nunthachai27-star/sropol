@@ -8,8 +8,12 @@
 // store, sync services) never reaches this bundle.
 import NextAuth from 'next-auth';
 import { authConfig } from '@/lib/auth.config';
+import { isAdminAuthorized } from '@/lib/admin-access';
+import { addSecurityHeaders } from '@/lib/security-headers';
+import { isRequestOriginTrusted } from '@/lib/request-origin';
+import { apiError } from '@/lib/api-errors';
+import { logger } from '@/lib/logger';
 import { NextResponse } from 'next/server';
-import { BASE_PATH, withBasePath } from '@/lib/base-path';
 
 const { auth } = NextAuth(authConfig);
 
@@ -37,42 +41,18 @@ const READONLY_BLOCKED_API_PREFIXES = [
   '/api/sync/trigger',
   '/api/referrals',
   '/api/hospital/audit-log',
+  '/api/dev',
 ];
-// Dev-only API routes that are already guarded server-side by simulationGuard()
-// (which throws 404 in production). Listing them here lets local CLI tooling
-// curl them without a NextAuth cookie. No-op in prod because the guard fires first.
+// Dev-only API routes. In production isSimulationEnabled() is hard-false and
+// every handler 404s via simulationGuard(); this unauthenticated middleware
+// bypass additionally only applies when NODE_ENV !== 'production'.
 const DEV_ONLY_API_PATHS = ['/api/dev/simulate', '/api/dev/smoke-tab-update'];
 
-// T108: Add security headers to all responses
-//
-// NOTE: X-Frame-Options is intentionally NOT set, and CSP frame-ancestors is
-// wide open (*) so KK-LRMS can be embedded inside HOSxP / marketplace / other
-// partner hospital portals. Product requirement, not a misconfiguration.
-// Clickjacking mitigations (session binding to bms-session-id, no destructive
-// one-click actions without confirm) live at the app layer instead.
-function addSecurityHeaders(response: NextResponse): NextResponse {
-  response.headers.set('X-Content-Type-Options', 'nosniff');
-  response.headers.set('X-XSS-Protection', '1; mode=block');
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  response.headers.set('Content-Security-Policy', 'frame-ancestors *');
-  // HSTS - only in production
-  if (process.env.NODE_ENV === 'production') {
-    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  }
-  return response;
-}
+// T108: security headers for all responses — policy + rationale live in
+// src/lib/security-headers.ts (NextAuth-free so unit tests can import it).
 
 export default auth((req) => {
-  // Next.js does NOT strip the basePath from `nextUrl.pathname` inside
-  // middleware (only the route matcher is basePath-aware). Strip it here so the
-  // bare PUBLIC_PATHS / STATIC_PATHS / '/admin' prefixes below still match.
-  // `withBasePath` re-adds the prefix when we build redirect targets.
-  const rawPathname = req.nextUrl.pathname;
-  const pathname =
-    BASE_PATH && rawPathname.startsWith(BASE_PATH)
-      ? rawPathname.slice(BASE_PATH.length) || '/'
-      : rawPathname;
+  const { pathname } = req.nextUrl;
 
   // Allow static assets and public paths
   if (STATIC_PATHS.some((p) => pathname.startsWith(p))) {
@@ -91,13 +71,23 @@ export default auth((req) => {
     return addSecurityHeaders(NextResponse.next());
   }
 
+  // CSRF: cookie-authenticated mutations must come from a trusted origin.
+  // Public paths (webhooks, /api/auth) never reach this point.
+  if (
+    !isRequestOriginTrusted({
+      method: req.method,
+      origin: req.headers.get('origin'),
+      secFetchSite: req.headers.get('sec-fetch-site'),
+      requestOrigin: req.nextUrl.origin,
+    })
+  ) {
+    return addSecurityHeaders(NextResponse.json(apiError('CSRF_ORIGIN_REJECTED'), { status: 403 }));
+  }
+
   // Check authentication
   const session = req.auth;
   if (!session?.user) {
-    // NextResponse.redirect does NOT auto-apply the Next.js basePath, so the
-    // target path is prefixed explicitly here. `pathname` (used for callbackUrl)
-    // already has basePath stripped by Next, so it stays bare.
-    const loginUrl = new URL(withBasePath('/login'), req.url);
+    const loginUrl = new URL('/login', req.url);
     loginUrl.searchParams.set('callbackUrl', pathname);
     // Preserve bms-session-id for auto-login
     const bmsSessionId = req.nextUrl.searchParams.get('bms-session-id');
@@ -117,7 +107,7 @@ export default auth((req) => {
 
   if (session.user.accessMode === 'readonly') {
     if (pathname.startsWith('/admin')) {
-      return addSecurityHeaders(NextResponse.redirect(new URL(withBasePath('/'), req.url)));
+      return addSecurityHeaders(NextResponse.redirect(new URL('/', req.url)));
     }
     if (req.method !== 'GET' && READONLY_BLOCKED_API_PREFIXES.some((p) => pathname.startsWith(p))) {
       return addSecurityHeaders(
@@ -129,26 +119,25 @@ export default auth((req) => {
     }
   }
 
-  // Admin-only route protection. Two gates, both must pass:
-  //   1. role === 'ADMIN'  (BMS-derived, may be promoted by DEV_AUTH_BYPASS).
-  //   2. user_cid in ADMIN_ALLOWED_CIDS  (when env var is non-empty).
-  // The CID gate exists because (a) `mapPositionToRole` grants ADMIN to anyone
-  // whose BMS position contains "director"/"ผู้อำนวยการ", and (b) DEV_AUTH_BYPASS
-  // promotes everyone to ADMIN — neither is acceptable as the sole gate for
-  // production /admin access. The allow-list short-circuits both.
+  // Admin-only route protection. The role / CID / readonly rule lives in ONE
+  // place — isAdminAuthorized (@/lib/admin-access) — shared verbatim with the
+  // handler-level requireAdmin() guard so the two enforcement layers can never
+  // diverge. See that module for why the CID allow-list gate exists.
   if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin')) {
-    if (session.user.role !== 'ADMIN') {
-      return addSecurityHeaders(NextResponse.redirect(new URL(withBasePath('/'), req.url)));
-    }
-    const allowList = (process.env.ADMIN_ALLOWED_CIDS ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (allowList.length > 0) {
-      const cid = session.user.userCid ?? '';
-      if (!cid || !allowList.includes(cid)) {
-        return addSecurityHeaders(NextResponse.redirect(new URL(withBasePath('/'), req.url)));
-      }
+    if (
+      !isAdminAuthorized({
+        role: session.user.role,
+        userCid: session.user.userCid,
+        accessMode: session.user.accessMode,
+      })
+    ) {
+      logger.warn('admin_access_denied_middleware', {
+        pathname,
+        role: session.user.role,
+        accessMode: session.user.accessMode,
+        userIdLast4: session.user.userCid?.slice(-4) ?? '',
+      });
+      return addSecurityHeaders(NextResponse.redirect(new URL('/', req.url)));
     }
   }
 

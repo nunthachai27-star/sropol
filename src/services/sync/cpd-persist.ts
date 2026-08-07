@@ -5,6 +5,7 @@ import type { DatabaseAdapter } from '@/db/adapter';
 import type { SseManager } from '@/lib/sse';
 import { calculateCpdScore } from '@/services/cpd-score';
 import { RiskLevel } from '@/types/domain';
+import { CooperativeYielder } from '@/lib/event-loop';
 
 export async function calculateAndStoreCpdScores(
   db: DatabaseAdapter,
@@ -33,7 +34,13 @@ export async function calculateAndStoreCpdScores(
   );
   const hcode = hospitalRows[0]?.hcode ?? '';
 
+  // Bounded cooperative yielding (page-stall fix part 2): this recomputes CPD
+  // for EVERY ACTIVE patient of the hospital on each webhook/browser-push
+  // cycle — tick per patient so the pure-CPU scoring never monopolizes the
+  // serving event loop. No transaction is held here (per-patient INSERTs).
+  const yielder = new CooperativeYielder();
   for (const p of patients) {
+    await yielder.tick();
     const factors: Record<string, number> = {};
     if (p.gravida != null) factors.gravida = p.gravida;
     if (p.anc_count != null) factors.ancCount = p.anc_count;

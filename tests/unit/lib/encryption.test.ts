@@ -1,6 +1,6 @@
 // T036: PDPA field encryption tests
-import { describe, it, expect } from 'vitest';
-import { encrypt, decrypt, generateKey } from '@/lib/encryption';
+import { describe, it, expect, vi } from 'vitest';
+import { encrypt, decrypt, generateKey, getEncryptionKey } from '@/lib/encryption';
 
 describe('PDPA Encryption', () => {
   const testKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -51,5 +51,11 @@ describe('PDPA Encryption', () => {
     const encrypted = encrypt('secret', testKey);
     const wrongKey = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
     expect(() => decrypt(encrypted, wrongKey)).toThrow();
+  });
+
+  it('getEncryptionKey rejects a 64-char non-hex string', () => {
+    vi.stubEnv('ENCRYPTION_KEY', 'z'.repeat(64));
+    expect(() => getEncryptionKey()).toThrow(/hex/);
+    vi.unstubAllEnvs();
   });
 });

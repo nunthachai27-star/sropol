@@ -17,7 +17,7 @@
 //     Add is disabled and points at the Pre-labour / Stage tabs.
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { useBmsSession } from '@/hooks/useBmsSession';
 import {
@@ -29,7 +29,6 @@ import {
 } from '@/services/maternity-ward';
 import type { ComplicationRow, LabourRecord } from '@/types/maternity-ward';
 import type { ConnectionConfig } from '@/types/bms-browser';
-import { cn } from '@/lib/utils';
 import { AnchoredDropdown } from '../shared/AnchoredDropdown';
 
 type EditState = {
@@ -92,17 +91,20 @@ function ComplicationPicker({
     return options.find((o) => o.labour_complication_id === sid)?.name ?? '';
   }, [selectedId, options]);
 
-  useEffect(() => {
-    if (selectedName && query === '') setQuery(selectedName);
-  }, [selectedName, query]);
+  // Render-phase adjust (react.dev "you might not need an effect"): seed the
+  // search input with the resolved name the first time it becomes available
+  // for this selection, without clobbering subsequent user typing.
+  const [seededFor, setSeededFor] = useState('');
+  if (selectedName && selectedName !== seededFor && query === '') {
+    setSeededFor(selectedName);
+    setQuery(selectedName);
+  }
 
   const filtered = useMemo(() => {
     if (!options) return [];
     const q = query.trim().toLowerCase();
     if (q === '' || q === selectedName.toLowerCase()) return options.slice(0, 50);
-    return options
-      .filter((o) => o.name.toLowerCase().includes(q))
-      .slice(0, 50);
+    return options.filter((o) => o.name.toLowerCase().includes(q)).slice(0, 50);
   }, [options, query, selectedName]);
 
   return (
@@ -170,7 +172,10 @@ function EditRow({ config, draft, setDraft, saving, onCancel, onSave }: EditRowP
                 config={config}
                 selectedId={draft.labour_complication_id}
                 onPick={(opt) =>
-                  setDraft((d) => ({ ...d, labour_complication_id: String(opt.labour_complication_id) }))
+                  setDraft((d) => ({
+                    ...d,
+                    labour_complication_id: String(opt.labour_complication_id),
+                  }))
                 }
               />
               {/* Hidden input so getByLabelText('labour_complication_id') still
@@ -208,9 +213,7 @@ function EditRow({ config, draft, setDraft, saving, onCancel, onSave }: EditRowP
                 type="text"
                 aria-label="complication_note"
                 value={draft.complication_note}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, complication_note: e.target.value }))
-                }
+                onChange={(e) => setDraft((d) => ({ ...d, complication_note: e.target.value }))}
                 placeholder="รายละเอียดที่ต้องบันทึก"
                 className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-[14px] text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
               />
@@ -245,9 +248,8 @@ function EditRow({ config, draft, setDraft, saving, onCancel, onSave }: EditRowP
 
 export function ComplicationsTab({ an }: { an: string }) {
   const { config, userInfo } = useBmsSession();
-  const labour = useSWR<LabourRecord | null>(
-    config ? ['labour', config.apiUrl, an] : null,
-    () => getPatientLabour(config!, an),
+  const labour = useSWR<LabourRecord | null>(config ? ['labour', config.apiUrl, an] : null, () =>
+    getPatientLabour(config!, an),
   );
   // Use null/undefined check, NOT truthy: ipt_labour_id=0 is a real value
   // for legacy rows on the test hospital (sentinel-keyed admissions). The
@@ -377,9 +379,7 @@ export function ComplicationsTab({ an }: { an: string }) {
       <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-slate-900 pb-3">
         <div className="flex items-center gap-3">
           <span aria-hidden className="block h-1.5 w-8 bg-cyan-600" />
-          <h2 className="text-[18px] font-bold tracking-tight text-slate-900">
-            ภาวะแทรกซ้อน
-          </h2>
+          <h2 className="text-[18px] font-bold tracking-tight text-slate-900">ภาวะแทรกซ้อน</h2>
           {rows.length > 0 && (
             <span className="rounded-md bg-slate-100 px-2.5 py-1 text-[12px] font-semibold text-slate-700">
               {rows.length} รายการ
@@ -398,7 +398,10 @@ export function ComplicationsTab({ an }: { an: string }) {
       </div>
 
       {saveError && (
-        <div role="alert" className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-[13px] font-semibold text-rose-700 shadow-sm">
+        <div
+          role="alert"
+          className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-[13px] font-semibold text-rose-700 shadow-sm"
+        >
           {saveError}
         </div>
       )}

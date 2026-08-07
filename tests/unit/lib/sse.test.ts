@@ -21,18 +21,15 @@ describe('SseManager', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    // Clean slate for each test (afterEach resets, this covers the first test)
+    SseManager.resetForTests();
     manager = SseManager.getInstance();
-    // Clean slate for each test
-    manager.destroy();
   });
 
   afterEach(() => {
-    manager.destroy();
     vi.useRealTimers();
-    // Reset the singleton so each test gets a fresh instance
-    // We need to access the private static field to reset it
-    // @ts-expect-error accessing private static for test cleanup
-    SseManager.instance = undefined;
+    // Reset the singleton (and its globalThis pin) so each test gets a fresh instance
+    SseManager.resetForTests();
   });
 
   it('starts with zero clients', () => {
@@ -124,11 +121,6 @@ describe('SseManager', () => {
   });
 
   it('sends heartbeat pings to all clients every 30 seconds', () => {
-    // Reset singleton to get fresh heartbeat interval
-    // @ts-expect-error accessing private static for test cleanup
-    SseManager.instance = undefined;
-    manager = SseManager.getInstance();
-
     const mock = createMockController();
     manager.addClient('client-1', mock.controller);
 
@@ -140,10 +132,6 @@ describe('SseManager', () => {
   });
 
   it('removes disconnected clients during heartbeat', () => {
-    // @ts-expect-error accessing private static for test cleanup
-    SseManager.instance = undefined;
-    manager = SseManager.getInstance();
-
     const badController = {
       enqueue: vi.fn(() => {
         throw new Error('Stream closed');
@@ -189,5 +177,81 @@ describe('SseManager', () => {
     expect(mock2.chunks.length).toBe(1);
     // The first controller should NOT receive the broadcast
     expect(mock1.chunks.length).toBe(0);
+  });
+
+  // Per-user targeting backs video-call signaling: a ring must reach every
+  // open tab of the callee and nobody else.
+  describe('per-user targeting', () => {
+    it('sendToUser reaches only clients registered with that userId', () => {
+      const alice = createMockController();
+      const bob = createMockController();
+      manager.addClient('tab-alice', alice.controller, 'user-alice');
+      manager.addClient('tab-bob', bob.controller, 'user-bob');
+
+      const delivered = manager.sendToUser('user-alice', 'call:invite', { callId: 'c1' });
+
+      expect(delivered).toBe(1);
+      expect(decodeChunks(alice.chunks)).toBe('event: call:invite\ndata: {"callId":"c1"}\n\n');
+      expect(bob.chunks.length).toBe(0);
+    });
+
+    it('reaches every tab of the same user', () => {
+      const tab1 = createMockController();
+      const tab2 = createMockController();
+      manager.addClient('tab-1', tab1.controller, 'user-alice');
+      manager.addClient('tab-2', tab2.controller, 'user-alice');
+
+      const delivered = manager.sendToUser('user-alice', 'call:invite', { callId: 'c1' });
+
+      expect(delivered).toBe(2);
+      expect(decodeChunks(tab1.chunks)).toContain('call:invite');
+      expect(decodeChunks(tab2.chunks)).toContain('call:invite');
+    });
+
+    it('returns 0 and does not throw when the user has no connected tabs', () => {
+      const other = createMockController();
+      manager.addClient('tab-other', other.controller, 'user-bob');
+
+      expect(manager.sendToUser('user-nobody', 'call:invite', {})).toBe(0);
+      expect(other.chunks.length).toBe(0);
+    });
+
+    it('does not target clients registered without a userId', () => {
+      const anonymous = createMockController();
+      manager.addClient('dashboard-tab', anonymous.controller);
+
+      expect(manager.sendToUser('dashboard-tab', 'call:invite', {})).toBe(0);
+      expect(anonymous.chunks.length).toBe(0);
+    });
+
+    it('removes dead clients encountered during sendToUser', () => {
+      const badController = {
+        enqueue: vi.fn(() => {
+          throw new Error('Stream closed');
+        }),
+        close: vi.fn(),
+      } as unknown as ReadableStreamDefaultController;
+      manager.addClient('dead-tab', badController, 'user-alice');
+
+      expect(manager.sendToUser('user-alice', 'call:invite', {})).toBe(0);
+      expect(manager.getClientCount()).toBe(0);
+    });
+
+    it('broadcast still reaches clients registered with a userId', () => {
+      const mock = createMockController();
+      manager.addClient('tab-1', mock.controller, 'user-alice');
+
+      manager.broadcast('sync-complete', { ok: true });
+      expect(decodeChunks(mock.chunks)).toContain('sync-complete');
+    });
+  });
+
+  // Next.js bundles route handlers separately: a static-field singleton can
+  // fragment into one instance per bundle (same failure mode as __dbSingleton).
+  // Pinning on globalThis guarantees callers in every bundle share the client map.
+  it('pins the singleton on globalThis so all bundles share one instance', () => {
+    const instance = SseManager.getInstance();
+    const g = globalThis as unknown as { __sseManager?: SseManager };
+    expect(g.__sseManager).toBe(instance);
   });
 });

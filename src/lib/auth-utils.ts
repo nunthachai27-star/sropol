@@ -3,9 +3,18 @@ import { UserRole } from '@/types/domain';
 import { logger } from '@/lib/logger';
 import { ADMIN_HCODES } from '@/lib/hospital-access-guard';
 
+// Subordinate leadership titles must not inherit the director's ADMIN role.
+// English needs word-boundary matching ('vice' is a substring of 'services');
+// Thai compounds attach directly, so match the full subordinate title.
+const DIRECTOR_EXCLUSION_EN = /\b(deputy|assistant|vice)\b/;
+const DIRECTOR_EXCLUSIONS_TH = ['รองผู้อำนวยการ', 'ผู้ช่วยผู้อำนวยการ'];
+
 export function mapPositionToRole(position: string): UserRole {
   const lower = position.toLowerCase();
-  if (lower.includes('director') || lower.includes('ผู้อำนวยการ')) {
+  const isDirector = lower.includes('director') || lower.includes('ผู้อำนวยการ');
+  const isSubordinate =
+    DIRECTOR_EXCLUSION_EN.test(lower) || DIRECTOR_EXCLUSIONS_TH.some((t) => lower.includes(t));
+  if (isDirector && !isSubordinate) {
     return UserRole.ADMIN;
   }
   if (lower.includes('doctor') || lower.includes('แพทย์') || lower.includes('สูติ')) {
@@ -16,9 +25,11 @@ export function mapPositionToRole(position: string): UserRole {
 
 export interface BmsUserIdentity {
   name: string;
-  /** เลขบัตรประชาชน 13 หลัก of the BMS user. Used by middleware to enforce
-   *  the ADMIN_ALLOWED_CIDS allow-list — even when role=ADMIN (or when
-   *  DEV_AUTH_BYPASS forces ADMIN), only CIDs on the list reach /admin. */
+  /** เลขบัตรประชาชน 13 หลัก of the BMS user. Checked against the
+   *  ADMIN_ALLOWED_CIDS allow-list, which both GRANTS (listed CIDs are
+   *  promoted to ADMIN at BMS sign-in — see promoteRoleByAllowedCid) and
+   *  CAPS (even role=ADMIN, incl. DEV_AUTH_BYPASS, only reaches /admin
+   *  when the CID is listed). */
   userCid: string;
   role: UserRole;
   hospitalCode: string;
@@ -53,7 +64,8 @@ async function fetchRealBmsIdentity(sessionId: string): Promise<BmsUserIdentity 
       userCid: userInfo.user_cid ?? '',
       role: mapPositionToRole(userInfo.position ?? ''),
       hospitalCode: hcode,
-      hospitalName: userInfo.location && userInfo.location !== 'server' ? userInfo.location : `รพ.${hcode}`,
+      hospitalName:
+        userInfo.location && userInfo.location !== 'server' ? userInfo.location : `รพ.${hcode}`,
       tunnelUrl: userInfo.bms_url ?? '',
       databaseType: (userInfo.bms_database_type ?? 'postgresql').toLowerCase(),
       jwt: data.result.auth_key ?? '',
@@ -68,7 +80,14 @@ export async function validateBmsSession(
   sessionId: string,
   _tunnelUrl: string,
 ): Promise<BmsUserIdentity | null> {
-  const devBypass = process.env.DEV_AUTH_BYPASS === 'true';
+  // DEV_AUTH_BYPASS is dev-only: it forces role ADMIN and, when BMS is
+  // unreachable, grants a hardcoded identity to ANY session id — so it must
+  // be inert in production builds even if the flag leaks into a prod .env.
+  const bypassFlag = process.env.DEV_AUTH_BYPASS === 'true';
+  const devBypass = bypassFlag && process.env.NODE_ENV !== 'production';
+  if (bypassFlag && !devBypass) {
+    logger.warn('auth_dev_bypass_ignored_in_production');
+  }
 
   // Always try the real BMS session first so the navbar reflects the session's
   // actual hospital (hcode, name, tunnel). Under DEV_AUTH_BYPASS we still call

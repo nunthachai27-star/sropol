@@ -23,10 +23,7 @@ import {
 import type { LabourMedRow } from '@/types/maternity-ward';
 import type { ConnectionConfig } from '@/types/bms-browser';
 import { cn } from '@/lib/utils';
-import {
-  ChipRow as DraggableChipRow,
-  type ChipOption,
-} from '../shared/DraggableChips';
+import { ChipRow as DraggableChipRow, type ChipOption } from '../shared/DraggableChips';
 import { AnchoredDropdown } from '../shared/AnchoredDropdown';
 
 // ─── Types & helpers ──────────────────────────────────────────────────────
@@ -74,9 +71,9 @@ const QTY_CHIPS: ChipOption[] = [
 // state across parent re-renders.
 
 interface LookupItem {
-  primary: string;     // visible label (drug full name / shortlist)
-  secondary: string;   // small caption (icode / drugusage code)
-  payload: string;     // value committed via onPick (icode / shortlist)
+  primary: string; // visible label (drug full name / shortlist)
+  secondary: string; // small caption (icode / drugusage code)
+  payload: string; // value committed via onPick (icode / shortlist)
 }
 
 interface LookupPickerProps {
@@ -87,20 +84,24 @@ interface LookupPickerProps {
   onPick: (item: LookupItem) => void;
 }
 
+// TODO(constitution-III): consolidate onto shared/LookupAutocomplete — see
+// docs/superpowers/plans/2026-07-13-robustness-c-concurrency-ops-quality.md C7
 function LookupPicker({ ariaLabel, placeholder, initialQuery, fetch, onPick }: LookupPickerProps) {
   const [query, setQuery] = useState(initialQuery);
   const [items, setItems] = useState<LookupItem[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const lastPickedRef = useRef<string>(initialQuery);
+  const [lastPicked, setLastPicked] = useState(initialQuery);
+
+  // Derived visible list — search is "active" only when there's a trimmed
+  // query that doesn't equal the last picked value; no effect-driven clear.
+  const trimmed = query.trim();
+  const searchActive = trimmed.length > 0 && trimmed !== lastPicked;
+  const visibleItems = searchActive ? items : [];
 
   useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length === 0 || trimmed === lastPickedRef.current) {
-      setItems([]);
-      return;
-    }
+    if (!searchActive) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       setLoading(true);
@@ -119,7 +120,7 @@ function LookupPicker({ ariaLabel, placeholder, initialQuery, fetch, onPick }: L
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, fetch]);
+  }, [trimmed, searchActive, fetch]);
 
   return (
     <>
@@ -137,20 +138,20 @@ function LookupPicker({ ariaLabel, placeholder, initialQuery, fetch, onPick }: L
         className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-[14px] text-slate-900 shadow-sm transition-colors hover:border-slate-300 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
       />
       <AnchoredDropdown
-        open={open && (items.length > 0 || loading)}
+        open={open && (visibleItems.length > 0 || loading)}
         anchorRef={inputRef}
         onDismiss={() => setOpen(false)}
       >
-        {loading && items.length === 0 && (
+        {loading && visibleItems.length === 0 && (
           <div className="px-3 py-2 text-[12px] text-slate-500">กำลังค้นหา…</div>
         )}
-        {items.map((it, idx) => (
+        {visibleItems.map((it, idx) => (
           <button
             key={`${it.payload}-${idx}`}
             type="button"
             onClick={() => {
               onPick(it);
-              lastPickedRef.current = it.primary;
+              setLastPicked(it.primary);
               setQuery(it.primary);
               setOpen(false);
               setItems([]);
@@ -209,7 +210,14 @@ interface EditRowProps {
 }
 
 function EditRow({
-  config, draft, setDraft, initialDrugLabel, initialDrugUsage, saving, onCancel, onSave,
+  config,
+  draft,
+  setDraft,
+  initialDrugLabel,
+  initialDrugUsage,
+  saving,
+  onCancel,
+  onSave,
 }: EditRowProps) {
   return (
     <tr className="bg-cyan-50/40">
@@ -241,18 +249,14 @@ function EditRow({
                 </div>
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[12px] font-semibold text-slate-700">
-                  รหัสยา · icode
-                </label>
+                <label className="text-[12px] font-semibold text-slate-700">รหัสยา · icode</label>
                 <InlineInput
                   ariaLabel="icode"
                   value={draft.icode}
                   onChange={(v) => setDraft((d) => ({ ...d, icode: v }))}
                   placeholder="ระบบเติมเอง"
                 />
-                <div className="text-[11px] text-slate-500">
-                  เลือกจากผลค้นหา หรือพิมพ์เอง
-                </div>
+                <div className="text-[11px] text-slate-500">เลือกจากผลค้นหา หรือพิมพ์เอง</div>
               </div>
             </div>
           </div>
@@ -455,9 +459,7 @@ export function MedicationsTab({ an }: { an: string }) {
       <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-slate-900 pb-3">
         <div className="flex items-center gap-3">
           <span aria-hidden className="block h-1.5 w-8 bg-cyan-600" />
-          <h2 className="text-[18px] font-bold tracking-tight text-slate-900">
-            บันทึกการให้ยา
-          </h2>
+          <h2 className="text-[18px] font-bold tracking-tight text-slate-900">บันทึกการให้ยา</h2>
           {rows.length > 0 && (
             <span className="rounded-md bg-slate-100 px-2.5 py-1 text-[12px] font-semibold text-slate-700">
               {rows.length} รายการ
@@ -537,11 +539,17 @@ export function MedicationsTab({ an }: { an: string }) {
                       <div className="flex flex-col gap-0.5">
                         {row.medication_name ? (
                           <>
-                            <span className="font-semibold text-slate-900">{row.medication_name}</span>
-                            <span className="font-mono text-[11px] text-slate-500">{row.icode}</span>
+                            <span className="font-semibold text-slate-900">
+                              {row.medication_name}
+                            </span>
+                            <span className="font-mono text-[11px] text-slate-500">
+                              {row.icode}
+                            </span>
                           </>
                         ) : (
-                          <span className="font-mono font-semibold text-slate-900">{row.icode}</span>
+                          <span className="font-mono font-semibold text-slate-900">
+                            {row.icode}
+                          </span>
                         )}
                       </div>
                     </td>
@@ -552,7 +560,9 @@ export function MedicationsTab({ an }: { an: string }) {
                       {row.drugusage_text ? (
                         <div className="flex flex-col gap-0.5">
                           <span>{row.drugusage_text}</span>
-                          <span className="font-mono text-[11px] text-slate-500">{row.drugusage}</span>
+                          <span className="font-mono text-[11px] text-slate-500">
+                            {row.drugusage}
+                          </span>
                         </div>
                       ) : row.drugusage ? (
                         <span className="font-mono">{row.drugusage}</span>

@@ -1,5 +1,5 @@
 // Real-map implementation of the Province overview — uses Leaflet + OSM tiles
-// so surrounding provinces are visible while Khon Kaen is highlighted in the
+// so surrounding provinces are visible while Surin is highlighted in the
 // middle. Hospital pins are placed at real OSM-verified coordinates where
 // available, with district-centroid fallback for hospitals OSM didn't have.
 //
@@ -25,6 +25,7 @@ import L, { type LatLngExpression, type LatLngBoundsExpression, type DivIcon } f
 import 'leaflet/dist/leaflet.css';
 import type { FeatureCollection } from 'geojson';
 import type { DashboardHospital } from '@/types/api';
+import { combinedWorkload } from '@/config/hospital-network';
 import { ConnectionStatus as ConnectionStatusEnum, HospitalLevel } from '@/types/domain';
 import { HOSPITAL_COORDS } from '@/data/kk-hospital-coords';
 import { KK_GEOJSON } from '@/data/kk-province-geojson';
@@ -90,7 +91,8 @@ function buildHospitalIcon(params: {
   syncStatus: 'OK' | 'BLOCKED' | 'NEVER_SYNCED';
   syncBlockedReason: string | null;
 }): DivIcon {
-  const { color, sizePx, isHigh, isSelected, connectionStatus, syncStatus, syncBlockedReason } = params;
+  const { color, sizePx, isHigh, isSelected, connectionStatus, syncStatus, syncBlockedReason } =
+    params;
   const isOffline = connectionStatus === 'OFFLINE';
   const classes = [
     'kk-pin',
@@ -143,7 +145,7 @@ function buildHospitalIcon(params: {
   });
 }
 
-// Khon Kaen province roughly spans 15.6–17.1 °N × 101.75–103.2 °E.
+// Surin province roughly spans 15.6–17.1 °N × 101.75–103.2 °E.
 // Fit-bounds ensures the province fills the viewport regardless of aspect.
 const KK_BOUNDS: LatLngBoundsExpression = [
   [15.55, 101.65],
@@ -175,10 +177,13 @@ const LEVEL_BASE_RADIUS: Partial<Record<HospitalLevel, number>> = {
 };
 const DEFAULT_RADIUS = 7;
 
-function activeCountRadiusBoost(total: number): number {
-  if (total === 0) return 0;
-  if (total < 3) return 1;
-  if (total < 6) return 3;
+// Boost thresholds are in combined-workload units (labor + weighted ANC —
+// see config/hospital-network.ts), so an ANC-only hospital with a large
+// registry still grows its pin even when the labor floor is empty.
+function activeCountRadiusBoost(workload: number): number {
+  if (workload === 0) return 0;
+  if (workload < 3) return 1;
+  if (workload < 6) return 3;
   return 5;
 }
 
@@ -187,9 +192,15 @@ function riskColor(
   palette: ReturnType<typeof buildPalette>,
 ): string {
   if (!live) return palette.idle;
+  // Acute labor risk owns red/amber outright.
   if (live.counts.high > 0) return palette.high;
   if (live.counts.medium > 0) return palette.med;
   if (live.counts.low > 0) return palette.low;
+  // Labor floor empty — fall back to the ANC registry so the map still
+  // shows where attention (HR3) and activity live. HR3 renders amber, not
+  // red: red stays reserved for acute intrapartum risk.
+  if (live.ancCounts.hr3 > 0) return palette.med;
+  if (live.ancCounts.total > 0) return palette.low;
   return palette.idle;
 }
 
@@ -257,7 +268,7 @@ export default function ProvinceMapLeaflet({
   const w = WEIGHTS[size];
 
   // Active province drives which shapes + pin list are rendered. A missing
-  // config means default to Khon Kaen so first-run deployments don't blank.
+  // config means default to Surin so first-run deployments don't blank.
   const { data: configData } = useSWR<{ config: { active_province_code?: string } }>(
     '/api/admin/config',
   );
@@ -273,19 +284,14 @@ export default function ProvinceMapLeaflet({
     () => loadProvinceShapes(activeProvince),
   );
 
-  const liveByHcode = useMemo(
-    () => new Map(hospitals.map((h) => [h.hcode, h])),
-    [hospitals],
-  );
+  const liveByHcode = useMemo(() => new Map(hospitals.map((h) => [h.hcode, h])), [hospitals]);
 
   const tileUrl =
     mode === 'kiosk'
       ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
       : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
   const tileAttribution =
-    mode === 'kiosk'
-      ? '© OpenStreetMap contributors, © CARTO'
-      : '© OpenStreetMap contributors';
+    mode === 'kiosk' ? '© OpenStreetMap contributors, © CARTO' : '© OpenStreetMap contributors';
 
   const handleMarkerClick = (hcode: string) => {
     if (onSelect) onSelect(hcode === selected ? null : hcode);
@@ -307,10 +313,7 @@ export default function ProvinceMapLeaflet({
     if (!loadedShapes) return null;
     const bbox = computeBounds(loadedShapes.province);
     if (!bbox) return null;
-    const center: LatLngExpression = [
-      (bbox[0][0] + bbox[1][0]) / 2,
-      (bbox[0][1] + bbox[1][1]) / 2,
-    ];
+    const center: LatLngExpression = [(bbox[0][0] + bbox[1][0]) / 2, (bbox[0][1] + bbox[1][1]) / 2];
     return {
       bounds: bbox,
       center,
@@ -334,10 +337,10 @@ export default function ProvinceMapLeaflet({
       const live = liveByHcode.get(hcode);
       const baseRadius =
         (LEVEL_BASE_RADIUS[level] ?? DEFAULT_RADIUS) +
-        activeCountRadiusBoost(live?.counts.total ?? 0);
-      const sizePx = Math.round(
-        Math.min(w.pinMaxPx, Math.max(w.pinMinPx, baseRadius * w.pinMult)),
-      );
+        activeCountRadiusBoost(
+          combinedWorkload(live?.counts ?? { total: 0 }, live?.ancCounts ?? { total: 0 }),
+        );
+      const sizePx = Math.round(Math.min(w.pinMaxPx, Math.max(w.pinMinPx, baseRadius * w.pinMult)));
       const color = riskColor(live, palette);
       const isSel = selected === hcode;
       // Status is tri-state: ONLINE / OFFLINE / UNKNOWN. Anything not
@@ -408,15 +411,7 @@ export default function ProvinceMapLeaflet({
       pins.push(buildPin(h.hcode, h.name, h.level, coord));
     }
     return pins;
-  }, [
-    activeMap,
-    hospitals,
-    liveByHcode,
-    centroidByDistrict,
-    selected,
-    palette,
-    w,
-  ]);
+  }, [activeMap, hospitals, liveByHcode, centroidByDistrict, selected, palette, w]);
 
   if (!activeMap) {
     return (
@@ -427,7 +422,7 @@ export default function ProvinceMapLeaflet({
           isolation: 'isolate',
         }}
       >
-        <span className="font-mono text-[10px] tracking-[0.18em] text-[var(--ink-navy-muted)]">
+        <span className="font-mono text-[12px] tracking-[0.18em] text-[var(--ink-navy-muted)]">
           LOADING {activeProvince === KK_PROVINCE_CODE ? 'MAP' : `PROVINCE ${activeProvince}`}…
         </span>
       </div>
@@ -490,11 +485,7 @@ export default function ProvinceMapLeaflet({
              Tooltip direction is picked dynamically per pin so the popup
              never gets clipped by the map div edge — see HospitalMarker. */}
         {hospitalPins.map((pin) => (
-          <HospitalMarker
-            key={pin.hcode}
-            pin={pin}
-            onClick={handleMarkerClick}
-          />
+          <HospitalMarker key={pin.hcode} pin={pin} onClick={handleMarkerClick} />
         ))}
 
         <ZoomControl position="bottomright" />
@@ -513,17 +504,9 @@ export default function ProvinceMapLeaflet({
 // tooltip is ~280 × ~150 px, so we estimate the half-extents below and
 // re-pick a direction whenever the pointer enters the marker. Re-picking
 // on hover (not on every map move) keeps the cost trivial.
-function HospitalMarker({
-  pin,
-  onClick,
-}: {
-  pin: PinEntry;
-  onClick: (hcode: string) => void;
-}) {
+function HospitalMarker({ pin, onClick }: { pin: PinEntry; onClick: (hcode: string) => void }) {
   const map = useMap();
-  const [direction, setDirection] = useState<
-    'top' | 'bottom' | 'left' | 'right'
-  >('top');
+  const [direction, setDirection] = useState<'top' | 'bottom' | 'left' | 'right'>('top');
 
   // Approx tooltip extents — keep generous so we err on the side of safety
   // and pick a different direction even if the pin is moderately close to
@@ -580,12 +563,7 @@ function HospitalMarker({
         mouseover: recompute,
       }}
     >
-      <Tooltip
-        direction={direction}
-        offset={offset}
-        sticky
-        className="kk-map-tooltip"
-      >
+      <Tooltip direction={direction} offset={offset} sticky className="kk-map-tooltip">
         <HospitalTooltip pin={pin} />
       </Tooltip>
     </Marker>
@@ -653,8 +631,7 @@ function HospitalTooltip({ pin }: { pin: PinEntry }) {
         lineHeight: 1.35,
         minWidth: 220,
         maxWidth: 280,
-        fontFamily:
-          'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+        fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
       }}
     >
       {/* Title block */}
@@ -672,9 +649,7 @@ function HospitalTooltip({ pin }: { pin: PinEntry }) {
         >
           {level}
         </span>
-        <span style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>
-          {hcode}
-        </span>
+        <span style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>{hcode}</span>
       </div>
 
       {/* Status row */}
@@ -792,9 +767,7 @@ function HospitalTooltip({ pin }: { pin: PinEntry }) {
         }}
       >
         <span>SYNC · {lastSyncRel}</span>
-        {lastSyncAbs && (
-          <span style={{ fontSize: 9, opacity: 0.8 }}>{lastSyncAbs}</span>
-        )}
+        {lastSyncAbs && <span style={{ fontSize: 9, opacity: 0.8 }}>{lastSyncAbs}</span>}
       </div>
 
       {/* Click hint */}
@@ -849,8 +822,7 @@ function MapStatusLegend({ mode }: { mode: 'light' | 'kiosk' }) {
         borderRadius: 4,
         padding: '6px 8px',
         boxShadow: '0 1px 3px rgba(0,0,0,0.18)',
-        fontFamily:
-          'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+        fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
         pointerEvents: 'none',
       }}
       aria-label="Map dot color legend"

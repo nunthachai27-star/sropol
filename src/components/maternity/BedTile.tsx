@@ -3,6 +3,12 @@
 // Design: ui-ux-pro-max healthcare-ops dashboard pattern. Severity is encoded
 // via color AND position (left-edge bar) AND text so it's still distinguishable
 // under color-blindness or monochrome printing (WCAG color-not-only).
+//
+// NOTE (Phase 6 Task H4, docs/superpowers/plans/2026-07-17-maternal-screening-hosxp.md):
+// this compact tile deliberately does NOT render the maternal-screen tier/
+// acuity pills — no room in this card's layout. BedTileFull is the ward's
+// working view and is where the pills live (see BedTileFull.tsx's
+// `maternalScreenSummary` prop / `bed-maternal-screen` slot).
 'use client';
 
 import { useState } from 'react';
@@ -23,20 +29,44 @@ export interface BedTileProps {
 type Severity = 'critical' | 'warning' | 'normal' | 'unknown';
 
 interface SeverityToken {
-  accent: string;   // left-edge bar color
-  dot: string;      // status dot bg
-  ring: string;     // hover/focus ring
-  label: string;    // Thai label for sr-only + tooltip
-  bar: string;      // progress-bar filled color
+  accent: string; // left-edge bar color
+  dot: string; // status dot bg
+  ring: string; // hover/focus ring
+  label: string; // Thai label for sr-only + tooltip
+  bar: string; // progress-bar filled color
 }
 
 const SEVERITY: Record<Severity, SeverityToken> = {
-  critical: { accent: 'bg-rose-500',     dot: 'bg-rose-500',     ring: 'focus:ring-rose-500',   label: 'เสี่ยงสูง',     bar: 'bg-rose-500'    },
-  warning:  { accent: 'bg-amber-500',    dot: 'bg-amber-500',    ring: 'focus:ring-amber-500',  label: 'เฝ้าระวัง',    bar: 'bg-amber-500'   },
-  normal:   { accent: 'bg-emerald-500',  dot: 'bg-emerald-500',  ring: 'focus:ring-emerald-500',label: 'ปกติ',         bar: 'bg-emerald-500' },
+  critical: {
+    accent: 'bg-rose-500',
+    dot: 'bg-rose-500',
+    ring: 'focus:ring-rose-500',
+    label: 'เสี่ยงสูง',
+    bar: 'bg-rose-500',
+  },
+  warning: {
+    accent: 'bg-amber-500',
+    dot: 'bg-amber-500',
+    ring: 'focus:ring-amber-500',
+    label: 'เฝ้าระวัง',
+    bar: 'bg-amber-500',
+  },
+  normal: {
+    accent: 'bg-emerald-500',
+    dot: 'bg-emerald-500',
+    ring: 'focus:ring-emerald-500',
+    label: 'ปกติ',
+    bar: 'bg-emerald-500',
+  },
   // "unknown" = no active partograph yet; keep the accent bar barely visible
   // so it doesn't compete with the clinical signals in the room.
-  unknown:  { accent: 'bg-slate-200',    dot: 'bg-slate-300',    ring: 'focus:ring-emerald-500',label: 'ยังไม่ประเมิน',bar: 'bg-slate-400'   },
+  unknown: {
+    accent: 'bg-slate-200',
+    dot: 'bg-slate-300',
+    ring: 'focus:ring-emerald-500',
+    label: 'ยังไม่ประเมิน',
+    bar: 'bg-slate-400',
+  },
 };
 
 function safeAge(birthday: string | null): number | null {
@@ -128,8 +158,7 @@ function CervixBar({ cm }: { cm: number | null }) {
   }
   const pct = Math.min(100, Math.max(0, (cm / 10) * 100));
   // 8+ cm = near-delivery → emphasize in emerald even if overall severity differs.
-  const barColor =
-    cm >= 8 ? 'bg-emerald-500' : cm >= 4 ? 'bg-amber-500' : 'bg-sky-500';
+  const barColor = cm >= 8 ? 'bg-emerald-500' : cm >= 4 ? 'bg-amber-500' : 'bg-sky-500';
   return (
     <div className="flex items-center gap-2" aria-label={`ปากมดลูก ${cm} เซนติเมตร`}>
       <div className="relative h-1.5 flex-1 rounded-full bg-slate-100">
@@ -139,9 +168,7 @@ function CervixBar({ cm }: { cm: number | null }) {
           aria-hidden
         />
       </div>
-      <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-700">
-        {cm} ซม
-      </span>
+      <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-700">{cm} ซม</span>
     </div>
   );
 }
@@ -163,9 +190,7 @@ export function BedTile({ bedno, bedLock, occupant, onClick, now }: BedTileProps
         <Lock className="h-5 w-5" aria-hidden />
         <span className="mt-1.5 text-xs font-medium">ล็อก</span>
         <span className="sr-only">{`เตียง ${bedno}`}</span>
-        <span className="mt-2 text-sm font-semibold tabular-nums text-slate-500">
-          {bedno}
-        </span>
+        <span className="mt-2 text-sm font-semibold tabular-nums text-slate-500">{bedno}</span>
       </div>
     );
   }
@@ -178,9 +203,7 @@ export function BedTile({ bedno, bedLock, occupant, onClick, now }: BedTileProps
       >
         <span className="text-xs font-medium tracking-wide">ว่าง</span>
         <span className="sr-only">{`เตียง ${bedno}`}</span>
-        <span className="mt-2 text-sm font-semibold tabular-nums text-slate-500">
-          {bedno}
-        </span>
+        <span className="mt-2 text-sm font-semibold tabular-nums text-slate-500">{bedno}</span>
       </div>
     );
   }
@@ -212,10 +235,7 @@ export function BedTile({ bedno, bedLock, occupant, onClick, now }: BedTileProps
       )}
     >
       {/* Left-edge severity accent bar — conveys status pre-attentively */}
-      <span
-        aria-hidden
-        className={cn('absolute inset-y-0 left-0 w-1', tokens.accent)}
-      />
+      <span aria-hidden className={cn('absolute inset-y-0 left-0 w-1', tokens.accent)} />
 
       <div className="flex flex-col gap-1.5 pl-4 pr-3 py-2.5">
         {/* Header: bed # · HN · severity dot */}
@@ -224,7 +244,9 @@ export function BedTile({ bedno, bedLock, occupant, onClick, now }: BedTileProps
             <span>{`เตียง ${bedno}`}</span>
             {hn && (
               <>
-                <span aria-hidden className="text-slate-300">·</span>
+                <span aria-hidden className="text-slate-300">
+                  ·
+                </span>
                 <span className="truncate text-slate-400 normal-case">{`HN ${hn}`}</span>
               </>
             )}
@@ -245,7 +267,9 @@ export function BedTile({ bedno, bedLock, occupant, onClick, now }: BedTileProps
             )}
             {(gravida !== null || ga !== null) && (
               <>
-                <span aria-hidden className="text-slate-300">·</span>
+                <span aria-hidden className="text-slate-300">
+                  ·
+                </span>
                 <span className="font-mono text-[11px] tabular-nums text-slate-700">
                   {gravida !== null && <span>{`G${gravida}`}</span>}
                   {gravida !== null && ga !== null && (
@@ -259,7 +283,9 @@ export function BedTile({ bedno, bedLock, occupant, onClick, now }: BedTileProps
             )}
             {admitClock && (
               <>
-                <span aria-hidden className="text-slate-300">·</span>
+                <span aria-hidden className="text-slate-300">
+                  ·
+                </span>
                 <span
                   className="inline-flex items-center gap-0.5 tabular-nums text-slate-500"
                   title={`รับเข้า ${occupant.regdate} ${admitClock}`}
@@ -301,16 +327,18 @@ export function BedTile({ bedno, bedLock, occupant, onClick, now }: BedTileProps
             stable across tiles (prevents reflow during SWR revalidation). */}
         <div className="flex items-center gap-1 border-t border-slate-100 pt-1.5 text-[10px]">
           <Activity
-            className={cn(
-              'h-3 w-3',
-              isActivelyCharted ? 'text-emerald-500' : 'text-slate-300',
-            )}
+            className={cn('h-3 w-3', isActivelyCharted ? 'text-emerald-500' : 'text-slate-300')}
             aria-hidden
           />
           {occupant.last_observation_at ? (
             <span className="text-slate-500">
               สังเกตล่าสุด{' '}
-              <span className={cn('tabular-nums', isActivelyCharted ? 'text-slate-700' : 'text-slate-400')}>
+              <span
+                className={cn(
+                  'tabular-nums',
+                  isActivelyCharted ? 'text-slate-700' : 'text-slate-400',
+                )}
+              >
                 {formatRelativeTime(occupant.last_observation_at)}
               </span>
             </span>

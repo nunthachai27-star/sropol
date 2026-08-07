@@ -13,15 +13,25 @@ export const cachedReferralsTable: TableDefinition = {
     { name: 'diagnosis_code', type: 'string', maxLength: 20, nullable: true },
     { name: 'urgency_level', type: 'string', maxLength: 20, defaultValue: 'ROUTINE' },
     { name: 'rejection_reason', type: 'text', nullable: true },
-    { name: 'suggested_alternative_id', type: 'uuid', nullable: true, references: { table: 'hospitals', column: 'id' } },
+    {
+      name: 'suggested_alternative_id',
+      type: 'uuid',
+      nullable: true,
+      references: { table: 'hospitals', column: 'id' },
+    },
     { name: 'transport_mode', type: 'string', maxLength: 50, nullable: true },
     { name: 'initiated_at', type: 'datetime' },
     { name: 'accepted_at', type: 'datetime', nullable: true },
     { name: 'departed_at', type: 'datetime', nullable: true },
     { name: 'arrived_at', type: 'datetime', nullable: true },
     { name: 'rejected_at', type: 'datetime', nullable: true },
-    { name: 'initiated_by', type: 'uuid', nullable: true, references: { table: 'users', column: 'id' } },
-    { name: 'accepted_by', type: 'uuid', nullable: true, references: { table: 'users', column: 'id' } },
+    // Inline actor snapshot (name or synthesized session id) — no users FK;
+    // BMS/ProviderID sessions have no users row (same pattern as audit_logs
+    // actor, bc31704). string/255, not uuid/36: session.user.name is a Thai
+    // display name (often with title/honorific prefixes) that can exceed 36
+    // chars — sizing this like a uuid truncation-fails real names.
+    { name: 'initiated_by', type: 'string', maxLength: 255, nullable: true },
+    { name: 'accepted_by', type: 'string', maxLength: 255, nullable: true },
     { name: 'created_at', type: 'datetime' },
     { name: 'updated_at', type: 'datetime' },
   ],

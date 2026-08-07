@@ -230,6 +230,9 @@ export enum ReferralStatus {
   REJECTED = 'REJECTED',
   IN_TRANSIT = 'IN_TRANSIT',
   ARRIVED = 'ARRIVED',
+  /** Closed by data cleanup: no arrival evidence within the matching window.
+   *  Terminal; never set by the live state machine, only by operator scripts. */
+  EXPIRED = 'EXPIRED',
 }
 
 export enum UrgencyLevel {
@@ -245,8 +248,8 @@ export interface MaternalJourney {
   hn: string;
   personAncId: number | null;
   name: string;
-  cid: string;      // encrypted CID (เลขบัตรประชาชน)
-  cidHash: string;  // SHA-256 hash — primary patient key across hospitals
+  cid: string; // encrypted CID (เลขบัตรประชาชน)
+  cidHash: string; // SHA-256 hash — primary patient key across hospitals
   age: number;
   gravida: number;
   para: number;
@@ -257,9 +260,9 @@ export interface MaternalJourney {
   ancVisitCount: number;
   lastAncDate: string | null;
   gaWeeks: number | null;
-  changwatCode: string | null;  // จังหวัด (2-digit Thai province code)
-  amphurCode: string | null;    // อำเภอ (2-digit Thai district code)
-  tambonCode: string | null;    // ตำบล (2-digit Thai sub-district code)
+  changwatCode: string | null; // จังหวัด (2-digit Thai province code)
+  amphurCode: string | null; // อำเภอ (2-digit Thai district code)
+  tambonCode: string | null; // ตำบล (2-digit Thai sub-district code)
   registeredAt: Date;
   stageChangedAt: Date;
   syncedAt: Date;

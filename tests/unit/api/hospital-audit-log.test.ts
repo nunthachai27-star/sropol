@@ -1,11 +1,10 @@
 // Task 17: Audit-log server route tests — TDD: write tests FIRST
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 
-let db: SqliteAdapter;
+let db: DatabaseAdapter;
 let mockUserId = 'u-fake';
 let mockHospitalCode = '10670';
 
@@ -30,8 +29,7 @@ function jsonRequest(body: unknown): Request {
 
 describe('POST /api/hospital/audit-log', () => {
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
     // Use a real seeded user_id so the FK constraint is satisfiable.
     const users = await db.query<{ id: string }>('SELECT id FROM users LIMIT 1');
@@ -84,7 +82,7 @@ describe('POST /api/hospital/audit-log', () => {
       action: string;
       resource_type: string;
       resource_id: string;
-      metadata: string;
+      metadata: { fieldsTouched: string[]; hcode: string; staff: string };
     }>(
       'SELECT action, resource_type, resource_id, metadata FROM audit_logs WHERE resource_id = ?',
       ['42'],
@@ -92,7 +90,7 @@ describe('POST /api/hospital/audit-log', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].action).toBe('bms.iptbedmove.insert');
     expect(rows[0].resource_type).toBe('iptbedmove');
-    const meta = JSON.parse(rows[0].metadata);
+    const meta = rows[0].metadata;
     expect(meta.fieldsTouched).toEqual(['nbedno', 'nroomno']);
     expect(meta.hcode).toBe('10670');
     expect(meta.staff).toBe('nurse1');
@@ -118,8 +116,7 @@ describe('POST /api/hospital/audit-log (unauthorized)', () => {
     vi.doMock('@/lib/auth', () => ({
       auth: async () => null,
     }));
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
   });
 
@@ -137,9 +134,7 @@ describe('POST /api/hospital/audit-log (unauthorized)', () => {
     // Re-import after doMock to get the unauth version
     vi.resetModules();
     const { POST: postNoAuth } = await import('@/app/api/hospital/audit-log/route');
-    const res = await postNoAuth(
-      jsonRequest({ entity: 'x', op: 'y', hcode: '10670' }) as never,
-    );
+    const res = await postNoAuth(jsonRequest({ entity: 'x', op: 'y', hcode: '10670' }) as never);
     expect(res.status).toBe(401);
   });
 });

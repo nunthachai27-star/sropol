@@ -12,9 +12,8 @@
 // small surface so the regression is unambiguous and the test is fast.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import { randomUUID } from 'crypto';
 import { LaborStatus } from '@/types/domain';
@@ -28,7 +27,7 @@ interface CachedPatientSeed {
   admitDate?: string;
 }
 
-async function getHospitalId(db: SqliteAdapter): Promise<string> {
+async function getHospitalId(db: DatabaseAdapter): Promise<string> {
   const rows = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [
     HOSPITAL_HCODE,
   ]);
@@ -36,7 +35,7 @@ async function getHospitalId(db: SqliteAdapter): Promise<string> {
 }
 
 async function seedActivePatient(
-  db: SqliteAdapter,
+  db: DatabaseAdapter,
   hospitalId: string,
   seed: CachedPatientSeed,
 ): Promise<void> {
@@ -72,7 +71,7 @@ async function seedActivePatient(
 // reproduce it verbatim here so the test fails if either the algorithm
 // OR the SQL drifts.
 async function applyAutoDischarge(
-  db: SqliteAdapter,
+  db: DatabaseAdapter,
   hospitalId: string,
   existingAns: string[],
   currentAns: string[],
@@ -94,12 +93,11 @@ async function applyAutoDischarge(
 }
 
 describe('sync auto-discharge — root-cause fix for stale labor_status=ACTIVE', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let hospitalId: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
     hospitalId = await getHospitalId(db);
   });

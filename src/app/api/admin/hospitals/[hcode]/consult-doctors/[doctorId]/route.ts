@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { ensureHospitalConsultDoctorsSchema } from '@/lib/hospital-consult-doctors-schema';
 import { logger } from '@/lib/logger';
 
@@ -42,6 +43,9 @@ export async function PUT(
   { params }: { params: Promise<{ hcode: string; doctorId: string }> },
 ) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     await ensureHospitalConsultDoctorsSchema();
     const { hcode, doctorId } = await params;
@@ -114,6 +118,9 @@ export async function DELETE(
   { params }: { params: Promise<{ hcode: string; doctorId: string }> },
 ) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     await ensureHospitalConsultDoctorsSchema();
     const { hcode, doctorId } = await params;

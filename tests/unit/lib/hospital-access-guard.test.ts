@@ -17,9 +17,22 @@ describe('isHospitalAccessAllowed', { timeout: 30000 }, () => {
     ctx = await createPgliteApp();
   }, 60000);
 
-  it('allows any ADMIN user regardless of hospital code', async () => {
+  // Policy (see hospital-access-guard.ts): the role-based ADMIN bypass was
+  // deliberately REMOVED — mapPositionToRole() promotes anyone whose position
+  // contains "director"/"ผู้อำนวยการ" to ADMIN, so an ADMIN from an
+  // unregistered hcode must NOT get in. Cross-province admins use an exempt
+  // hcode (00000/99999) instead, which the next test covers.
+  it('denies an ADMIN whose hcode is not registered (role does not bypass the registry)', async () => {
     const allowed = await isHospitalAccessAllowed(
       { hospitalCode: '88888', role: UserRole.ADMIN },
+      ctx.db,
+    );
+    expect(allowed).toBe(false);
+  });
+
+  it('allows an ADMIN on a reserved exempt hcode (the sanctioned cross-province path)', async () => {
+    const allowed = await isHospitalAccessAllowed(
+      { hospitalCode: '99999', role: UserRole.ADMIN },
       ctx.db,
     );
     expect(allowed).toBe(true);

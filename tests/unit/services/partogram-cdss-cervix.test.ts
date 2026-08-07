@@ -6,10 +6,7 @@ const { analyzeCervix } = _internals;
 
 describe('analyzeCervix — rules 10/11 alert/action line', () => {
   it('on-track 1cm/h progression → no alert', () => {
-    const list = [
-      obs({ cervicalDilationCm: 4 }, tAt(0)),
-      obs({ cervicalDilationCm: 5 }, tAt(60)),
-    ];
+    const list = [obs({ cervicalDilationCm: 4 }, tAt(0)), obs({ cervicalDilationCm: 5 }, tAt(60))];
     expect(analyzeCervix(list)).toEqual([]);
   });
   it('4cm at 0h, 4.5cm at 1h → ALERT (Alert line)', () => {
@@ -43,6 +40,31 @@ describe('analyzeCervix — rules 10/11 alert/action line', () => {
     ];
     // Only anchor (idx 0). Subsequent rows skipped, so no alert/action.
     expect(analyzeCervix(list).filter((x) => x.section === 'CERVIX')).toEqual([]);
+  });
+});
+
+describe('analyzeCervix — 10cm dilation cap (rules 10/11)', () => {
+  it('never flags a patient at full dilation (10 cm)', () => {
+    // anchor 4 cm at t0; 10 cm at t0+11h. Uncapped expectation would be 15.0
+    // -> CRITICAL. Capped at 10, a fully dilated patient can never be behind.
+    const list = [
+      obs({ cervicalDilationCm: 4 }, tAt(0)),
+      obs({ cervicalDilationCm: 10 }, tAt(11 * 60)),
+    ];
+    const a = analyzeCervix(list);
+    expect(a.filter((x) => x.section === 'CERVIX')).toEqual([]);
+  });
+
+  it('still flags genuinely slow progress below 10 cm against the capped expectation', () => {
+    // 9 cm at t0+11h: capped expected = 10 -> ALERT (9 < 10), not CRITICAL (9 >= 6).
+    const list = [
+      obs({ cervicalDilationCm: 4 }, tAt(0)),
+      obs({ cervicalDilationCm: 9 }, tAt(11 * 60)),
+    ];
+    const a = analyzeCervix(list);
+    const cervix = a.filter((x) => x.section === 'CERVIX');
+    expect(cervix.length).toBe(1);
+    expect(cervix[0].severity).toBe('ALERT');
   });
 });
 
@@ -137,6 +159,20 @@ describe('analyzeCervix — rule 14 active-phase arrest', () => {
     ];
     const a = analyzeCervix(list);
     expect(a.some((x) => x.message.startsWith('Labour arrest'))).toBe(false);
+  });
+
+  it('DOCUMENTED (pending clinical review): still fires arrest for two 10 cm obs >2h apart', () => {
+    // Second-stage patients at full dilation trigger "labour arrest"; whether
+    // that is desired is a clinical-owner decision (overview decision point 2).
+    // This is out-of-scope behavior left unchanged by the 10cm cap fix (rules
+    // 10/11 only) — documented here so it isn't mistaken for untested.
+    const list = [
+      obs({ cervicalDilationCm: 4 }, tAt(0)),
+      obs({ cervicalDilationCm: 10 }, tAt(3 * 60)),
+      obs({ cervicalDilationCm: 10 }, tAt(5.5 * 60)),
+    ];
+    const a = analyzeCervix(list);
+    expect(a.some((x) => x.severity === 'CRITICAL')).toBe(true);
   });
 });
 

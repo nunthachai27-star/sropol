@@ -16,46 +16,62 @@ import { cn } from '@/lib/utils';
 export const DRAG_PX_PER_STEP = 8;
 
 export type ChipTone =
-  | 'default' | 'ok' | 'warn' | 'crit'
-  | 'severity-0' | 'severity-2' | 'severity-4'
-  | 'severity-6' | 'severity-8' | 'severity-10';
+  | 'default'
+  | 'ok'
+  | 'warn'
+  | 'crit'
+  | 'severity-0'
+  | 'severity-2'
+  | 'severity-4'
+  | 'severity-6'
+  | 'severity-8'
+  | 'severity-10';
 
 export const CHIP_TONE_CLASSES: Record<ChipTone, { selected: string; unselected: string }> = {
   default: {
     selected: 'border-cyan-600 bg-cyan-600 text-white shadow-sm ring-2 ring-cyan-600/20',
-    unselected: 'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700',
+    unselected:
+      'border-slate-200 bg-white text-slate-700 hover:border-cyan-400 hover:bg-cyan-50/60 hover:text-cyan-700',
   },
   ok: {
     selected: 'border-emerald-600 bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-600/20',
-    unselected: 'border-emerald-300 bg-emerald-50/60 text-emerald-700 hover:border-emerald-500 hover:bg-emerald-50',
+    unselected:
+      'border-emerald-300 bg-emerald-50/60 text-emerald-700 hover:border-emerald-500 hover:bg-emerald-50',
   },
   warn: {
     selected: 'border-amber-600 bg-amber-600 text-white shadow-sm ring-2 ring-amber-600/20',
-    unselected: 'border-amber-300 bg-amber-50/60 text-amber-700 hover:border-amber-500 hover:bg-amber-50',
+    unselected:
+      'border-amber-300 bg-amber-50/60 text-amber-700 hover:border-amber-500 hover:bg-amber-50',
   },
   crit: {
     selected: 'border-rose-600 bg-rose-600 text-white shadow-sm ring-2 ring-rose-600/20',
-    unselected: 'border-rose-300 bg-rose-50/60 text-rose-700 hover:border-rose-500 hover:bg-rose-50',
+    unselected:
+      'border-rose-300 bg-rose-50/60 text-rose-700 hover:border-rose-500 hover:bg-rose-50',
   },
   'severity-0': {
     selected: 'border-emerald-600 bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-600/20',
-    unselected: 'border-emerald-300 bg-emerald-50/60 text-emerald-700 hover:border-emerald-500 hover:bg-emerald-50',
+    unselected:
+      'border-emerald-300 bg-emerald-50/60 text-emerald-700 hover:border-emerald-500 hover:bg-emerald-50',
   },
   'severity-2': {
     selected: 'border-lime-600 bg-lime-600 text-white shadow-sm ring-2 ring-lime-600/20',
-    unselected: 'border-lime-300 bg-lime-50/60 text-lime-700 hover:border-lime-500 hover:bg-lime-50',
+    unselected:
+      'border-lime-300 bg-lime-50/60 text-lime-700 hover:border-lime-500 hover:bg-lime-50',
   },
   'severity-4': {
     selected: 'border-yellow-600 bg-yellow-500 text-white shadow-sm ring-2 ring-yellow-600/20',
-    unselected: 'border-yellow-300 bg-yellow-50/60 text-yellow-700 hover:border-yellow-500 hover:bg-yellow-50',
+    unselected:
+      'border-yellow-300 bg-yellow-50/60 text-yellow-700 hover:border-yellow-500 hover:bg-yellow-50',
   },
   'severity-6': {
     selected: 'border-amber-600 bg-amber-600 text-white shadow-sm ring-2 ring-amber-600/20',
-    unselected: 'border-amber-300 bg-amber-50/60 text-amber-700 hover:border-amber-500 hover:bg-amber-50',
+    unselected:
+      'border-amber-300 bg-amber-50/60 text-amber-700 hover:border-amber-500 hover:bg-amber-50',
   },
   'severity-8': {
     selected: 'border-orange-600 bg-orange-600 text-white shadow-sm ring-2 ring-orange-600/20',
-    unselected: 'border-orange-300 bg-orange-50/60 text-orange-700 hover:border-orange-500 hover:bg-orange-50',
+    unselected:
+      'border-orange-300 bg-orange-50/60 text-orange-700 hover:border-orange-500 hover:bg-orange-50',
   },
   'severity-10': {
     selected: 'border-red-700 bg-red-700 text-white shadow-sm ring-2 ring-red-700/20',
@@ -79,11 +95,20 @@ interface DraggableChipProps {
 }
 
 export function DraggableChip({
-  chip, selected, onPick, step, isFloat, range,
+  chip,
+  selected,
+  onPick,
+  step,
+  isFloat,
+  range,
 }: DraggableChipProps) {
-  const [drag, setDrag] = useState<
-    { startX: number; startVal: number; preview: string; clamped: boolean } | null
-  >(null);
+  const [drag, setDrag] = useState<{
+    startX: number;
+    startVal: number;
+    preview: string;
+    clamped: boolean;
+    moved: boolean;
+  } | null>(null);
   const movedRef = useRef(false);
   const fmt = (n: number): string => (isFloat ? n.toFixed(1) : String(Math.round(n)));
   const isSelected = drag ? selected === drag.preview : selected === chip.value;
@@ -106,7 +131,7 @@ export function DraggableChip({
         if (!Number.isFinite(startVal)) return;
         e.currentTarget.setPointerCapture(e.pointerId);
         movedRef.current = false;
-        setDrag({ startX: e.clientX, startVal, preview: chip.value, clamped: false });
+        setDrag({ startX: e.clientX, startVal, preview: chip.value, clamped: false, moved: false });
       }}
       onPointerMove={(e) => {
         if (!drag) return;
@@ -119,7 +144,7 @@ export function DraggableChip({
         const wasClamped = clamped !== raw;
         const preview = fmt(clamped);
         if (preview !== drag.preview || wasClamped !== drag.clamped) {
-          setDrag({ ...drag, preview, clamped: wasClamped });
+          setDrag({ ...drag, preview, clamped: wasClamped, moved: true });
         }
       }}
       onPointerUp={(e) => {
@@ -140,8 +165,11 @@ export function DraggableChip({
       className={cn(
         'min-w-[48px] cursor-ew-resize touch-none select-none rounded-md border px-3 py-1.5 text-[13px] font-semibold tabular-nums transition-all',
         isSelected ? toneClasses.selected : toneClasses.unselected,
-        drag && movedRef.current && !drag.clamped && 'scale-110 shadow-lg ring-2 ring-cyan-400',
-        drag && movedRef.current && drag.clamped && 'scale-110 shadow-lg ring-2 ring-amber-400 cursor-not-allowed',
+        drag && drag.moved && !drag.clamped && 'scale-110 shadow-lg ring-2 ring-cyan-400',
+        drag &&
+          drag.moved &&
+          drag.clamped &&
+          'scale-110 shadow-lg ring-2 ring-amber-400 cursor-not-allowed',
       )}
     >
       {displayLabel}
@@ -160,7 +188,13 @@ interface ChipRowProps {
 }
 
 export function ChipRow({
-  options, selected, onPick, ariaLabel, step = 1, isFloat = false, range,
+  options,
+  selected,
+  onPick,
+  ariaLabel,
+  step = 1,
+  isFloat = false,
+  range,
 }: ChipRowProps) {
   return (
     <div className="flex flex-wrap gap-2" role="group" aria-label={ariaLabel}>

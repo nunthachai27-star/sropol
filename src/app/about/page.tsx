@@ -24,13 +24,31 @@ import {
   XCircle,
   Globe,
 } from 'lucide-react';
-import { APP_VERSION_LABEL } from '@/lib/app-version';
+import { RISK_LEVELS, type RiskLevelConfig } from '@/config/risk-levels';
+import { RiskLevel } from '@/types/domain';
+
+// Risk thresholds, labels, and colours are owned by src/config/risk-levels.ts.
+// This page renders them so the public documentation cannot drift from the
+// values the CPD engine actually uses. The action prose below is page-specific
+// (more descriptive than the config's terse `action`) and intentionally local.
+const ABOUT_RISK_LEVELS = [RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH] as const;
+
+const RISK_LEVEL_ACTION_PROSE: Record<RiskLevel, string> = {
+  [RiskLevel.LOW]: 'ติดตามปกติ ดูแลตามแนวทางมาตรฐาน',
+  [RiskLevel.MEDIUM]: 'เฝ้าระวังใกล้ชิด เตรียมพร้อมส่งต่อ',
+  [RiskLevel.HIGH]: 'ควรประสานส่งต่อไปยัง รพ.แม่ข่ายทันที!',
+};
+
+// Renders "0 — 4.99", "5 — 9.99", or "10 ขึ้นไป" (open-ended) from the config.
+function formatRiskScoreRange(config: RiskLevelConfig): string {
+  return config.maxScore === Infinity
+    ? `${config.minScore} ขึ้นไป`
+    : `${config.minScore} — ${config.maxScore}`;
+}
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="text-2xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-      {children}
-    </h2>
+    <h2 className="text-2xl font-bold text-slate-800 mb-4 flex items-center gap-2">{children}</h2>
   );
 }
 
@@ -90,10 +108,15 @@ function RiskLevelCard({
   action: string;
 }) {
   return (
-    <div className="rounded-xl p-4 border" style={{ borderColor: color + '30', backgroundColor: bgColor }}>
+    <div
+      className="rounded-xl p-4 border"
+      style={{ borderColor: color + '30', backgroundColor: bgColor }}
+    >
       <div className="flex items-center gap-2 mb-2">
         <span className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
-        <span className="font-semibold" style={{ color }}>{label}</span>
+        <span className="font-semibold" style={{ color }}>
+          {label}
+        </span>
       </div>
       <p className="text-sm text-slate-600 mb-1">
         คะแนน CPD: <span className="font-mono font-semibold">{score}</span>
@@ -202,15 +225,17 @@ export default function AboutPage() {
           </SectionTitle>
           <div className="rounded-2xl bg-white p-8 shadow-sm space-y-6">
             <p className="text-slate-600 leading-relaxed text-lg">
-              <strong>SR-LRMS</strong> (Surin Labor Room Monitoring System) คือระบบติดตามการคลอดแบบรวมศูนย์
-              ระดับจังหวัด ที่ออกแบบมาเพื่อให้สูติแพทย์และพยาบาลห้องคลอดของ<strong>โรงพยาบาลแม่ข่าย</strong>
-              (รพ.สุรินทร์) สามารถ<strong>ติดตามผู้คลอด</strong>ที่รอคลอดใน
+              <strong>SR-LRMS</strong> (Surin Labor Room Monitoring System)
+              คือระบบติดตามการคลอดแบบรวมศูนย์ ระดับจังหวัด
+              ที่ออกแบบมาเพื่อให้สูติแพทย์และพยาบาลห้องคลอดของ<strong>โรงพยาบาลแม่ข่าย</strong>
+              (รพ.สุรินทร์ และ รพ.ศรีนครินทร์) สามารถ<strong>ติดตามผู้คลอด</strong>ที่รอคลอดใน
               <strong>โรงพยาบาลชุมชน (รพช.) ทุกแห่ง</strong>ในจังหวัดสุรินทร์ได้แบบ Real-time
             </p>
             <p className="text-slate-600 leading-relaxed">
               ระบบดึงข้อมูลอัตโนมัติจาก <strong>HOSxP HIS</strong> (ระบบสารสนเทศโรงพยาบาล)
-              ที่ใช้งานอยู่ใน รพช. ทุกแห่ง ผ่าน <strong>BMS Central API</strong> ซึ่งทำหน้าที่เป็นตัวกลางเชื่อมต่อข้อมูล
-              ทำให้เจ้าหน้าที่ <strong>ไม่ต้องบันทึกข้อมูลซ้ำ</strong> — ข้อมูลที่บันทึกใน HOSxP จะไหลเข้ามาที่
+              ที่ใช้งานอยู่ใน รพช. ทุกแห่ง ผ่าน <strong>BMS Central API</strong>{' '}
+              ซึ่งทำหน้าที่เป็นตัวกลางเชื่อมต่อข้อมูล ทำให้เจ้าหน้าที่{' '}
+              <strong>ไม่ต้องบันทึกข้อมูลซ้ำ</strong> — ข้อมูลที่บันทึกใน HOSxP จะไหลเข้ามาที่
               SR-LRMS โดยอัตโนมัติภายใน 30 วินาที
             </p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4">
@@ -250,7 +275,7 @@ export default function AboutPage() {
               <StepItem
                 step={2}
                 title="สร้างมาตรฐานการส่งต่อผู้ป่วย"
-                description="ระบบแนะนำการส่งต่อตาม MOU ของเขตสุขภาพที่ 9 ผู้คลอดที่มีความเสี่ยงสูงจะได้รับคำแนะนำให้ประสานส่งต่อไปยังโรงพยาบาลแม่ข่ายทันที"
+                description="ระบบแนะนำการส่งต่อตาม MOU ของเขตสุขภาพที่ 7 ผู้คลอดที่มีความเสี่ยงสูงจะได้รับคำแนะนำให้ประสานส่งต่อไปยังโรงพยาบาลแม่ข่ายทันที"
               />
               <StepItem
                 step={3}
@@ -295,13 +320,13 @@ export default function AboutPage() {
             />
             <FeatureCard
               icon={<Network className="h-6 w-6" />}
-              title="เชื่อมต่อ 22 โรงพยาบาล"
+              title="เชื่อมต่อ 26 โรงพยาบาล"
               description="ครอบคลุมโรงพยาบาลชุมชนทุกระดับในจังหวัดสุรินทร์ ตั้งแต่ระดับ A (S) จนถึง F3 แสดงสถานะเชื่อมต่อ (ออนไลน์/ออฟไลน์) และเวลาอัปเดตข้อมูลล่าสุดของแต่ละ รพ."
             />
             <FeatureCard
               icon={<Bell className="h-6 w-6" />}
               title="แจ้งเตือนผู้คลอดเสี่ยงสูง"
-              description="เมื่อผู้คลอดมีคะแนน CPD ถึงระดับเสี่ยงสูง (≥10 คะแนน) ระบบจะแจ้งเตือนทันที พร้อมคำแนะนำให้ประสานส่งต่อ แสดงแบนเนอร์คำแนะนำการส่งต่อตามระดับความเสี่ยง"
+              description={`เมื่อผู้คลอดมีคะแนน CPD ถึงระดับเสี่ยงสูง (≥${RISK_LEVELS[RiskLevel.HIGH].minScore} คะแนน) ระบบจะแจ้งเตือนทันที พร้อมคำแนะนำให้ประสานส่งต่อ แสดงแบนเนอร์คำแนะนำการส่งต่อตามระดับความเสี่ยง`}
             />
             <FeatureCard
               icon={<Baby className="h-6 w-6" />}
@@ -324,9 +349,9 @@ export default function AboutPage() {
           </SectionTitle>
           <div className="rounded-2xl bg-white p-8 shadow-sm space-y-6">
             <p className="text-slate-600 leading-relaxed">
-              <strong>CPD (Cephalopelvic Disproportion)</strong> คือภาวะที่ศีรษะทารกไม่สามารถผ่านช่องเชิงกราน
-              ของมารดาได้ เป็นสาเหตุสำคัญของการคลอดยาก ระบบ SR-LRMS คำนวณคะแนนความเสี่ยง CPD
-              อัตโนมัติจาก <strong>8 ปัจจัย</strong> ดังนี้:
+              <strong>CPD (Cephalopelvic Disproportion)</strong>{' '}
+              คือภาวะที่ศีรษะทารกไม่สามารถผ่านช่องเชิงกราน ของมารดาได้ เป็นสาเหตุสำคัญของการคลอดยาก
+              ระบบ SR-LRMS คำนวณคะแนนความเสี่ยง CPD อัตโนมัติจาก <strong>8 ปัจจัย</strong> ดังนี้:
             </p>
 
             <div className="overflow-x-auto">
@@ -334,7 +359,9 @@ export default function AboutPage() {
                 <thead>
                   <tr className="border-b-2 border-slate-200">
                     <th className="py-3 pr-4 text-sm font-semibold text-slate-700">ปัจจัย</th>
-                    <th className="py-3 pr-4 text-sm font-semibold text-slate-700">เกณฑ์ที่เพิ่มความเสี่ยง</th>
+                    <th className="py-3 pr-4 text-sm font-semibold text-slate-700">
+                      เกณฑ์ที่เพิ่มความเสี่ยง
+                    </th>
                     <th className="py-3 text-sm font-semibold text-slate-700">คะแนนสูงสุด</th>
                   </tr>
                 </thead>
@@ -356,7 +383,9 @@ export default function AboutPage() {
                   </tr>
                   <tr className="border-b border-slate-100">
                     <td className="py-3 pr-4 font-medium">ส่วนสูงมารดา</td>
-                    <td className="py-3 pr-4">น้อยกว่า 150 ซม. (2 คะแนน) หรือ 150-155 ซม. (1 คะแนน)</td>
+                    <td className="py-3 pr-4">
+                      น้อยกว่า 150 ซม. (2 คะแนน) หรือ 150-155 ซม. (1 คะแนน)
+                    </td>
                     <td className="py-3 font-mono font-semibold">2 คะแนน</td>
                   </tr>
                   <tr className="border-b border-slate-100">
@@ -371,7 +400,9 @@ export default function AboutPage() {
                   </tr>
                   <tr className="border-b border-slate-100">
                     <td className="py-3 pr-4 font-medium">น้ำหนักเด็ก (U/S)</td>
-                    <td className="py-3 pr-4">มากกว่า 3,500 กรัม (2 คะแนน) หรือ 3,000-3,500 กรัม (1 คะแนน)</td>
+                    <td className="py-3 pr-4">
+                      มากกว่า 3,500 กรัม (2 คะแนน) หรือ 3,000-3,500 กรัม (1 คะแนน)
+                    </td>
                     <td className="py-3 font-mono font-semibold">2 คะแนน</td>
                   </tr>
                   <tr>
@@ -385,27 +416,19 @@ export default function AboutPage() {
 
             <h3 className="text-lg font-semibold text-slate-700 pt-4">ระดับความเสี่ยง</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <RiskLevelCard
-                color="#22c55e"
-                bgColor="#dcfce7"
-                label="เสี่ยงต่ำ"
-                score="0 — 4.99"
-                action="ติดตามปกติ ดูแลตามแนวทางมาตรฐาน"
-              />
-              <RiskLevelCard
-                color="#eab308"
-                bgColor="#fef9c3"
-                label="เสี่ยงปานกลาง"
-                score="5 — 9.99"
-                action="เฝ้าระวังใกล้ชิด เตรียมพร้อมส่งต่อ"
-              />
-              <RiskLevelCard
-                color="#ef4444"
-                bgColor="#fee2e2"
-                label="เสี่ยงสูง"
-                score="10 ขึ้นไป"
-                action="ควรประสานส่งต่อไปยัง รพ.แม่ข่ายทันที!"
-              />
+              {ABOUT_RISK_LEVELS.map((level) => {
+                const config = RISK_LEVELS[level];
+                return (
+                  <RiskLevelCard
+                    key={level}
+                    color={config.color}
+                    bgColor={config.bgColor}
+                    label={config.labelTh}
+                    score={formatRiskScoreRange(config)}
+                    action={RISK_LEVEL_ACTION_PROSE[level]}
+                  />
+                );
+              })}
             </div>
           </div>
         </section>
@@ -418,13 +441,13 @@ export default function AboutPage() {
           </SectionTitle>
           <div className="rounded-2xl bg-white p-8 shadow-sm space-y-6">
             <p className="text-slate-600 leading-relaxed">
-              ระบบ SR-LRMS ใช้โมเดล <strong>Hub-and-Spoke</strong> โดยมี รพ.สุรินทร์ เป็นศูนย์กลาง (Hub)
-              เชื่อมต่อกับ รพช. ทุกระดับในจังหวัดสุรินทร์:
+              ระบบ SR-LRMS ใช้โมเดล <strong>Hub-and-Spoke</strong> โดยมี รพ.สุรินทร์ เป็นศูนย์กลาง
+              (Hub) เชื่อมต่อกับ รพช. ทุกระดับในจังหวัดสุรินทร์:
             </p>
             <div className="space-y-1">
               <HospitalLevelRow
                 level="Hub"
-                name="รพ.สุรินทร์"
+                name="รพ.สุรินทร์ / รพ.ศรีนครินทร์"
                 description="โรงพยาบาลศูนย์ — ศูนย์กลาง SR-LRMS สูติแพทย์และพยาบาลห้องคลอดใช้ Monitor ผู้คลอดจากทุก รพ."
               />
               <HospitalLevelRow
@@ -516,10 +539,11 @@ export default function AboutPage() {
                 <div>
                   <h3 className="text-lg font-semibold text-slate-700 mb-2">ภาพรวม</h3>
                   <p className="text-slate-600 leading-relaxed">
-                    สำหรับ<strong>โรงพยาบาลที่ไม่ได้ใช้ HOSxP</strong> (เช่น รพ.เอกชน หรือ รพ.ที่ใช้ HIS อื่น)
-                    สามารถส่งข้อมูลผู้คลอดเข้าระบบ SR-LRMS ได้ผ่าน <strong>Webhook API</strong> โดยตรง
-                    ข้อมูลจะถูกประมวลผลเหมือนกันทุกประการ — คำนวณ CPD Score, ตรวจจับการส่งต่อ,
-                    แจ้งเตือนความเสี่ยงสูง, และแสดงบน Dashboard แบบ Real-time
+                    สำหรับ<strong>โรงพยาบาลที่ไม่ได้ใช้ HOSxP</strong> (เช่น รพ.เอกชน หรือ รพ.ที่ใช้
+                    HIS อื่น) สามารถส่งข้อมูลผู้คลอดเข้าระบบ SR-LRMS ได้ผ่าน{' '}
+                    <strong>Webhook API</strong> โดยตรง ข้อมูลจะถูกประมวลผลเหมือนกันทุกประการ —
+                    คำนวณ CPD Score, ตรวจจับการส่งต่อ, แจ้งเตือนความเสี่ยงสูง, และแสดงบน Dashboard
+                    แบบ Real-time
                   </p>
                 </div>
               </div>
@@ -529,14 +553,17 @@ export default function AboutPage() {
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <Key className="h-5 w-5 text-teal-600" />
-                <h3 className="text-lg font-semibold text-slate-700">การยืนยันตัวตน (Authentication)</h3>
+                <h3 className="text-lg font-semibold text-slate-700">
+                  การยืนยันตัวตน (Authentication)
+                </h3>
               </div>
               <p className="text-slate-600 leading-relaxed">
-                ใช้ <strong>Bearer Token</strong> ผ่าน HTTP Header ทุกโรงพยาบาลจะได้รับ API Key เฉพาะ
-                ที่ออกให้โดยผู้ดูแลระบบ สสจ.สุรินทร์ API Key จะแสดงเพียงครั้งเดียวตอนสร้าง — กรุณาบันทึกไว้ให้ดี
+                ใช้ <strong>Bearer Token</strong> ผ่าน HTTP Header ทุกโรงพยาบาลจะได้รับ API Key
+                เฉพาะ ที่ออกให้โดยผู้ดูแลระบบ สสจ.สุรินทร์ API Key จะแสดงเพียงครั้งเดียวตอนสร้าง —
+                กรุณาบันทึกไว้ให้ดี
               </p>
               <CodeBlock title="HTTP Header">
-{`Authorization: Bearer kklrms_a1b2c3d4e5f6...`}
+                {`Authorization: Bearer kklrms_a1b2c3d4e5f6...`}
               </CodeBlock>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
                 <div className="rounded-lg border border-slate-200 p-3">
@@ -562,22 +589,28 @@ export default function AboutPage() {
               </div>
               <EndpointBadge method="POST" path="/api/webhooks/patient-data" />
               <p className="text-slate-600">
-                ส่งข้อมูลผู้คลอดเข้าระบบ รองรับสูงสุด <strong>100 ราย</strong> ต่อ request
-                ระบบจะ upsert (สร้างใหม่หรืออัปเดต) โดยอิงจากเลข AN รองรับ 2 โหมด:
+                ส่งข้อมูลผู้คลอดเข้าระบบ รองรับสูงสุด <strong>100 ราย</strong> ต่อ request ระบบจะ
+                upsert (สร้างใหม่หรืออัปเดต) โดยอิงจากเลข AN รองรับ 2 โหมด:
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
-                  <div className="font-semibold text-blue-800 mb-1 font-mono text-sm">&quot;mode&quot;: &quot;incremental&quot;</div>
+                  <div className="font-semibold text-blue-800 mb-1 font-mono text-sm">
+                    &quot;mode&quot;: &quot;incremental&quot;
+                  </div>
                   <p className="text-sm text-blue-700">
-                    <strong>(ค่าเริ่มต้น)</strong> เพิ่ม/อัปเดตเฉพาะผู้คลอดที่ส่งมา ผู้คลอดที่ไม่ได้ส่งจะยังคงสถานะเดิม
+                    <strong>(ค่าเริ่มต้น)</strong> เพิ่ม/อัปเดตเฉพาะผู้คลอดที่ส่งมา
+                    ผู้คลอดที่ไม่ได้ส่งจะยังคงสถานะเดิม
                     เหมาะสำหรับส่งข้อมูลเฉพาะรายที่มีการเปลี่ยนแปลง
                   </p>
                 </div>
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-                  <div className="font-semibold text-amber-800 mb-1 font-mono text-sm">&quot;mode&quot;: &quot;full_snapshot&quot;</div>
+                  <div className="font-semibold text-amber-800 mb-1 font-mono text-sm">
+                    &quot;mode&quot;: &quot;full_snapshot&quot;
+                  </div>
                   <p className="text-sm text-amber-700">
-                    <strong>ส่งรายชื่อทั้งหมด</strong> — ผู้คลอดที่อยู่ในระบบแต่ไม่อยู่ใน payload จะถูกเปลี่ยนสถานะเป็น
-                    DELIVERED อัตโนมัติ เหมาะสำหรับระบบที่ส่งข้อมูลเป็นรอบ (เช่น ทุก 5 นาที)
+                    <strong>ส่งรายชื่อทั้งหมด</strong> — ผู้คลอดที่อยู่ในระบบแต่ไม่อยู่ใน payload
+                    จะถูกเปลี่ยนสถานะเป็น DELIVERED อัตโนมัติ เหมาะสำหรับระบบที่ส่งข้อมูลเป็นรอบ
+                    (เช่น ทุก 5 นาที)
                   </p>
                 </div>
               </div>
@@ -587,7 +620,7 @@ export default function AboutPage() {
                 <div>
                   <h4 className="text-sm font-semibold text-slate-600 mb-2">Request Body (JSON)</h4>
                   <CodeBlock title="request.json">
-{`{
+                    {`{
   "mode": "full_snapshot",
   "patients": [
     {
@@ -617,7 +650,7 @@ export default function AboutPage() {
                 <div>
                   <h4 className="text-sm font-semibold text-slate-600 mb-2">Response (200 OK)</h4>
                   <CodeBlock title="response.json">
-{`{
+                    {`{
   "success": true,
   "patientsProcessed": 1,
   "newAdmissions": 1,
@@ -635,11 +668,15 @@ export default function AboutPage() {
                       </div>
                       <div className="flex gap-2">
                         <code className="text-teal-700 font-mono shrink-0">newAdmissions</code>
-                        <span className="text-slate-500">— จำนวนผู้คลอดรายใหม่ (ไม่เคยอยู่ในระบบ)</span>
+                        <span className="text-slate-500">
+                          — จำนวนผู้คลอดรายใหม่ (ไม่เคยอยู่ในระบบ)
+                        </span>
                       </div>
                       <div className="flex gap-2">
                         <code className="text-teal-700 font-mono shrink-0">discharges</code>
-                        <span className="text-slate-500">— จำนวนที่ถูกเปลี่ยนเป็น DELIVERED (เฉพาะ full_snapshot mode)</span>
+                        <span className="text-slate-500">
+                          — จำนวนที่ถูกเปลี่ยนเป็น DELIVERED (เฉพาะ full_snapshot mode)
+                        </span>
                       </div>
                       <div className="flex gap-2">
                         <code className="text-teal-700 font-mono shrink-0">transfers</code>
@@ -653,7 +690,9 @@ export default function AboutPage() {
 
             {/* Fields Table */}
             <div className="space-y-3">
-              <h3 className="text-lg font-semibold text-slate-700">รายละเอียด Fields ข้อมูลผู้คลอด</h3>
+              <h3 className="text-lg font-semibold text-slate-700">
+                รายละเอียด Fields ข้อมูลผู้คลอด
+              </h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
@@ -668,112 +707,166 @@ export default function AboutPage() {
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-teal-700">hn</td>
                       <td className="py-2.5 pr-3">string</td>
-                      <td className="py-2.5 pr-3"><CheckCircle2 size={16} className="text-green-500" /></td>
+                      <td className="py-2.5 pr-3">
+                        <CheckCircle2 size={16} className="text-green-500" />
+                      </td>
                       <td className="py-2.5">เลข HN (Hospital Number)</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-teal-700">an</td>
                       <td className="py-2.5 pr-3">string</td>
-                      <td className="py-2.5 pr-3"><CheckCircle2 size={16} className="text-green-500" /></td>
+                      <td className="py-2.5 pr-3">
+                        <CheckCircle2 size={16} className="text-green-500" />
+                      </td>
                       <td className="py-2.5">เลข AN (Admission Number) — ใช้เป็น primary key</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-teal-700">name</td>
                       <td className="py-2.5 pr-3">string</td>
-                      <td className="py-2.5 pr-3"><CheckCircle2 size={16} className="text-green-500" /></td>
+                      <td className="py-2.5 pr-3">
+                        <CheckCircle2 size={16} className="text-green-500" />
+                      </td>
                       <td className="py-2.5">ชื่อ-สกุลผู้คลอด (เข้ารหัสอัตโนมัติ ตาม PDPA)</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-teal-700">age</td>
                       <td className="py-2.5 pr-3">number</td>
-                      <td className="py-2.5 pr-3"><CheckCircle2 size={16} className="text-green-500" /></td>
+                      <td className="py-2.5 pr-3">
+                        <CheckCircle2 size={16} className="text-green-500" />
+                      </td>
                       <td className="py-2.5">อายุมารดา (ปี)</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-teal-700">admit_date</td>
                       <td className="py-2.5 pr-3">string</td>
-                      <td className="py-2.5 pr-3"><CheckCircle2 size={16} className="text-green-500" /></td>
-                      <td className="py-2.5">วันเวลา Admit (ISO 8601 เช่น 2026-03-08T08:00:00+07:00)</td>
+                      <td className="py-2.5 pr-3">
+                        <CheckCircle2 size={16} className="text-green-500" />
+                      </td>
+                      <td className="py-2.5">
+                        วันเวลา Admit (ISO 8601 เช่น 2026-03-08T08:00:00+07:00)
+                      </td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-slate-500">cid</td>
                       <td className="py-2.5 pr-3">string</td>
-                      <td className="py-2.5 pr-3"><XCircle size={16} className="text-slate-300" /></td>
-                      <td className="py-2.5">เลขบัตรประชาชน 13 หลัก (เข้ารหัส+Hash สำหรับตรวจจับการย้าย รพ.)</td>
+                      <td className="py-2.5 pr-3">
+                        <XCircle size={16} className="text-slate-300" />
+                      </td>
+                      <td className="py-2.5">
+                        เลขบัตรประชาชน 13 หลัก (เข้ารหัส+Hash สำหรับตรวจจับการย้าย รพ.)
+                      </td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-slate-500">gravida</td>
                       <td className="py-2.5 pr-3">number</td>
-                      <td className="py-2.5 pr-3"><XCircle size={16} className="text-slate-300" /></td>
+                      <td className="py-2.5 pr-3">
+                        <XCircle size={16} className="text-slate-300" />
+                      </td>
                       <td className="py-2.5">จำนวนครรภ์ (ปัจจัย CPD)</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-slate-500">ga_weeks</td>
                       <td className="py-2.5 pr-3">number</td>
-                      <td className="py-2.5 pr-3"><XCircle size={16} className="text-slate-300" /></td>
+                      <td className="py-2.5 pr-3">
+                        <XCircle size={16} className="text-slate-300" />
+                      </td>
                       <td className="py-2.5">อายุครรภ์ (สัปดาห์) (ปัจจัย CPD)</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-slate-500">anc_count</td>
                       <td className="py-2.5 pr-3">number</td>
-                      <td className="py-2.5 pr-3"><XCircle size={16} className="text-slate-300" /></td>
+                      <td className="py-2.5 pr-3">
+                        <XCircle size={16} className="text-slate-300" />
+                      </td>
                       <td className="py-2.5">จำนวนครั้งที่ฝากครรภ์ (ปัจจัย CPD)</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-slate-500">height_cm</td>
                       <td className="py-2.5 pr-3">number</td>
-                      <td className="py-2.5 pr-3"><XCircle size={16} className="text-slate-300" /></td>
+                      <td className="py-2.5 pr-3">
+                        <XCircle size={16} className="text-slate-300" />
+                      </td>
                       <td className="py-2.5">ส่วนสูง (ซม.) (ปัจจัย CPD)</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-slate-500">weight_kg</td>
                       <td className="py-2.5 pr-3">number</td>
-                      <td className="py-2.5 pr-3"><XCircle size={16} className="text-slate-300" /></td>
+                      <td className="py-2.5 pr-3">
+                        <XCircle size={16} className="text-slate-300" />
+                      </td>
                       <td className="py-2.5">น้ำหนักมารดาปัจจุบัน (กก.)</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-slate-500">weight_diff_kg</td>
                       <td className="py-2.5 pr-3">number</td>
-                      <td className="py-2.5 pr-3"><XCircle size={16} className="text-slate-300" /></td>
+                      <td className="py-2.5 pr-3">
+                        <XCircle size={16} className="text-slate-300" />
+                      </td>
                       <td className="py-2.5">ส่วนต่างน้ำหนัก (กก.) (ปัจจัย CPD)</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-slate-500">fundal_height_cm</td>
                       <td className="py-2.5 pr-3">number</td>
-                      <td className="py-2.5 pr-3"><XCircle size={16} className="text-slate-300" /></td>
+                      <td className="py-2.5 pr-3">
+                        <XCircle size={16} className="text-slate-300" />
+                      </td>
                       <td className="py-2.5">ยอดมดลูก (ซม.) (ปัจจัย CPD)</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-slate-500">us_weight_g</td>
                       <td className="py-2.5 pr-3">number</td>
-                      <td className="py-2.5 pr-3"><XCircle size={16} className="text-slate-300" /></td>
+                      <td className="py-2.5 pr-3">
+                        <XCircle size={16} className="text-slate-300" />
+                      </td>
                       <td className="py-2.5">น้ำหนักเด็กจาก U/S (กรัม) (ปัจจัย CPD)</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2.5 pr-3 font-mono text-slate-500">hematocrit_pct</td>
                       <td className="py-2.5 pr-3">number</td>
-                      <td className="py-2.5 pr-3"><XCircle size={16} className="text-slate-300" /></td>
+                      <td className="py-2.5 pr-3">
+                        <XCircle size={16} className="text-slate-300" />
+                      </td>
                       <td className="py-2.5">ค่า Hematocrit (%) (ปัจจัย CPD)</td>
                     </tr>
                     <tr>
                       <td className="py-2.5 pr-3 font-mono text-slate-500">labor_status</td>
                       <td className="py-2.5 pr-3">string</td>
-                      <td className="py-2.5 pr-3"><XCircle size={16} className="text-slate-300" /></td>
-                      <td className="py-2.5">สถานะ: <code className="bg-slate-100 px-1 rounded">ACTIVE</code> (ค่าเริ่มต้น) หรือ <code className="bg-slate-100 px-1 rounded">DELIVERED</code></td>
+                      <td className="py-2.5 pr-3">
+                        <XCircle size={16} className="text-slate-300" />
+                      </td>
+                      <td className="py-2.5">
+                        สถานะ: <code className="bg-slate-100 px-1 rounded">ACTIVE</code>{' '}
+                        (ค่าเริ่มต้น) หรือ{' '}
+                        <code className="bg-slate-100 px-1 rounded">DELIVERED</code>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
               </div>
               <p className="text-sm text-slate-400">
-                หมายเหตุ: ยิ่งส่งข้อมูล optional fields (ปัจจัย CPD) ครบถ้วน คะแนน CPD Risk Score จะแม่นยำยิ่งขึ้น
-                ปัจจัยที่ไม่ได้ส่งจะแสดงเป็น &ldquo;ข้อมูลไม่ครบ&rdquo; ในหน้ารายละเอียดผู้คลอด
+                หมายเหตุ: ยิ่งส่งข้อมูล optional fields (ปัจจัย CPD) ครบถ้วน คะแนน CPD Risk Score
+                จะแม่นยำยิ่งขึ้น ปัจจัยที่ไม่ได้ส่งจะแสดงเป็น &ldquo;ข้อมูลไม่ครบ&rdquo;
+                ในหน้ารายละเอียดผู้คลอด
               </p>
 
               <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 mt-4">
-                <h4 className="font-semibold text-amber-800 text-sm mb-2">ข้อแนะนำ: เลือกโหมดที่เหมาะสม</h4>
+                <h4 className="font-semibold text-amber-800 text-sm mb-2">
+                  ข้อแนะนำ: เลือกโหมดที่เหมาะสม
+                </h4>
                 <ul className="text-sm text-amber-700 space-y-1.5 list-disc list-inside">
-                  <li><strong>full_snapshot</strong> — ใช้เมื่อระบบ HIS ส่งรายชื่อผู้คลอดทั้งหมดเป็นรอบ (ทุก 5-30 นาที) ผู้คลอดที่จำหน่ายแล้วจะหายจาก payload โดยอัตโนมัติ ระบบจะเปลี่ยนสถานะเป็น DELIVERED ให้</li>
-                  <li><strong>incremental</strong> — ใช้เมื่อส่งข้อมูลเฉพาะรายที่มีการเปลี่ยนแปลง ต้องส่ง <code className="bg-amber-100 px-1 rounded">labor_status: &quot;DELIVERED&quot;</code> เมื่อผู้คลอดจำหน่าย มิฉะนั้นผู้คลอดจะแสดงเป็น ACTIVE ตลอด</li>
+                  <li>
+                    <strong>full_snapshot</strong> — ใช้เมื่อระบบ HIS
+                    ส่งรายชื่อผู้คลอดทั้งหมดเป็นรอบ (ทุก 5-30 นาที) ผู้คลอดที่จำหน่ายแล้วจะหายจาก
+                    payload โดยอัตโนมัติ ระบบจะเปลี่ยนสถานะเป็น DELIVERED ให้
+                  </li>
+                  <li>
+                    <strong>incremental</strong> — ใช้เมื่อส่งข้อมูลเฉพาะรายที่มีการเปลี่ยนแปลง
+                    ต้องส่ง{' '}
+                    <code className="bg-amber-100 px-1 rounded">
+                      labor_status: &quot;DELIVERED&quot;
+                    </code>{' '}
+                    เมื่อผู้คลอดจำหน่าย มิฉะนั้นผู้คลอดจะแสดงเป็น ACTIVE ตลอด
+                  </li>
                 </ul>
               </div>
             </div>
@@ -784,19 +877,27 @@ export default function AboutPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="rounded-lg border border-green-200 bg-green-50 p-3 flex gap-3">
                   <span className="shrink-0 font-mono font-bold text-green-700">200</span>
-                  <span className="text-sm text-green-800">สำเร็จ — ข้อมูลถูกประมวลผลเรียบร้อย</span>
+                  <span className="text-sm text-green-800">
+                    สำเร็จ — ข้อมูลถูกประมวลผลเรียบร้อย
+                  </span>
                 </div>
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 flex gap-3">
                   <span className="shrink-0 font-mono font-bold text-amber-700">400</span>
-                  <span className="text-sm text-amber-800">Payload ไม่ถูกต้อง — ตรวจสอบ JSON format และ required fields</span>
+                  <span className="text-sm text-amber-800">
+                    Payload ไม่ถูกต้อง — ตรวจสอบ JSON format และ required fields
+                  </span>
                 </div>
                 <div className="rounded-lg border border-red-200 bg-red-50 p-3 flex gap-3">
                   <span className="shrink-0 font-mono font-bold text-red-700">401</span>
-                  <span className="text-sm text-red-800">ไม่ได้ยืนยันตัวตน — API Key หาย ไม่ถูกต้อง หรือถูกเพิกถอน</span>
+                  <span className="text-sm text-red-800">
+                    ไม่ได้ยืนยันตัวตน — API Key หาย ไม่ถูกต้อง หรือถูกเพิกถอน
+                  </span>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 flex gap-3">
                   <span className="shrink-0 font-mono font-bold text-slate-700">500</span>
-                  <span className="text-sm text-slate-800">ข้อผิดพลาดภายในระบบ — ติดต่อผู้ดูแลระบบ</span>
+                  <span className="text-sm text-slate-800">
+                    ข้อผิดพลาดภายในระบบ — ติดต่อผู้ดูแลระบบ
+                  </span>
                 </div>
               </div>
             </div>
@@ -805,7 +906,9 @@ export default function AboutPage() {
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <Key className="h-5 w-5 text-teal-600" />
-                <h3 className="text-lg font-semibold text-slate-700">Admin API — จัดการ API Keys</h3>
+                <h3 className="text-lg font-semibold text-slate-700">
+                  Admin API — จัดการ API Keys
+                </h3>
               </div>
               <p className="text-sm text-slate-500">
                 Endpoints สำหรับผู้ดูแลระบบ (ต้องล็อกอินในระบบด้วย role ADMIN)
@@ -813,27 +916,38 @@ export default function AboutPage() {
               <div className="space-y-3">
                 <div className="rounded-xl border border-slate-200 p-4 space-y-2">
                   <EndpointBadge method="GET" path="/api/admin/webhooks" />
-                  <p className="text-sm text-slate-600">แสดงรายการ API Keys ทั้งหมด พร้อมข้อมูลโรงพยาบาล สถานะ และเวลาใช้งานล่าสุด</p>
+                  <p className="text-sm text-slate-600">
+                    แสดงรายการ API Keys ทั้งหมด พร้อมข้อมูลโรงพยาบาล สถานะ และเวลาใช้งานล่าสุด
+                  </p>
                 </div>
                 <div className="rounded-xl border border-slate-200 p-4 space-y-2">
                   <EndpointBadge method="POST" path="/api/admin/webhooks" />
-                  <p className="text-sm text-slate-600">สร้าง API Key ใหม่ ส่ง <code className="bg-slate-100 px-1 rounded text-xs">hcode</code> และ <code className="bg-slate-100 px-1 rounded text-xs">label</code> ระบบจะคืน API Key เพียงครั้งเดียว</p>
+                  <p className="text-sm text-slate-600">
+                    สร้าง API Key ใหม่ ส่ง{' '}
+                    <code className="bg-slate-100 px-1 rounded text-xs">hcode</code> และ{' '}
+                    <code className="bg-slate-100 px-1 rounded text-xs">label</code> ระบบจะคืน API
+                    Key เพียงครั้งเดียว
+                  </p>
                   <CodeBlock title="request body">
-{`{ "hcode": "99901", "label": "Production Key" }`}
+                    {`{ "hcode": "99901", "label": "Production Key" }`}
                   </CodeBlock>
                 </div>
                 <div className="rounded-xl border border-slate-200 p-4 space-y-2">
                   <EndpointBadge method="DELETE" path="/api/admin/webhooks/:keyId" />
-                  <p className="text-sm text-slate-600">เพิกถอน API Key ทันที Key ที่ถูกเพิกถอนจะใช้งานไม่ได้อีก</p>
+                  <p className="text-sm text-slate-600">
+                    เพิกถอน API Key ทันที Key ที่ถูกเพิกถอนจะใช้งานไม่ได้อีก
+                  </p>
                 </div>
               </div>
             </div>
 
             {/* cURL Example */}
             <div className="space-y-3">
-              <h3 className="text-lg font-semibold text-slate-700">ตัวอย่างการเรียกใช้งาน (cURL)</h3>
+              <h3 className="text-lg font-semibold text-slate-700">
+                ตัวอย่างการเรียกใช้งาน (cURL)
+              </h3>
               <CodeBlock title="terminal">
-{`curl -X POST https://kk-lrms.example.com/api/webhooks/patient-data \\
+                {`curl -X POST https://kk-lrms.example.com/api/webhooks/patient-data \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer kklrms_a1b2c3d4e5f6..." \\
   -d '{
@@ -890,12 +1004,12 @@ export default function AboutPage() {
                 <tbody className="text-sm text-slate-600">
                   <tr className="border-b border-slate-100">
                     <td className="py-3 pr-4 font-medium">สูติแพทย์</td>
-                    <td className="py-3 pr-4">แพทย์เฉพาะทาง รพ.สุรินทร์</td>
+                    <td className="py-3 pr-4">แพทย์เฉพาะทาง รพ.สุรินทร์ / รพ.ศรีนครินทร์</td>
                     <td className="py-3">Monitor Case ให้คำแนะนำส่งต่อ ประเมินความเสี่ยง</td>
                   </tr>
                   <tr className="border-b border-slate-100">
                     <td className="py-3 pr-4 font-medium">พยาบาลห้องคลอด รพ.แม่ข่าย</td>
-                    <td className="py-3 pr-4">พยาบาลวิชาชีพ รพ.สุรินทร์</td>
+                    <td className="py-3 pr-4">พยาบาลวิชาชีพ รพ.สุรินทร์ / รพ.ศรีนครินทร์</td>
                     <td className="py-3">ติดตาม Partogram รับแจ้งเตือน ประสานงานส่งต่อ</td>
                   </tr>
                   <tr className="border-b border-slate-100">
@@ -927,23 +1041,38 @@ export default function AboutPage() {
             <ul className="space-y-3 text-slate-600">
               <li className="flex gap-3">
                 <Shield className="h-5 w-5 shrink-0 text-teal-500 mt-0.5" />
-                <span><strong>เข้ารหัสข้อมูลส่วนบุคคล</strong> — ชื่อ-สกุลและเลขบัตรประชาชนถูกเข้ารหัส (Encrypt) ทั้งในฐานข้อมูลและระหว่างการส่งข้อมูล</span>
+                <span>
+                  <strong>เข้ารหัสข้อมูลส่วนบุคคล</strong> — ชื่อ-สกุลและเลขบัตรประชาชนถูกเข้ารหัส
+                  (Encrypt) ทั้งในฐานข้อมูลและระหว่างการส่งข้อมูล
+                </span>
               </li>
               <li className="flex gap-3">
                 <Shield className="h-5 w-5 shrink-0 text-teal-500 mt-0.5" />
-                <span><strong>ระบบยืนยันตัวตน</strong> — ผู้ใช้ต้องลงชื่อเข้าใช้ด้วย BMS Session ID ที่ได้รับจาก สสจ.สุรินทร์ ไม่สามารถเข้าถึงข้อมูลได้โดยไม่ผ่านการยืนยันตัวตน</span>
+                <span>
+                  <strong>ระบบยืนยันตัวตน</strong> — ผู้ใช้ต้องลงชื่อเข้าใช้ด้วย BMS Session ID
+                  ที่ได้รับจาก สสจ.สุรินทร์ ไม่สามารถเข้าถึงข้อมูลได้โดยไม่ผ่านการยืนยันตัวตน
+                </span>
               </li>
               <li className="flex gap-3">
                 <Shield className="h-5 w-5 shrink-0 text-teal-500 mt-0.5" />
-                <span><strong>บันทึกการเข้าถึง (Audit Log)</strong> — ทุกครั้งที่มีการเปิดดูข้อมูลผู้คลอด ระบบจะบันทึกว่าใครเข้าดูข้อมูลอะไร เมื่อไหร่</span>
+                <span>
+                  <strong>บันทึกการเข้าถึง (Audit Log)</strong> —
+                  ทุกครั้งที่มีการเปิดดูข้อมูลผู้คลอด ระบบจะบันทึกว่าใครเข้าดูข้อมูลอะไร เมื่อไหร่
+                </span>
               </li>
               <li className="flex gap-3">
                 <Shield className="h-5 w-5 shrink-0 text-teal-500 mt-0.5" />
-                <span><strong>ไม่แสดงชื่อผู้คลอด</strong> — หน้าจอแสดงเฉพาะเลข AN และ HN เท่านั้น ไม่แสดงชื่อ-สกุล เพื่อความเป็นส่วนตัว</span>
+                <span>
+                  <strong>ไม่แสดงชื่อผู้คลอด</strong> — หน้าจอแสดงเฉพาะเลข AN และ HN เท่านั้น
+                  ไม่แสดงชื่อ-สกุล เพื่อความเป็นส่วนตัว
+                </span>
               </li>
               <li className="flex gap-3">
                 <Shield className="h-5 w-5 shrink-0 text-teal-500 mt-0.5" />
-                <span><strong>การเชื่อมต่อปลอดภัย</strong> — ใช้ HTTPS ในการเชื่อมต่อทั้งหมด พร้อม Security Headers มาตรฐาน</span>
+                <span>
+                  <strong>การเชื่อมต่อปลอดภัย</strong> — ใช้ HTTPS ในการเชื่อมต่อทั้งหมด พร้อม
+                  Security Headers มาตรฐาน
+                </span>
               </li>
             </ul>
           </div>
@@ -952,11 +1081,9 @@ export default function AboutPage() {
         {/* --- Footer --- */}
         <footer className="border-t border-slate-200 pt-8 pb-4 text-center text-sm text-slate-400 space-y-2">
           <p className="font-semibold text-slate-500">
-            SR-LRMS {APP_VERSION_LABEL} — ระบบติดตามการคลอดแบบรวมศูนย์ จังหวัดสุรินทร์
+            SR-LRMS v1.0.0 — ระบบติดตามการคลอดแบบรวมศูนย์ จังหวัดสุรินทร์
           </p>
-          <p>
-            สำนักงานสาธารณสุขจังหวัดสุรินทร์ — เขตสุขภาพที่ 9
-          </p>
+          <p>สำนักงานสาธารณสุขจังหวัดสุรินทร์ — เขตสุขภาพที่ 7</p>
           <p className="pt-4">
             <Link
               href="/login"

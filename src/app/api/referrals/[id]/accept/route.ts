@@ -1,35 +1,13 @@
-// T10: PATCH /api/referrals/[id]/accept — accept a referral
-import { NextResponse, type NextRequest } from 'next/server';
-import { getDatabase } from '@/db/connection';
-import { ensureInit } from '@/lib/ensure-init';
+// PATCH /api/referrals/[id]/accept — destination hospital accepts a referral.
+// Actor identity comes from the session; client-supplied acceptedBy is ignored.
+import { referralTransitionRoute } from '@/lib/referral-http';
 import { acceptReferral } from '@/services/referral';
-import { logger } from '@/lib/logger';
+import { auditActorFromSession } from '@/lib/audit-actor';
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  try {
-    await ensureInit();
-    const { id } = await params;
-    const body = await request.json() as Record<string, unknown>;
-    const { acceptedBy } = body;
-
-    if (!acceptedBy) {
-      return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: 'acceptedBy จำเป็นต้องระบุ', details: null } },
-        { status: 400 },
-      );
-    }
-
-    const db = await getDatabase();
-    const referral = await acceptReferral(db, id, String(acceptedBy));
-    return NextResponse.json(referral);
-  } catch (error) {
-    logger.error('referral_accept_failed', { error });
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'เกิดข้อผิดพลาด กรุณาลองใหม่', details: null } },
-      { status: 500 },
-    );
-  }
-}
+export const PATCH = referralTransitionRoute({
+  side: 'to',
+  requiredField: null,
+  logEvent: 'referral_accept_failed',
+  run: (db, id, _body, session) =>
+    acceptReferral(db, id, session.user.name ?? session.user.id, auditActorFromSession(session)),
+});

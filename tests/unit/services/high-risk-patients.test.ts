@@ -1,18 +1,16 @@
 // High-risk patients service tests — TDD
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import { getHighRiskPatients } from '@/services/dashboard';
 import { v4 as uuidv4 } from 'uuid';
 
 describe('getHighRiskPatients', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
   });
 
@@ -25,7 +23,7 @@ describe('getHighRiskPatients', () => {
     expect(result).toEqual([]);
   });
 
-  it('should return only HIGH and MEDIUM risk patients', async () => {
+  it('returns ALL active patients — high first, LOW included, unscored last', async () => {
     const hospitals = await db.query<{ id: string }>(
       "SELECT id FROM hospitals WHERE hcode = '10670'",
     );
@@ -61,13 +59,20 @@ describe('getHighRiskPatients', () => {
       [uuidv4(), patHigh, 12, 'HIGH', now, now],
     );
 
+    // A fourth ACTIVE patient with no CPD score at all — must still appear
+    // (the INNER JOIN used to silently drop her), sorted last.
+    await db.execute(
+      'INSERT INTO cached_patients (id, hospital_id, hn, an, name, age, ga_weeks, admit_date, labor_status, synced_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [uuidv4(), hospitalId, 'HN-U1', 'AN-U1', 'enc-name', 30, 36, now, 'ACTIVE', now, now, now],
+    );
+
     const result = await getHighRiskPatients(db);
-    expect(result).toHaveLength(2);
-    // HIGH risk first (score 12), then MEDIUM (score 7)
-    expect(result[0].riskLevel).toBe('HIGH');
+    expect(result).toHaveLength(4);
+    // Score DESC: HIGH (12), MEDIUM (7), LOW (2), then unscored.
+    expect(result.map((r) => r.riskLevel)).toEqual(['HIGH', 'MEDIUM', 'LOW', 'UNSCORED']);
     expect(result[0].cpdScore).toBe(12);
-    expect(result[1].riskLevel).toBe('MEDIUM');
-    expect(result[1].cpdScore).toBe(7);
+    expect(result[3].cpdScore).toBe(0);
+    expect(result[3].an).toBe('AN-U1');
   });
 
   it('should order by score DESC (highest risk first)', async () => {
@@ -280,6 +285,29 @@ describe('getHighRiskPatients', () => {
     expect(result[2].cpdScore).toBe(12);
   });
 
+  // The panel's "ALL ACTIVE" tab promises the complete province roster; the
+  // old default cap (50) sat above nothing — historical census peaked 34–39
+  // and stale-ACTIVE incidents push past 50, silently truncating the roster
+  // and every count derived from it.
+  it('default cap sits far above any real ward census (no truncation at 60 active)', async () => {
+    const hospitals = await db.query<{ id: string }>(
+      "SELECT id FROM hospitals WHERE hcode = '10670'",
+    );
+    const hospitalId = hospitals[0].id;
+    const now = new Date().toISOString();
+
+    for (let i = 0; i < 60; i++) {
+      const patId = uuidv4();
+      await db.execute(
+        'INSERT INTO cached_patients (id, hospital_id, hn, an, name, age, admit_date, labor_status, synced_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [patId, hospitalId, `HN-C${i}`, `AN-C${i}`, 'enc-name', 28, now, 'ACTIVE', now, now, now],
+      );
+    }
+
+    const result = await getHighRiskPatients(db);
+    expect(result).toHaveLength(60);
+  });
+
   it('should include patients from multiple hospitals', async () => {
     const hospitals = await db.query<{ id: string; hcode: string }>(
       "SELECT id, hcode FROM hospitals WHERE hcode IN ('10670', '11000') ORDER BY hcode",
@@ -290,7 +318,19 @@ describe('getHighRiskPatients', () => {
       const patId = uuidv4();
       await db.execute(
         'INSERT INTO cached_patients (id, hospital_id, hn, an, name, age, admit_date, labor_status, synced_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [patId, hosp.id, `HN-${hosp.hcode}`, `AN-${hosp.hcode}`, 'enc-name', 30, now, 'ACTIVE', now, now, now],
+        [
+          patId,
+          hosp.id,
+          `HN-${hosp.hcode}`,
+          `AN-${hosp.hcode}`,
+          'enc-name',
+          30,
+          now,
+          'ACTIVE',
+          now,
+          now,
+          now,
+        ],
       );
       await db.execute(
         'INSERT INTO cpd_scores (id, patient_id, score, risk_level, calculated_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -316,7 +356,20 @@ describe('getHighRiskPatients', () => {
     const patId = uuidv4();
     await db.execute(
       'INSERT INTO cached_patients (id, hospital_id, hn, an, name, age, ga_weeks, admit_date, labor_status, synced_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [patId, hospitalId, 'HN-001', 'AN-001', 'enc-patient-name', 28, 38, admitDate, 'ACTIVE', now, now, now],
+      [
+        patId,
+        hospitalId,
+        'HN-001',
+        'AN-001',
+        'enc-patient-name',
+        28,
+        38,
+        admitDate,
+        'ACTIVE',
+        now,
+        now,
+        now,
+      ],
     );
     await db.execute(
       'INSERT INTO cpd_scores (id, patient_id, score, risk_level, calculated_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',

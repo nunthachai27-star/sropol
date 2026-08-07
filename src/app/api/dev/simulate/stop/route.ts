@@ -4,8 +4,8 @@ import { simulationGuard } from '../_guard';
 import { simulationOrchestrator } from '@/services/dev-simulation/orchestrator';
 
 export async function POST() {
-  const guard = simulationGuard();
-  if (guard) return guard;
+  const guard = await simulationGuard();
+  if (guard instanceof NextResponse) return guard;
   const status = await simulationOrchestrator.stop();
   return NextResponse.json(status);
 }

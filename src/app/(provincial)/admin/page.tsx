@@ -16,6 +16,7 @@ import {
   FlaskConical,
   UsersRound,
   Activity,
+  Bell,
 } from 'lucide-react';
 import { BmsConfigTab } from '@/components/admin/BmsConfigTab';
 import { WebhookKeysTab } from '@/components/admin/WebhookKeysTab';
@@ -25,6 +26,7 @@ import { AdminMapPane } from '@/components/admin/AdminMapPane';
 import { SimulationTab } from '@/components/admin/SimulationTab';
 import { OnlineUsersTab } from '@/components/admin/OnlineUsersTab';
 import { SyncOverviewTab } from '@/components/admin/SyncOverviewTab';
+import { MophAlertsTab } from '@/components/admin/MophAlertsTab';
 import { cn } from '@/lib/utils';
 
 type TabKey =
@@ -34,13 +36,11 @@ type TabKey =
   | 'webhook-keys'
   | 'sync-overview'
   | 'online-users'
-  | 'simulation';
+  | 'simulation'
+  | 'moph-alerts';
 
 export default function AdminPage() {
-  useSetBreadcrumbs([
-    { label: 'แดชบอร์ด', href: '/' },
-    { label: 'ตั้งค่า' },
-  ]);
+  useSetBreadcrumbs([{ label: 'แดชบอร์ด', href: '/' }, { label: 'ตั้งค่า' }]);
 
   const [activeTab, setActiveTab] = useState<TabKey>('province');
   // Map pin click → HospitalsTab opens the edit dialog for that hcode.
@@ -76,7 +76,8 @@ export default function AdminPage() {
           </h1>
         </div>
         <p className="font-mono text-[11px] text-[var(--ink-navy-muted)]">
-          จังหวัดหลัก · ทะเบียนโรงพยาบาล · BMS Tunnel · Webhook API Keys · Sync Status · Online Users · Simulation
+          จังหวัดหลัก · ทะเบียนโรงพยาบาล · BMS Tunnel · Webhook API Keys · Sync Status · Online
+          Users · Simulation
         </p>
       </div>
 
@@ -89,17 +90,16 @@ export default function AdminPage() {
           className="inline-flex items-center border bg-white"
           style={{ borderColor: 'var(--rule-strong)' }}
         >
-          {(
-            [
-              { k: 'province' as const, label: 'จังหวัดหลัก', icon: Globe },
-              { k: 'hospitals' as const, label: 'โรงพยาบาล', icon: Building2 },
-              { k: 'bms-config' as const, label: 'BMS Tunnel', icon: Database },
-              { k: 'webhook-keys' as const, label: 'Webhook API Keys', icon: KeyRound },
-              { k: 'sync-overview' as const, label: 'Sync Status', icon: Activity },
-              { k: 'online-users' as const, label: 'Online Users', icon: UsersRound },
-              { k: 'simulation' as const, label: 'จำลองข้อมูล', icon: FlaskConical },
-            ]
-          ).map((t, i) => {
+          {[
+            { k: 'province' as const, label: 'จังหวัดหลัก', icon: Globe },
+            { k: 'hospitals' as const, label: 'โรงพยาบาล', icon: Building2 },
+            { k: 'bms-config' as const, label: 'BMS Tunnel', icon: Database },
+            { k: 'webhook-keys' as const, label: 'Webhook API Keys', icon: KeyRound },
+            { k: 'sync-overview' as const, label: 'Sync Status', icon: Activity },
+            { k: 'online-users' as const, label: 'Online Users', icon: UsersRound },
+            { k: 'simulation' as const, label: 'จำลองข้อมูล', icon: FlaskConical },
+            { k: 'moph-alerts' as const, label: 'MOPH Alerts', icon: Bell },
+          ].map((t, i) => {
             const active = activeTab === t.k;
             const Icon = t.icon;
             return (
@@ -131,10 +131,7 @@ export default function AdminPage() {
         className="grid gap-0 bg-white"
         style={{ gridTemplateColumns: 'minmax(520px, 1fr) minmax(420px, 1fr)' }}
       >
-        <div
-          className="px-5 pt-4 pb-6"
-          style={{ borderRight: '1px solid var(--rule-strong)' }}
-        >
+        <div className="px-5 pt-4 pb-6" style={{ borderRight: '1px solid var(--rule-strong)' }}>
           {activeTab === 'province' ? (
             <ActiveProvinceTab />
           ) : activeTab === 'hospitals' ? (
@@ -150,6 +147,8 @@ export default function AdminPage() {
             <SyncOverviewTab />
           ) : activeTab === 'online-users' ? (
             <OnlineUsersTab />
+          ) : activeTab === 'moph-alerts' ? (
+            <MophAlertsTab />
           ) : (
             <SimulationTab />
           )}

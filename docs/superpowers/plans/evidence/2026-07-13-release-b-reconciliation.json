@@ -1,0 +1,47 @@
+{
+  "artifact": "Release B clinical-data reconciliation evidence",
+  "generatedAt": "2026-07-13T09:45:00Z",
+  "source": "read-only SQL against production kk-lrms database (kk-lrms-postgres-1); queries verbatim from src/services/reconciliation.ts",
+  "deployContext": {
+    "deployedHead": "1d4e608",
+    "releasesLive": ["A (security)", "B (clinical integrity)", "C (concurrency/ops/quality)"],
+    "startupMigrations": "mj_active_unique_created (no duplicate active journeys) + cached_referrals_actor + vcp_unique_index; 0 errors",
+    "gatesWaivedByOperator": ["Release B clinical sign-off (this artifact supports it)", "Release C Redis-outage drill"]
+  },
+  "denominators": {
+    "totalJourneys": 5258,
+    "pregnancy": 1726,
+    "labor": 3,
+    "delivered": 3529,
+    "activePregnancyOrLabor": 1729,
+    "journeysWithAncScreening": 108,
+    "totalAncScreenings": 108
+  },
+  "riskLevelDistributionAmongScreened": { "LOW": 82, "HR1": 8, "HR2": 13, "HR3": 5 },
+  "reconciliation": {
+    "riskMismatches": { "total": 0, "byHospital": [] },
+    "stuckPregnancyWithActiveLabor": {
+      "total": 3,
+      "byHospital": [
+        { "hcode": "11011", "name": "โรงพยาบาลเขาสวนกวาง", "count": 1 },
+        { "hcode": "11009", "name": "โรงพยาบาลมัญจาคีรี", "count": 1 },
+        { "hcode": "10995", "name": "โรงพยาบาลบ้านฝาง", "count": 1 }
+      ],
+      "detail": [
+        { "hcode": "11011", "ancRiskLevel": "LOW", "journeyStageSince": "2026-07-13", "laborStatus": "ACTIVE", "laborAdmit": "2026-07-07", "laborLastUpdated": "2026-07-12", "assessment": "recent + active; should transition to LABOR on next browser-push sync (B1 now live)" },
+        { "hcode": "11009", "ancRiskLevel": "LOW", "journeyStageSince": "2026-07-13", "laborStatus": "ACTIVE", "laborAdmit": "2026-07-08", "laborLastUpdated": "2026-07-08", "assessment": "recent + active; should self-heal on next sync" },
+        { "hcode": "10995", "ancRiskLevel": "LOW", "journeyStageSince": "2026-07-07", "laborStatus": "ACTIVE", "laborAdmit": "2026-06-12", "laborLastUpdated": "2026-06-12", "assessment": "STALE: labor admission ~1 month old, not updated since 2026-06-12 — may have delivered/discharged in HOSxP without cache reconciliation; recommend manual review rather than assuming self-heal" }
+      ]
+    },
+    "duplicateActiveJourneys": { "total": 0, "byHospitalHn": [] }
+  },
+  "signOffDecisions": {
+    "canonicalAncRule": "max(validated declared, item-derived) — derived severity is authoritative, may only raise. 0 mismatches against existing data.",
+    "historicalCorrectionPolicy": "future-only; no historical rewrite. The 3 stuck cases are pre-existing residue of the LABOR-transition bug, not rewritten by this deploy.",
+    "duplicateActiveJourneys": "0 found; uq_mj_hospital_hn_active index created cleanly at deploy (fail-safe path not triggered)."
+  },
+  "flaggedForClinicalOwner": [
+    "The deployed /api/admin/reconciliation-report includes hn in the duplicate list (needed to locate a duplicate for remediation); repo PDPA convention (pii-mask.ts) does not mask HN. Confirm acceptable in a sign-off artifact. (Moot here: 0 duplicates.)",
+    "hospitalId in the report means current_hospital_id in riskMismatches/stuck but registering hospital_id in duplicates (matches B3 uniqueness definition)."
+  ]
+}

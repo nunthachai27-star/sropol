@@ -17,7 +17,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { LoadingState } from '@/components/shared/LoadingState';
-import { HospitalLevel, HospitalServiceType } from '@/types/domain';
+import { HospitalServiceType } from '@/types/domain';
+import { guessHospitalLevel } from '@/config/hospitals';
 
 interface MophHospital {
   hcode: string;
@@ -42,15 +43,6 @@ interface Props {
   /** Called after at least one hospital is added successfully so the parent
    *  can revalidate its hospital list. */
   onAdded: () => Promise<void> | void;
-}
-
-// hospital_type_id → sensible default HospitalLevel guess per MOPH convention.
-// Admin can fine-tune each hospital after bulk-add via the edit dialog.
-function guessLevel(typeId: number | null): HospitalLevel {
-  if (typeId === 5) return HospitalLevel.A_S;
-  if (typeId === 6) return HospitalLevel.M1;
-  if (typeId === 7) return HospitalLevel.F2;
-  return HospitalLevel.F3;
 }
 
 // hospital_type_id 5 (A_S), 6 (M1), 7 (F2) are the tiers that typically have
@@ -151,7 +143,7 @@ function BulkAddBody({ open, onClose, provinceCode, provinceName, onAdded }: Pro
             body: JSON.stringify({
               hcode: m.hcode,
               name: m.name,
-              level: guessLevel(m.hospitalTypeId),
+              level: guessHospitalLevel(m.hospitalTypeId),
               serviceType: defaultServiceType(m.hospitalTypeId),
               provinceCode: m.provinceCode,
               districtCode: m.districtCode,
@@ -184,7 +176,8 @@ function BulkAddBody({ open, onClose, provinceCode, provinceName, onAdded }: Pro
 
   return (
     <>
-      <DialogHeader className="border-b px-5 pt-4 pb-3"
+      <DialogHeader
+        className="border-b px-5 pt-4 pb-3"
         style={{ borderColor: 'var(--rule-strong)' }}
       >
         <DialogTitle className="flex flex-col gap-0.5">
@@ -197,139 +190,134 @@ function BulkAddBody({ open, onClose, provinceCode, provinceName, onAdded }: Pro
         </DialogTitle>
       </DialogHeader>
 
-        <div
-          className="max-h-[65vh] overflow-y-auto px-5 py-4"
-          style={{ background: 'var(--surface-cool)' }}
-        >
-          {isLoading ? (
-            <LoadingState message="กำลังโหลดทะเบียน MOPH..." />
-          ) : available.length === 0 ? (
-            <div
-              className="border bg-white px-4 py-6 text-center font-mono text-[12px] text-[var(--ink-navy-dim)]"
-              style={{ borderColor: 'var(--rule-strong)' }}
-            >
-              ไม่มีโรงพยาบาลเหลืออยู่ในทะเบียน MOPH ของจังหวัดนี้ที่ยังไม่ถูกเพิ่ม
-            </div>
-          ) : (
-            <>
-              <div className="mb-2 flex items-center justify-between font-mono text-[11px]">
-                <button
-                  type="button"
-                  onClick={toggleAll}
-                  className="inline-flex items-center gap-1.5 border px-2 py-1 hover:bg-[var(--accent-navy-soft)]"
-                  style={{
-                    borderColor: 'var(--rule-strong)',
-                    color: 'var(--ink-navy-dim)',
-                  }}
-                  disabled={busy}
-                >
-                  {allSelected ? (
-                    <CheckSquare className="h-3.5 w-3.5" />
-                  ) : (
-                    <Square className="h-3.5 w-3.5" />
-                  )}
-                  {allSelected ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมด'}
-                </button>
-                <span className="text-[var(--ink-navy-muted)]">
-                  เลือกแล้ว {selected.size} / {available.length}
-                </span>
-              </div>
-
-              <div className="border bg-white" style={{ borderColor: 'var(--rule-strong)' }}>
-                <div
-                  className="grid gap-2 border-b px-3 py-2 font-mono text-[10px] tracking-[0.1em] text-[var(--ink-navy-muted)]"
-                  style={{
-                    gridTemplateColumns: '40px 80px 1fr 60px 60px',
-                    borderColor: 'var(--rule-strong)',
-                  }}
-                >
-                  <span>✓</span>
-                  <span>HCODE</span>
-                  <span>NAME</span>
-                  <span>LEVEL</span>
-                  <span className="text-right">BEDS</span>
-                </div>
-                {available.map((m) => {
-                  const isSel = selected.has(m.hcode);
-                  const lvl = guessLevel(m.hospitalTypeId);
-                  return (
-                    <label
-                      key={m.hcode}
-                      className="grid cursor-pointer items-center gap-2 border-b px-3 py-2 text-[13px] hover:bg-[var(--accent-navy-soft)] last:border-b-0"
-                      style={{
-                        gridTemplateColumns: '40px 80px 1fr 60px 60px',
-                        borderColor: 'var(--rule-hair)',
-                        color: 'var(--ink-navy)',
-                        background: isSel ? 'var(--accent-navy-soft)' : undefined,
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSel}
-                        onChange={() => toggle(m.hcode)}
-                        disabled={busy}
-                        className="h-4 w-4"
-                      />
-                      <span className="font-mono text-[11px] text-[var(--ink-navy-dim)]">
-                        {m.hcode}
-                      </span>
-                      <span className="flex items-center gap-1.5 truncate">
-                        <Building2 className="h-3.5 w-3.5 text-[var(--ink-navy-muted)]" />
-                        <span className="truncate">{m.name}</span>
-                      </span>
-                      <span className="font-mono text-[11px] text-[var(--ink-navy-dim)]">
-                        {lvl}
-                      </span>
-                      <span className="text-right font-mono text-[11px] text-[var(--ink-navy-dim)]">
-                        {m.bedCount ?? '—'}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-
-              <p className="mt-2 font-mono text-[10px] leading-snug text-[var(--ink-navy-muted)]">
-                ระบบจะเลือก LEVEL จาก hospital_type_id และตั้ง service_type ให้ตามค่าเริ่มต้น —
-                สามารถแก้ไขรายตัวได้ในแท็บ &ldquo;โรงพยาบาล&rdquo; หลังเพิ่ม
-              </p>
-
-              {errors.length > 0 ? (
-                <div
-                  className="mt-3 space-y-1 border px-3 py-2 font-mono text-[11px]"
-                  style={{ borderColor: 'var(--risk-high)', color: 'var(--risk-high)' }}
-                >
-                  <div className="flex items-center gap-1.5 font-semibold">
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                    เพิ่มไม่สำเร็จ {errors.length} รายการ
-                  </div>
-                  {errors.slice(0, 5).map((e) => (
-                    <div key={e.hcode}>
-                      · {e.hcode} — {e.error}
-                    </div>
-                  ))}
-                  {errors.length > 5 ? <div>… และอีก {errors.length - 5} รายการ</div> : null}
-                </div>
-              ) : null}
-            </>
-          )}
-        </div>
-
-        <DialogFooter
-          className="border-t px-5 py-3"
-          style={{ borderColor: 'var(--rule-strong)' }}
-        >
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
-            ยกเลิก
-          </Button>
-          <Button
-            onClick={handleOk}
-            disabled={busy || selected.size === 0 || available.length === 0}
-            className="gap-1.5"
+      <div
+        className="max-h-[65vh] overflow-y-auto px-5 py-4"
+        style={{ background: 'var(--surface-cool)' }}
+      >
+        {isLoading ? (
+          <LoadingState message="กำลังโหลดทะเบียน MOPH..." />
+        ) : available.length === 0 ? (
+          <div
+            className="border bg-white px-4 py-6 text-center font-mono text-[12px] text-[var(--ink-navy-dim)]"
+            style={{ borderColor: 'var(--rule-strong)' }}
           >
-            {busy ? <Plus className="h-4 w-4 animate-pulse" /> : <Check className="h-4 w-4" />}
-            {busy ? `กำลังเพิ่ม ${selected.size}...` : `เพิ่ม ${selected.size} แห่ง`}
-          </Button>
-        </DialogFooter>
+            ไม่มีโรงพยาบาลเหลืออยู่ในทะเบียน MOPH ของจังหวัดนี้ที่ยังไม่ถูกเพิ่ม
+          </div>
+        ) : (
+          <>
+            <div className="mb-2 flex items-center justify-between font-mono text-[11px]">
+              <button
+                type="button"
+                onClick={toggleAll}
+                className="inline-flex items-center gap-1.5 border px-2 py-1 hover:bg-[var(--accent-navy-soft)]"
+                style={{
+                  borderColor: 'var(--rule-strong)',
+                  color: 'var(--ink-navy-dim)',
+                }}
+                disabled={busy}
+              >
+                {allSelected ? (
+                  <CheckSquare className="h-3.5 w-3.5" />
+                ) : (
+                  <Square className="h-3.5 w-3.5" />
+                )}
+                {allSelected ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมด'}
+              </button>
+              <span className="text-[var(--ink-navy-muted)]">
+                เลือกแล้ว {selected.size} / {available.length}
+              </span>
+            </div>
+
+            <div className="border bg-white" style={{ borderColor: 'var(--rule-strong)' }}>
+              <div
+                className="grid gap-2 border-b px-3 py-2 font-mono text-[10px] tracking-[0.1em] text-[var(--ink-navy-muted)]"
+                style={{
+                  gridTemplateColumns: '40px 80px 1fr 60px 60px',
+                  borderColor: 'var(--rule-strong)',
+                }}
+              >
+                <span>✓</span>
+                <span>HCODE</span>
+                <span>NAME</span>
+                <span>LEVEL</span>
+                <span className="text-right">BEDS</span>
+              </div>
+              {available.map((m) => {
+                const isSel = selected.has(m.hcode);
+                const lvl = guessHospitalLevel(m.hospitalTypeId);
+                return (
+                  <label
+                    key={m.hcode}
+                    className="grid cursor-pointer items-center gap-2 border-b px-3 py-2 text-[13px] hover:bg-[var(--accent-navy-soft)] last:border-b-0"
+                    style={{
+                      gridTemplateColumns: '40px 80px 1fr 60px 60px',
+                      borderColor: 'var(--rule-hair)',
+                      color: 'var(--ink-navy)',
+                      background: isSel ? 'var(--accent-navy-soft)' : undefined,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSel}
+                      onChange={() => toggle(m.hcode)}
+                      disabled={busy}
+                      className="h-4 w-4"
+                    />
+                    <span className="font-mono text-[11px] text-[var(--ink-navy-dim)]">
+                      {m.hcode}
+                    </span>
+                    <span className="flex items-center gap-1.5 truncate">
+                      <Building2 className="h-3.5 w-3.5 text-[var(--ink-navy-muted)]" />
+                      <span className="truncate">{m.name}</span>
+                    </span>
+                    <span className="font-mono text-[11px] text-[var(--ink-navy-dim)]">{lvl}</span>
+                    <span className="text-right font-mono text-[11px] text-[var(--ink-navy-dim)]">
+                      {m.bedCount ?? '—'}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <p className="mt-2 font-mono text-[10px] leading-snug text-[var(--ink-navy-muted)]">
+              ระบบจะเลือก LEVEL จาก hospital_type_id และตั้ง service_type ให้ตามค่าเริ่มต้น —
+              สามารถแก้ไขรายตัวได้ในแท็บ &ldquo;โรงพยาบาล&rdquo; หลังเพิ่ม
+            </p>
+
+            {errors.length > 0 ? (
+              <div
+                className="mt-3 space-y-1 border px-3 py-2 font-mono text-[11px]"
+                style={{ borderColor: 'var(--risk-high)', color: 'var(--risk-high)' }}
+              >
+                <div className="flex items-center gap-1.5 font-semibold">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  เพิ่มไม่สำเร็จ {errors.length} รายการ
+                </div>
+                {errors.slice(0, 5).map((e) => (
+                  <div key={e.hcode}>
+                    · {e.hcode} — {e.error}
+                  </div>
+                ))}
+                {errors.length > 5 ? <div>… และอีก {errors.length - 5} รายการ</div> : null}
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
+
+      <DialogFooter className="border-t px-5 py-3" style={{ borderColor: 'var(--rule-strong)' }}>
+        <Button variant="ghost" onClick={onClose} disabled={busy}>
+          ยกเลิก
+        </Button>
+        <Button
+          onClick={handleOk}
+          disabled={busy || selected.size === 0 || available.length === 0}
+          className="gap-1.5"
+        >
+          {busy ? <Plus className="h-4 w-4 animate-pulse" /> : <Check className="h-4 w-4" />}
+          {busy ? `กำลังเพิ่ม ${selected.size}...` : `เพิ่ม ${selected.size} แห่ง`}
+        </Button>
+      </DialogFooter>
     </>
   );
 }

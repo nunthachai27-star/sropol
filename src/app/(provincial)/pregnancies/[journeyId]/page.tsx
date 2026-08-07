@@ -4,15 +4,49 @@
 // and a WHO 8-contact tracker with next-due recommendation.
 'use client';
 
-import { use } from 'react';
+import { use, useMemo } from 'react';
+import { debounceLeadingTrailing, SSE_REFRESH_DEBOUNCE_MS } from '@/lib/debounce';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import useSWR from 'swr';
+import { useSSE } from '@/hooks/useSSE';
 import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { SectionLabel } from '@/components/dashboard/shared';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { maskName } from '@/lib/pii-mask';
+import { ANC_RISK_COLOR, ANC_RISK_LABEL_TH } from '@/config/anc-risk-display';
+import { ANC_RISK_RULES } from '@/config/anc-risk-rules';
+import { classifySyncHealth } from '@/config/hospital-network';
+import { NEWBORN_THRESHOLDS } from '@/config/newborn';
+import { formatRelativeAge } from '@/lib/relative-time';
+import { KpiTip } from '@/components/shared/KpiTip';
+import { FlagChip } from '@/components/shared/FlagChip';
+import { IncompleteAssessmentMarker } from '@/components/shared/IncompleteAssessmentMarker';
+import { STATUS_META, URGENCY_META } from '@/components/referrals/chips';
+import {
+  BP_SYS_HIGH,
+  BP_SYS_AMBER,
+  BP_DIA_HIGH,
+  BP_DIA_AMBER,
+  FHR_LOW,
+  FHR_HIGH,
+  HB_LOW,
+  PROTEINURIA_24H_HIGH_MG,
+  CREATININE_HIGH_MG_DL,
+  sevBp,
+  sevFhr,
+  sevHb,
+  sevUrineProtein,
+  sevFetalMovement,
+  nextContactDue,
+  prePregnancyBmi,
+  isLateFirstContact,
+  overdueInvestigations,
+  WHO_CONTACT_WEEKS,
+  WHO_CONTACT_WINDOW_W,
+  type Severity,
+} from '@/services/anc-clinical';
 import {
   ArrowLeft,
   Baby,
@@ -24,6 +58,7 @@ import {
   Clock,
   Droplets,
   Heart,
+  HelpCircle,
   Activity,
   Ruler,
   MapPin,
@@ -32,6 +67,11 @@ import {
   Syringe,
   ShieldAlert,
 } from 'lucide-react';
+
+// Poll cadence for the detail feed. Single source for both the SWR
+// refreshInterval and the footer "REFRESHING EVERY …s" caption so they can
+// never drift apart. Live SSE updates arrive between polls (see useSSE below).
+const REFRESH_INTERVAL_MS = 60_000;
 
 // ─── Types (shape must match /api/journeys/[journeyId]) ───────────────────
 
@@ -69,6 +109,14 @@ interface LatestRisk {
   triggeredRules: string[];
   screenedAt: string;
   recommendedFacility: string | null;
+}
+
+// WHO containment T6 — completeness of the latest ANC risk screening. Null
+// when there is no screening row, it's unparseable, or it's a legacy/
+// webhook-sourced row (see src/types/api.ts AncAssessmentCompleteness).
+interface AncAssessment {
+  incomplete: boolean;
+  missingRequired: string[];
 }
 
 interface Referral {
@@ -147,6 +195,8 @@ interface Journey {
   teratogenExposure?: boolean | null;
   congenitalInfection?: boolean | null;
   gdmRiskFactors?: string[] | null;
+  /** When this journey row was last written by the HOSxP sync/webhook. */
+  syncedAt?: string | null;
 }
 
 interface VaccineRecord {
@@ -159,24 +209,22 @@ interface JourneyDetailResponse {
   journey: Journey;
   ancVisits: AncVisit[];
   latestRisk: LatestRisk | null;
+  /** WHO containment T6 — see AncAssessment above. */
+  ancAssessment?: AncAssessment | null;
   referrals: Referral[];
   newborns: Newborn[];
+  /** Latest linked labor admission — cross-link to /patients/[hcode]-[an]. */
+  laborAdmission?: {
+    an: string;
+    hcode: string;
+    laborStatus: string;
+    admitDate: string;
+  } | null;
 }
 
 // ─── Labels + thresholds ──────────────────────────────────────────────────
 
-const ANC_RISK_COLOR: Record<string, string> = {
-  LOW: 'var(--risk-low)',
-  HR1: 'var(--risk-medium)',
-  HR2: 'var(--risk-medium)',
-  HR3: 'var(--risk-high)',
-};
-const ANC_RISK_LABEL_TH: Record<string, string> = {
-  LOW: 'ความเสี่ยงต่ำ',
-  HR1: 'ความเสี่ยง ระดับ 1',
-  HR2: 'ความเสี่ยง ระดับ 2',
-  HR3: 'ความเสี่ยงสูง',
-};
+// Shared ANC risk display tokens — see src/config/anc-risk-display.ts.
 const STAGE_LABEL_TH: Record<string, string> = {
   PREGNANCY: 'ฝากครรภ์',
   LABOR: 'ระหว่างคลอด',
@@ -189,67 +237,55 @@ const STAGE_COLOR: Record<string, string> = {
   DELIVERED: 'var(--risk-low)',
   POSTPARTUM: 'var(--ink-navy-muted)',
 };
-const REFERRAL_STATUS_LABEL: Record<string, string> = {
-  INITIATED: 'รอรับเคส',
-  ACCEPTED: 'รับแล้ว',
-  IN_TRANSIT: 'กำลังเดินทาง',
-  ARRIVED: 'ถึงปลายทาง',
-  REJECTED: 'ปฏิเสธ',
-  PENDING: 'รอดำเนินการ',
-  CANCELLED: 'ยกเลิก',
+// Referral status/urgency labels come from the shared chips module
+// (components/referrals/chips) so this rail can never disagree with the
+// /referrals board.
+
+// Thai labels for triggered ANC-risk rule IDs — from the rules config, so
+// clinicians read "เคยคลอดน้ำหนัก <2500g" instead of "hr1_previous_lbw".
+const RULE_LABEL_TH: Record<string, string> = Object.fromEntries(
+  ANC_RISK_RULES.map((r) => [r.id, r.labelTh]),
+);
+
+// Dot color per sync-health class — same classifier the hospitals board and
+// the labor detail page use.
+const SYNC_DOT: Record<string, string> = {
+  ok: 'var(--risk-low)',
+  stale: 'var(--risk-medium)',
+  critical: 'var(--risk-high)',
+  never: 'var(--risk-high)',
+  blocked: 'var(--risk-high)',
+};
+
+const LABOR_STATUS_TH: Record<string, string> = {
+  ACTIVE: 'อยู่ห้องคลอด',
+  DELIVERED: 'คลอดแล้ว',
+  DISCHARGED: 'จำหน่ายแล้ว',
 };
 const SEX_LABEL_TH: Record<string, string> = { M: 'ชาย', F: 'หญิง' };
 
-// Clinical normal bands (rough — used only for visual hint, not actual CDSS).
-// Three tiers per metric so the UI can render normal/borderline/abnormal
-// instead of a single binary abnormal flag.
-const BP_SYS_HIGH = 140;
-const BP_SYS_AMBER = 130;   // 130-139 = borderline/elevated
-const BP_DIA_HIGH = 90;
-const BP_DIA_AMBER = 85;    // 85-89 = borderline
-const FHR_LOW = 110;
-const FHR_HIGH = 160;
-const HB_LOW = 11;          // anemia
-const HB_SEVERE = 9;        // severe anemia
-
-type Severity = 'normal' | 'borderline' | 'abnormal';
-
-function sevBp(sys: number | null, dia: number | null): Severity {
-  if (sys == null || dia == null) return 'normal';
-  if (sys >= BP_SYS_HIGH || dia >= BP_DIA_HIGH) return 'abnormal';
-  if (sys >= BP_SYS_AMBER || dia >= BP_DIA_AMBER) return 'borderline';
-  return 'normal';
-}
-function sevFhr(v: number | null): Severity {
-  if (v == null) return 'normal';
-  if (v < FHR_LOW || v > FHR_HIGH) return 'abnormal';
-  return 'normal';
-}
-function sevHb(v: number | null): Severity {
-  if (v == null) return 'normal';
-  if (v < HB_SEVERE) return 'abnormal';
-  if (v < HB_LOW) return 'borderline';
-  return 'normal';
-}
+// Vital-sign severity bands, the WHO 8-contact schedule, BMI, and the RTCOG
+// investigation-timing rules live in src/services/anc-clinical.ts (imported
+// above) so this page and any future ANC surface share one source of truth.
+// sevColor/sevBg below are pure presentation (severity → CSS var) and stay here.
 function sevColor(s: Severity): string {
   return s === 'abnormal'
     ? 'var(--risk-high)'
     : s === 'borderline'
       ? 'var(--risk-medium)'
-      : 'var(--ink-navy)';
+      : s === 'unknown'
+        ? 'var(--ink-navy-muted)' // "not recorded" — neutral, never green
+        : 'var(--ink-navy)';
 }
 function sevBg(s: Severity): string {
   return s === 'abnormal'
     ? 'rgba(239, 68, 68, 0.10)'
     : s === 'borderline'
       ? 'rgba(234, 179, 8, 0.10)'
-      : 'transparent';
+      : s === 'unknown'
+        ? 'rgba(234, 179, 8, 0.05)' // faint amber "not recorded" tint
+        : 'transparent';
 }
-
-// WHO 2016 recommended 8-contact ANC schedule — target gestational weeks.
-// First contact < 12w; then 20/26/30/34/36/38/40. See NBK409109.
-const WHO_CONTACT_WEEKS = [12, 20, 26, 30, 34, 36, 38, 40];
-const WHO_CONTACT_WINDOW_W = 1; // ±1w counts as "attended".
 
 // Short labels for baby_position / baby_lead. HOSxP values are inconsistent
 // across sites, so we recognize common codes and fall back to the raw value.
@@ -277,13 +313,13 @@ interface LabFlag {
   color: string;
 }
 const LAB_FLAGS_FROM_RULES: Record<string, LabFlag> = {
-  hr2_rh_negative:  { key: 'rh',   label: 'Rh−',         color: 'var(--risk-medium)' },
-  hr2_hbsag:        { key: 'hbsag',label: 'HBsAg+',      color: 'var(--risk-medium)' },
-  hr2_syphilis:     { key: 'vdrl', label: 'SYPHILIS+',   color: 'var(--risk-high)'   },
-  hr2_hiv:          { key: 'hiv',  label: 'HIV+',        color: 'var(--risk-high)'   },
-  hr2_thalassemia:  { key: 'thal', label: 'THAL DISEASE',color: 'var(--risk-medium)' },
-  hr3_nipt:         { key: 'nipt', label: 'NIPT HIGH',   color: 'var(--risk-high)'   },
-  hr3_anemia:       { key: 'anem', label: 'SEVERE ANEMIA', color: 'var(--risk-high)' },
+  hr2_rh_negative: { key: 'rh', label: 'Rh−', color: 'var(--risk-medium)' },
+  hr2_hbsag: { key: 'hbsag', label: 'HBsAg+', color: 'var(--risk-medium)' },
+  hr2_syphilis: { key: 'vdrl', label: 'SYPHILIS+', color: 'var(--risk-high)' },
+  hr2_hiv: { key: 'hiv', label: 'HIV+', color: 'var(--risk-high)' },
+  hr2_thalassemia: { key: 'thal', label: 'THAL DISEASE', color: 'var(--risk-medium)' },
+  hr3_nipt: { key: 'nipt', label: 'NIPT HIGH', color: 'var(--risk-high)' },
+  hr3_anemia: { key: 'anem', label: 'SEVERE ANEMIA', color: 'var(--risk-high)' },
 };
 
 function formatThai(dateStr: string | null): string {
@@ -393,11 +429,7 @@ function LabResult({
       <span
         className="font-semibold tabular-nums"
         style={{
-          color: v == null
-            ? 'var(--ink-navy-muted)'
-            : abn
-              ? 'var(--risk-high)'
-              : 'var(--ink-navy)',
+          color: v == null ? 'var(--ink-navy-muted)' : abn ? 'var(--risk-high)' : 'var(--ink-navy)',
         }}
       >
         {v ?? '—'}
@@ -470,10 +502,7 @@ function LabTile({
       <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
         {label}
       </div>
-      <div
-        className="font-mono text-[13px] font-bold tabular-nums"
-        style={{ color: palette.fg }}
-      >
+      <div className="font-mono text-[13px] font-bold tabular-nums" style={{ color: palette.fg }}>
         {value ?? '—'}
       </div>
     </div>
@@ -523,21 +552,9 @@ function VaccineTile({
     windowEnd != null &&
     currentGa != null &&
     currentGa > windowEnd;
-  const fg = given
-    ? 'var(--risk-low)'
-    : overdue
-      ? 'var(--risk-high)'
-      : 'var(--ink-navy-muted)';
-  const bg = given
-    ? 'rgba(34, 197, 94, 0.06)'
-    : overdue
-      ? 'rgba(239, 68, 68, 0.08)'
-      : 'white';
-  const accent = given
-    ? 'var(--risk-low)'
-    : overdue
-      ? 'var(--risk-high)'
-      : 'var(--ink-navy-muted)';
+  const fg = given ? 'var(--risk-low)' : overdue ? 'var(--risk-high)' : 'var(--ink-navy-muted)';
+  const bg = given ? 'rgba(34, 197, 94, 0.06)' : overdue ? 'rgba(239, 68, 68, 0.08)' : 'white';
+  const accent = given ? 'var(--risk-low)' : overdue ? 'var(--risk-high)' : 'var(--ink-navy-muted)';
   return (
     <div
       className="flex flex-col gap-1 px-3 py-2"
@@ -548,17 +565,21 @@ function VaccineTile({
     >
       <div className="flex items-baseline gap-1.5">
         <Syringe className="h-3 w-3" style={{ color: accent }} />
-        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: fg }}>
+        <span
+          className="font-mono text-[10px] font-bold uppercase tracking-[0.1em]"
+          style={{ color: fg }}
+        >
           {label}
         </span>
         {subLabel && (
-          <span className="font-mono text-[9px] text-[var(--ink-navy-muted)]">
-            {subLabel}
-          </span>
+          <span className="font-mono text-[9px] text-[var(--ink-navy-muted)]">{subLabel}</span>
         )}
       </div>
       {given ? (
-        <div className="flex items-center gap-1 font-mono text-[12px] font-bold tabular-nums" style={{ color: fg }}>
+        <div
+          className="flex items-center gap-1 font-mono text-[12px] font-bold tabular-nums"
+          style={{ color: fg }}
+        >
           <CheckCircle2 className="h-3 w-3" />
           GIVEN
           {latest?.givenAtGa != null && (
@@ -573,7 +594,10 @@ function VaccineTile({
           )}
         </div>
       ) : (
-        <div className="flex items-center gap-1 font-mono text-[12px] font-bold tabular-nums" style={{ color: fg }}>
+        <div
+          className="flex items-center gap-1 font-mono text-[12px] font-bold tabular-nums"
+          style={{ color: fg }}
+        >
           {overdue ? <AlertTriangle className="h-3 w-3" /> : null}
           {overdue ? 'OVERDUE' : 'NOT GIVEN'}
         </div>
@@ -630,9 +654,7 @@ function MetricTile({
         >
           {value}
         </div>
-        {sub && (
-          <div className="font-mono text-[10px] text-[var(--ink-navy-muted)]">{sub}</div>
-        )}
+        {sub && <div className="font-mono text-[10px] text-[var(--ink-navy-muted)]">{sub}</div>}
       </div>
     </div>
   );
@@ -660,9 +682,7 @@ function Sparkline({
 }) {
   const pts = values.filter((v): v is number => v != null);
   if (pts.length < 1) {
-    return (
-      <span className="font-mono text-[10px] text-[var(--ink-navy-muted)]">—</span>
-    );
+    return <span className="font-mono text-[10px] text-[var(--ink-navy-muted)]">—</span>;
   }
   const min = Math.min(...pts, lowBand ?? Infinity);
   const max = Math.max(...pts, highBand ?? -Infinity);
@@ -670,8 +690,7 @@ function Sparkline({
   const pad = 4;
   const w = width - pad * 2;
   const h = height - pad * 2;
-  const x = (i: number) =>
-    pad + (values.length === 1 ? w / 2 : (i / (values.length - 1)) * w);
+  const x = (i: number) => pad + (values.length === 1 ? w / 2 : (i / (values.length - 1)) * w);
   const y = (v: number) => pad + h - ((v - min) / span) * h;
   const polyPts = values
     .map((v, i) => (v == null ? null : `${x(i)},${y(v)}`))
@@ -681,13 +700,7 @@ function Sparkline({
   const bandY0 = highBand != null ? y(highBand) : null;
   const bandY1 = lowBand != null ? y(lowBand) : null;
   return (
-    <svg
-      width={width}
-      height={height}
-      className="block"
-      role="img"
-      aria-label="trend"
-    >
+    <svg width={width} height={height} className="block" role="img" aria-label="trend">
       {bandY0 != null && bandY1 != null && (
         <rect
           x={0}
@@ -708,8 +721,7 @@ function Sparkline({
       />
       {values.map((v, i) => {
         if (v == null) return null;
-        const abnormal =
-          (lowBand != null && v < lowBand) || (highBand != null && v > highBand);
+        const abnormal = (lowBand != null && v < lowBand) || (highBand != null && v > highBand);
         return (
           <circle
             key={i}
@@ -755,11 +767,10 @@ function TrendRow({
   const delta = current != null && prev != null ? current - prev : null;
   const sev: Severity =
     current == null
-      ? 'normal'
+      ? 'unknown' // no reading this pregnancy — neutral, not the same as a normal value
       : severity
         ? severity(current)
-        : (lowBand != null && current < lowBand) ||
-            (highBand != null && current > highBand)
+        : (lowBand != null && current < lowBand) || (highBand != null && current > highBand)
           ? 'abnormal'
           : 'normal';
   const c = color ?? 'var(--accent-navy)';
@@ -771,10 +782,8 @@ function TrendRow({
         ? 'var(--risk-medium)'
         : 'var(--primary-teal)';
   const valueBg = sevBg(sev);
-  const valueColor =
-    current == null ? 'var(--ink-navy-muted)' : sevColor(sev);
-  const valueBorder =
-    sev === 'normal' ? 'transparent' : sevColor(sev);
+  const valueColor = current == null ? 'var(--ink-navy-muted)' : sevColor(sev);
+  const valueBorder = sev === 'normal' ? 'transparent' : sevColor(sev);
   return (
     <div
       className="grid items-center gap-2 border-b px-3 py-1.5"
@@ -805,10 +814,7 @@ function TrendRow({
           </span>
         )}
         {sev === 'abnormal' && (
-          <AlertTriangle
-            className="ml-0.5 h-3 w-3"
-            style={{ color: 'var(--risk-high)' }}
-          />
+          <AlertTriangle className="ml-0.5 h-3 w-3" style={{ color: 'var(--risk-high)' }} />
         )}
       </div>
       <div
@@ -820,39 +826,10 @@ function TrendRow({
           : '—'}
       </div>
       <div>
-        <Sparkline
-          values={values}
-          lowBand={lowBand}
-          highBand={highBand}
-          color={c}
-        />
+        <Sparkline values={values} lowBand={lowBand} highBand={highBand} color={c} />
       </div>
     </div>
   );
-}
-
-// Compute the next WHO contact-week that hasn't been attended, together
-// with whether it's overdue / due-now / upcoming.
-function nextContactDue(
-  currentGa: number | null,
-  attendedWeeks: number[],
-): { ga: number; status: 'overdue' | 'due-now' | 'upcoming'; weeksAway: number } | null {
-  if (currentGa == null) return null;
-  for (const w of WHO_CONTACT_WEEKS) {
-    const attended = attendedWeeks.some(
-      (v) => Math.abs(v - w) <= WHO_CONTACT_WINDOW_W,
-    );
-    if (attended) continue;
-    const diff = w - currentGa;
-    if (diff < -WHO_CONTACT_WINDOW_W) {
-      return { ga: w, status: 'overdue', weeksAway: diff };
-    }
-    if (Math.abs(diff) <= WHO_CONTACT_WINDOW_W) {
-      return { ga: w, status: 'due-now', weeksAway: diff };
-    }
-    return { ga: w, status: 'upcoming', weeksAway: diff };
-  }
-  return null;
 }
 
 /** GA progress bar with WHO 8-contact schedule overlay. */
@@ -863,6 +840,13 @@ function GaProgressBar({
   gaWeeks: number | null;
   attendedWeeks: number[];
 }) {
+  // WHO containment T2: an unknown GA must never be coerced to 0 — that
+  // made an unknown-GA patient look like an early (T1, on-track) pregnancy
+  // with nothing missed. When GA is unknown we can still show which WHO
+  // contacts were attended (that's a fact from the visit history) but we
+  // cannot say anything about position on the 40-week timeline or which
+  // targets are "missed"/"due" — those all require knowing "now".
+  const gaUnknown = gaWeeks == null;
   const ga = gaWeeks ?? 0;
   const pct = Math.min(100, Math.max(0, (ga / 40) * 100));
   const color =
@@ -892,16 +876,25 @@ function GaProgressBar({
               <span className="text-[9px]">w</span> · {trimester}
             </>
           ) : (
-            '—'
+            <span
+              className="inline-flex items-center gap-1"
+              style={{ color: 'var(--risk-medium)' }}
+            >
+              <AlertTriangle className="h-3 w-3" />— · ไม่ทราบอายุครรภ์
+            </span>
           )}
           <span className="ml-3">
             ATTENDED{' '}
             <span
               className="font-semibold tabular-nums"
               style={{
-                color: attendedCount >= 6 ? 'var(--risk-low)'
-                  : attendedCount >= 3 ? 'var(--accent-navy)'
-                  : 'var(--risk-medium)',
+                color: gaUnknown
+                  ? 'var(--ink-navy-dim)'
+                  : attendedCount >= 6
+                    ? 'var(--risk-low)'
+                    : attendedCount >= 3
+                      ? 'var(--accent-navy)'
+                      : 'var(--risk-medium)',
               }}
             >
               {attendedCount}
@@ -914,16 +907,16 @@ function GaProgressBar({
         className="relative mt-2 h-2 w-full overflow-visible"
         style={{ background: 'var(--surface-sunken)' }}
       >
-        <div style={{ width: `${pct}%`, height: '100%', background: color }} />
+        {/* GA position/"due" marker — only meaningful once GA is known. */}
+        {!gaUnknown && <div style={{ width: `${pct}%`, height: '100%', background: color }} />}
         {WHO_CONTACT_WEEKS.map((week, i) => {
           const hit = attendedWeeks.some((v) => Math.abs(v - week) <= WHO_CONTACT_WINDOW_W);
-          const passed = ga >= week;
+          // Unknown GA: we cannot know whether "now" has passed a target
+          // week, so never render the red "missed" state — only attended
+          // (green) vs not-yet-known (white) dots.
+          const passed = !gaUnknown && ga >= week;
           const missed = passed && !hit;
-          const fill = hit
-            ? 'var(--risk-low)'
-            : missed
-              ? 'var(--risk-high)'
-              : '#ffffff';
+          const fill = hit ? 'var(--risk-low)' : missed ? 'var(--risk-high)' : '#ffffff';
           const border = hit
             ? 'var(--risk-low)'
             : missed
@@ -966,11 +959,7 @@ function GaProgressBar({
 
 // ─── Page ─────────────────────────────────────────────────────────────────
 
-export default function JourneyDetailPage({
-  params,
-}: {
-  params: Promise<{ journeyId: string }>;
-}) {
+export default function JourneyDetailPage({ params }: { params: Promise<{ journeyId: string }> }) {
   const { journeyId } = use(params);
   const router = useRouter();
 
@@ -978,10 +967,18 @@ export default function JourneyDetailPage({
   // throws FetchError on non-2xx so `error` actually populates. The page
   // previously defined a local fetcher that swallowed errors, causing every
   // 404/500 to render the generic "ไม่พบข้อมูลการฝากครรภ์" empty state.
-  const { data, error, isLoading } = useSWR<JourneyDetailResponse>(
+  const { data, error, isLoading, mutate } = useSWR<JourneyDetailResponse>(
     `/api/journeys/${journeyId}`,
-    { refreshInterval: 60000 },
+    { refreshInterval: REFRESH_INTERVAL_MS },
   );
+
+  // Live updates: a webhook/sync touching this patient refreshes the page
+  // (leading edge fires immediately; bursts coalesce — 2026-07-17 incident).
+  const refresh = useMemo(
+    () => debounceLeadingTrailing(() => void mutate(), SSE_REFRESH_DEBOUNCE_MS),
+    [mutate],
+  );
+  useSSE({ onPatientUpdate: refresh, onSyncComplete: refresh });
 
   const journeyName = data?.journey?.name ?? 'Journey';
   useSetBreadcrumbs([
@@ -1022,17 +1019,12 @@ export default function JourneyDetailPage({
     const firstVisitGa = visitsChrono.find((v) => v.gaWeeks != null)?.gaWeeks ?? null;
     // RTCOG OB 66-029 (2566) recommends first ANC contact < 10w. Tightened
     // from 12w (WHO threshold) because Thai guideline is stricter.
-    const lateFirstContact = firstVisitGa != null && firstVisitGa >= 10;
+    const lateFirstContact = isLateFirstContact(firstVisitGa);
 
-    // Pre-pregnancy BMI — only when we have both height (labor record) and the
-    // earliest visit weight. Clinical BMI = kg / (m*m).
-    let bmi: number | null = null;
+    // Pre-pregnancy BMI — from labor-record height and the earliest visit weight.
     const heightCm = j.heightCm;
     const firstWeight = visitsChrono.find((v) => v.weightKg != null)?.weightKg ?? null;
-    if (heightCm && heightCm > 100 && firstWeight && firstWeight > 0) {
-      const m = heightCm / 100;
-      bmi = Math.round((firstWeight / (m * m)) * 10) / 10;
-    }
+    const bmi = prePregnancyBmi(heightCm, firstWeight);
 
     // Lab flags present in the latest risk screen.
     const ruleIds = data.latestRisk?.triggeredRules ?? [];
@@ -1057,58 +1049,22 @@ export default function JourneyDetailPage({
 
     const next = nextContactDue(j.gaWeeks, attendedWeeks);
 
-    // RTCOG OB 66-029 (2566) — investigation-overdue checks. Each fires when
-    // the clinical window has passed without the corresponding result.
-    const ga = j.gaWeeks ?? 0;
-    const overdue: Array<{ key: string; labelTh: string; dueBy: string; severity: 'warn' | 'high' }> = [];
-    if (ga > 22 && !j.anatomyScanDate) {
-      overdue.push({
-        key: 'anatomy_scan',
-        labelTh: 'Anatomy scan (18-22 สัปดาห์)',
-        dueBy: '22w',
-        severity: 'warn',
-      });
-    }
-    if (ga > 30 && (j.ogttResult == null || j.ogttResult === 'PENDING')) {
-      overdue.push({
-        key: 'ogtt',
-        labelTh: 'OGTT (24-28 สัปดาห์)',
-        dueBy: '28w',
-        severity: 'high',
-      });
-    }
-    if (ga >= 37 && (!j.gbsResult || j.gbsResult === 'PENDING')) {
-      overdue.push({
-        key: 'gbs',
-        labelTh: 'GBS culture (35-37 สัปดาห์)',
-        dueBy: '37w',
-        severity: 'high',
-      });
-    }
     // Tdap this pregnancy — scan all visits' vaccinesGiven.
-    const tdapGiven = visitsChrono.some(
-      (v) => (v.vaccinesGiven ?? []).some((vx) => vx.type === 'TDAP'),
+    const tdapGiven = visitsChrono.some((v) =>
+      (v.vaccinesGiven ?? []).some((vx) => vx.type === 'TDAP'),
     );
-    if (ga >= 36 && !tdapGiven) {
-      overdue.push({
-        key: 'tdap',
-        labelTh: 'Tdap (27-36 สัปดาห์)',
-        dueBy: '36w',
-        severity: 'high',
-      });
-    }
-    // Thalassemia screening — once per woman. If any of the three fields is
-    // still null by GA 16, flag it.
-    const thalassemiaDone =
-      j.mcvFl != null || j.dcipResult != null || j.hbEResult != null;
-    if (ga > 16 && !thalassemiaDone) {
-      overdue.push({
-        key: 'thalassemia',
-        labelTh: 'Thalassemia screen (1st visit)',
-        dueBy: '16w',
-        severity: 'warn',
-      });
-    }
+    // RTCOG OB 66-029 (2566) — investigation-overdue checks (centralized in
+    // src/services/anc-clinical.ts).
+    const overdue = overdueInvestigations({
+      gaWeeks: j.gaWeeks,
+      anatomyScanDate: j.anatomyScanDate,
+      ogttResult: j.ogttResult,
+      gbsResult: j.gbsResult,
+      tdapGiven,
+      mcvFl: j.mcvFl,
+      dcipResult: j.dcipResult,
+      hbEResult: j.hbEResult,
+    });
 
     // Iron contraindication — RTCOG: Hb H / β-thal major / β-thal-HbE should
     // NOT receive iron supplementation (iron-overload risk).
@@ -1123,19 +1079,16 @@ export default function JourneyDetailPage({
 
     // Immunization flags — most recent status per type, across all visits.
     const immunization = {
-      tdap: visitsChrono.flatMap((v) =>
-        (v.vaccinesGiven ?? []).filter((x) => x.type === 'TDAP'),
-      ),
+      tdap: visitsChrono.flatMap((v) => (v.vaccinesGiven ?? []).filter((x) => x.type === 'TDAP')),
       influenza: visitsChrono.flatMap((v) =>
         (v.vaccinesGiven ?? []).filter((x) => x.type === 'INFLUENZA'),
       ),
-      covid: visitsChrono.flatMap((v) =>
-        (v.vaccinesGiven ?? []).filter((x) => x.type === 'COVID'),
-      ),
-      ttDoseNo: visitsChrono
-        .map((v) => v.ttDoseNo)
-        .filter((n): n is number => n != null)
-        .pop() ?? null,
+      covid: visitsChrono.flatMap((v) => (v.vaccinesGiven ?? []).filter((x) => x.type === 'COVID')),
+      ttDoseNo:
+        visitsChrono
+          .map((v) => v.ttDoseNo)
+          .filter((n): n is number => n != null)
+          .pop() ?? null,
     };
 
     return {
@@ -1149,7 +1102,12 @@ export default function JourneyDetailPage({
       bmi,
       heightCm,
       labFlags,
-      bpSys, bpDia, weight, hb, fh, fhr,
+      bpSys,
+      bpDia,
+      weight,
+      hb,
+      fh,
+      fhr,
       next,
       overdue,
       ironContra,
@@ -1170,12 +1128,8 @@ export default function JourneyDetailPage({
       error && typeof error === 'object' && 'status' in error
         ? (error as { status: number }).status
         : null;
-    const apiMessage =
-      error instanceof Error
-        ? error.message
-        : 'ไม่พบข้อมูลการฝากครรภ์';
-    const heading =
-      status === 404 ? 'ไม่พบข้อมูลการฝากครรภ์' : 'เกิดข้อผิดพลาด';
+    const apiMessage = error instanceof Error ? error.message : 'ไม่พบข้อมูลการฝากครรภ์';
+    const heading = status === 404 ? 'ไม่พบข้อมูลการฝากครรภ์' : 'เกิดข้อผิดพลาด';
     const Icon = status === 404 ? Baby : AlertTriangle;
     return (
       <div
@@ -1183,13 +1137,9 @@ export default function JourneyDetailPage({
         style={{ background: 'var(--surface-cool)', minHeight: '100%' }}
       >
         <Icon className="h-10 w-10 text-[var(--ink-navy-muted)] opacity-50" />
-        <p className="font-mono text-[12px] text-[var(--ink-navy-muted)]">
-          {heading}
-        </p>
+        <p className="font-mono text-[12px] text-[var(--ink-navy-muted)]">{heading}</p>
         {error ? (
-          <p className="max-w-md text-center font-mono text-[11px] text-red-600">
-            {apiMessage}
-          </p>
+          <p className="max-w-md text-center font-mono text-[11px] text-red-600">{apiMessage}</p>
         ) : null}
         <button
           onClick={() => router.back()}
@@ -1202,15 +1152,19 @@ export default function JourneyDetailPage({
     );
   }
 
-  const { journey, ancVisits, latestRisk, referrals, newborns } = data;
+  const { journey, ancVisits, latestRisk, ancAssessment, referrals, newborns } = data;
   const riskColor = ANC_RISK_COLOR[journey.ancRiskLevel ?? ''] ?? 'var(--ink-navy-muted)';
   const riskLabel = journey.ancRiskLevel
-    ? ANC_RISK_LABEL_TH[journey.ancRiskLevel] ?? journey.ancRiskLevel
+    ? (ANC_RISK_LABEL_TH[journey.ancRiskLevel] ?? journey.ancRiskLevel)
     : null;
   const stageColor = STAGE_COLOR[journey.careStage] ?? 'var(--ink-navy-muted)';
   const stageLabel = STAGE_LABEL_TH[journey.careStage] ?? journey.careStage;
   const isReferred = !!journey.currentHcode && journey.currentHcode !== journey.hcode;
   const highRisk = journey.ancRiskLevel === 'HR2' || journey.ancRiskLevel === 'HR3';
+  // WHO containment T2 — WhoContactSchedule is a 3-way discriminated union
+  // (UNKNOWN_GA / COMPLETE / NEXT). Shared by the NEXT DUE tile and the
+  // next-action rail below so both sites stay in sync.
+  const nextSchedule = derived?.next;
 
   return (
     <div
@@ -1231,12 +1185,33 @@ export default function JourneyDetailPage({
         >
           <ArrowLeft className="h-3.5 w-3.5" /> BACK
         </button>
+        <KpiTip
+          title="ความสดของข้อมูล"
+          body={`เวลาที่ระบบเขียนข้อมูลการฝากครรภ์รายนี้จาก HOSxP/webhook ครั้งล่าสุด — เกิน 60 นาทีจุดเป็นสีเหลือง เกิน 24 ชั่วโมงเป็นสีแดง`}
+          trigger={
+            <div
+              data-testid="sync-stamp"
+              className="flex cursor-default items-center gap-1.5 font-mono text-[11px] text-[var(--ink-navy-muted)]"
+            />
+          }
+        >
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{
+              background: SYNC_DOT[classifySyncHealth('OK', journey.syncedAt ?? null, new Date())],
+            }}
+          />
+          ข้อมูลจาก HOSxP · อัปเดต {formatRelativeAge(journey.syncedAt ?? null)}ที่แล้ว
+        </KpiTip>
         <div className="flex items-center gap-2">
           {journey.ancRiskLevel && (
             <Pill
               label={`${journey.ancRiskLevel}${riskLabel ? ` · ${riskLabel}` : ''}`}
               color={riskColor}
             />
+          )}
+          {ancAssessment?.incomplete && (
+            <IncompleteAssessmentMarker missingCount={ancAssessment.missingRequired.length} />
           )}
           <Pill label={stageLabel.toUpperCase()} color={stageColor} />
         </div>
@@ -1247,8 +1222,7 @@ export default function JourneyDetailPage({
         className="px-5 py-3"
         style={{
           borderBottom: '1px solid var(--rule-strong)',
-          background:
-            'linear-gradient(90deg, var(--accent-navy-soft) 0%, #f4f6fb 70%, white 100%)',
+          background: 'linear-gradient(90deg, var(--accent-navy-soft) 0%, #f4f6fb 70%, white 100%)',
         }}
       >
         <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--accent-navy)]">
@@ -1277,19 +1251,44 @@ export default function JourneyDetailPage({
               <span className="font-mono tracking-[0.05em]">
                 G<span className="font-semibold text-[var(--ink-navy)]">{journey.gravida}</span>
                 {journey.termBirths != null && (
-                  <>·T<span className="font-semibold text-[var(--ink-navy)]">{journey.termBirths}</span></>
+                  <>
+                    ·T
+                    <span className="font-semibold text-[var(--ink-navy)]">
+                      {journey.termBirths}
+                    </span>
+                  </>
                 )}
                 {journey.pretermBirths != null && (
-                  <>·P<span className="font-semibold text-[var(--ink-navy)]">{journey.pretermBirths}</span></>
+                  <>
+                    ·P
+                    <span className="font-semibold text-[var(--ink-navy)]">
+                      {journey.pretermBirths}
+                    </span>
+                  </>
                 )}
                 {journey.abortions != null && (
-                  <>·A<span className="font-semibold text-[var(--ink-navy)]">{journey.abortions}</span></>
+                  <>
+                    ·A
+                    <span className="font-semibold text-[var(--ink-navy)]">
+                      {journey.abortions}
+                    </span>
+                  </>
                 )}
                 {journey.livingChildren != null && (
-                  <>·L<span className="font-semibold text-[var(--ink-navy)]">{journey.livingChildren}</span></>
+                  <>
+                    ·L
+                    <span className="font-semibold text-[var(--ink-navy)]">
+                      {journey.livingChildren}
+                    </span>
+                  </>
                 )}
                 {journey.termBirths == null && journey.pretermBirths == null && (
-                  <>·P<span className="font-semibold text-[var(--ink-navy)]">{journey.para ?? '?'}</span></>
+                  <>
+                    ·P
+                    <span className="font-semibold text-[var(--ink-navy)]">
+                      {journey.para ?? '?'}
+                    </span>
+                  </>
                 )}
               </span>
             )}
@@ -1341,6 +1340,50 @@ export default function JourneyDetailPage({
         </div>
       </div>
 
+      {/* ─── Labor cross-link — once admitted, jump straight to the labor
+          detail (partograph, vitals) the ward is charting right now. ─── */}
+      {data.laborAdmission &&
+        (() => {
+          const la = data.laborAdmission!;
+          const delivered = la.laborStatus === 'DELIVERED' || la.laborStatus === 'DISCHARGED';
+          const accent = delivered ? 'var(--risk-low)' : 'var(--risk-medium)';
+          return (
+            <div
+              className="flex flex-wrap items-center justify-between gap-2 px-5 py-2"
+              style={{
+                borderBottom: '1px solid var(--rule-strong)',
+                borderLeft: `3px solid ${accent}`,
+                background: `color-mix(in srgb, ${accent} 7%, white)`,
+              }}
+            >
+              <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-[var(--ink-navy-dim)]">
+                <Activity className="h-3.5 w-3.5" style={{ color: accent }} />
+                <span className="font-bold uppercase tracking-[0.1em]" style={{ color: accent }}>
+                  LABOR RECORD
+                </span>
+                <span>
+                  AN <span className="font-semibold text-[var(--ink-navy)]">{la.an}</span>
+                </span>
+                <span>
+                  ADMIT{' '}
+                  <span className="font-semibold text-[var(--ink-navy)]">
+                    {formatThaiDateTime(la.admitDate)}
+                  </span>
+                </span>
+                <Pill label={LABOR_STATUS_TH[la.laborStatus] ?? la.laborStatus} color={accent} />
+              </div>
+              <Link
+                data-testid="labor-admission-link"
+                href={`/patients/${la.hcode}-${la.an}`}
+                className="inline-flex items-center gap-1 rounded-sm px-2 py-1 font-mono text-[11px] font-bold tracking-[0.06em] text-white transition-colors hover:opacity-90"
+                style={{ background: 'var(--accent-navy)' }}
+              >
+                เปิดข้อมูลห้องคลอด / Partograph →
+              </Link>
+            </div>
+          );
+        })()}
+
       {/* ─── Pregnancy summary strip (6 tiles) ─── */}
       <div
         className="grid bg-white"
@@ -1349,117 +1392,161 @@ export default function JourneyDetailPage({
           borderBottom: '1px solid var(--rule-strong)',
         }}
       >
-        <MetricTile
-          label="GA"
-          value={journey.gaWeeks != null ? `${journey.gaWeeks}w` : '—'}
-          sub={
-            journey.gaWeeks != null
-              ? journey.gaWeeks >= 37
-                ? 'Term'
-                : journey.gaWeeks >= 28
-                  ? 'Third tri'
-                  : journey.gaWeeks >= 14
-                    ? 'Second tri'
-                    : 'First tri'
-              : undefined
-          }
-          color={
-            journey.gaWeeks != null && journey.gaWeeks >= 41
-              ? 'var(--risk-high)'
-              : 'var(--accent-navy)'
-          }
-          icon={<Clock className="h-3 w-3" />}
-          tone="bold"
-        />
-        <MetricTile
-          label="EDC"
-          value={formatThaiShort(journey.edc)}
-          sub={
-            derived?.daysToEdc != null
-              ? derived.daysToEdc > 0
-                ? `อีก ${derived.daysToEdc} วัน`
-                : `เลย ${Math.abs(derived.daysToEdc)} วัน`
-              : 'วันกำหนดคลอด'
-          }
-          color={
-            derived?.daysToEdc != null && derived.daysToEdc < 0
-              ? 'var(--risk-high)'
-              : 'var(--primary-teal)'
-          }
-          icon={<Calendar className="h-3 w-3" />}
-        />
-        <MetricTile
-          label="LMP"
-          value={formatThaiShort(journey.lmp)}
-          sub="ประจำเดือนครั้งสุดท้าย"
-          color="var(--ink-navy-muted)"
-          icon={<Calendar className="h-3 w-3" />}
-        />
-        <MetricTile
-          label="ANC VISITS"
-          value={journey.ancVisitCount}
-          sub={
-            derived?.daysSinceLastAnc != null
-              ? `ครั้งล่าสุด ${derived.daysSinceLastAnc}d ago`
-              : 'ยังไม่มีนัด'
-          }
-          color={
-            derived?.daysSinceLastAnc != null && derived.daysSinceLastAnc > 28
-              ? 'var(--risk-high)'
-              : 'var(--accent-navy)'
-          }
-          icon={<Activity className="h-3 w-3" />}
-        />
-        <MetricTile
-          label="1ST CONTACT"
-          value={derived?.firstVisitGa != null ? `${derived.firstVisitGa}w` : '—'}
-          sub={
-            derived?.lateFirstContact
-              ? 'LATE — RTCOG < 10w'
-              : derived?.firstVisitGa != null
-                ? 'RTCOG on-time'
+        <KpiTip
+          title="อายุครรภ์ (GA)"
+          body="อายุครรภ์เป็นสัปดาห์จาก HOSxP (หรือคำนวณย้อนจาก EDC เมื่อไม่มีค่า) — ครบกำหนดที่ 37 สัปดาห์, เกิน 41 สัปดาห์แสดงสีแดง (post-term)"
+          trigger={<div className="cursor-default" />}
+        >
+          <MetricTile
+            label="GA"
+            value={journey.gaWeeks != null ? `${journey.gaWeeks}w` : '—'}
+            sub={
+              journey.gaWeeks != null
+                ? journey.gaWeeks >= 37
+                  ? 'Term'
+                  : journey.gaWeeks >= 28
+                    ? 'Third tri'
+                    : journey.gaWeeks >= 14
+                      ? 'Second tri'
+                      : 'First tri'
                 : undefined
-          }
-          color={derived?.lateFirstContact ? 'var(--risk-high)' : 'var(--risk-low)'}
-          icon={<TrendingUp className="h-3 w-3" />}
-        />
-        <MetricTile
-          label="NEXT DUE"
-          value={
-            derived?.next
-              ? `${derived.next.ga}w`
-              : 'ครบกำหนด'
-          }
-          sub={
-            derived?.next
-              ? derived.next.status === 'overdue'
-                ? `เลย ${Math.abs(derived.next.weeksAway)}w`
-                : derived.next.status === 'due-now'
-                  ? 'นัดครั้งถัดไป'
-                  : `อีก ${derived.next.weeksAway}w`
-              : 'ครบ 8 contact'
-          }
-          color={
-            derived?.next?.status === 'overdue'
-              ? 'var(--risk-high)'
-              : derived?.next?.status === 'due-now'
-                ? 'var(--risk-medium)'
-                : 'var(--risk-low)'
-          }
-          icon={<AlertTriangle className="h-3 w-3" />}
-          tone="bold"
-        />
+            }
+            color={
+              journey.gaWeeks != null && journey.gaWeeks >= 41
+                ? 'var(--risk-high)'
+                : 'var(--accent-navy)'
+            }
+            icon={<Clock className="h-3 w-3" />}
+            tone="bold"
+          />
+        </KpiTip>
+        <KpiTip
+          title="วันกำหนดคลอด (EDC)"
+          body="นับถอยหลังถึงวันกำหนดคลอด — เลยกำหนดแล้วแสดงสีแดง ควรประเมินการชักนำคลอด/ติดตามใกล้ชิด"
+          trigger={<div className="cursor-default" />}
+        >
+          <MetricTile
+            label="EDC"
+            value={formatThaiShort(journey.edc)}
+            sub={
+              derived?.daysToEdc != null
+                ? derived.daysToEdc > 0
+                  ? `อีก ${derived.daysToEdc} วัน`
+                  : `เลย ${Math.abs(derived.daysToEdc)} วัน`
+                : 'วันกำหนดคลอด'
+            }
+            color={
+              derived?.daysToEdc != null && derived.daysToEdc < 0
+                ? 'var(--risk-high)'
+                : 'var(--primary-teal)'
+            }
+            icon={<Calendar className="h-3 w-3" />}
+          />
+        </KpiTip>
+        <KpiTip
+          title="ประจำเดือนครั้งสุดท้าย (LMP)"
+          body="วันแรกของประจำเดือนครั้งสุดท้าย — ฐานการคำนวณ GA/EDC เมื่อไม่มีอัลตราซาวด์กำหนดอายุครรภ์"
+          trigger={<div className="cursor-default" />}
+        >
+          <MetricTile
+            label="LMP"
+            value={formatThaiShort(journey.lmp)}
+            sub="ประจำเดือนครั้งสุดท้าย"
+            color="var(--ink-navy-muted)"
+            icon={<Calendar className="h-3 w-3" />}
+          />
+        </KpiTip>
+        <KpiTip
+          title="จำนวนครั้งฝากครรภ์"
+          body="จำนวนครั้ง ANC ทั้งหมดของครรภ์นี้ (ทุกโรงพยาบาล) — สีแดงเมื่อห่างจากครั้งล่าสุดเกิน 28 วัน"
+          trigger={<div className="cursor-default" />}
+        >
+          <MetricTile
+            label="ANC VISITS"
+            value={journey.ancVisitCount}
+            sub={
+              derived?.daysSinceLastAnc != null
+                ? `ครั้งล่าสุด ${derived.daysSinceLastAnc}d ago`
+                : 'ยังไม่มีนัด'
+            }
+            color={
+              derived?.daysSinceLastAnc != null && derived.daysSinceLastAnc > 28
+                ? 'var(--risk-high)'
+                : 'var(--accent-navy)'
+            }
+            icon={<Activity className="h-3 w-3" />}
+          />
+        </KpiTip>
+        <KpiTip
+          title="ฝากครรภ์ครั้งแรก"
+          body="GA ของการฝากครรภ์ครั้งแรก — RTCOG OB 66-029 แนะนำให้ฝากครรภ์ครั้งแรกก่อน 10 สัปดาห์ (เข้มกว่าเกณฑ์ WHO 12 สัปดาห์)"
+          trigger={<div className="cursor-default" />}
+        >
+          <MetricTile
+            label="1ST CONTACT"
+            value={derived?.firstVisitGa != null ? `${derived.firstVisitGa}w` : '—'}
+            sub={
+              derived?.lateFirstContact
+                ? 'LATE — RTCOG < 10w'
+                : derived?.firstVisitGa != null
+                  ? 'RTCOG on-time'
+                  : undefined
+            }
+            color={
+              derived?.firstVisitGa == null
+                ? 'var(--ink-navy-muted)'
+                : derived.lateFirstContact
+                  ? 'var(--risk-high)'
+                  : 'var(--risk-low)'
+            }
+            icon={<TrendingUp className="h-3 w-3" />}
+          />
+        </KpiTip>
+        <KpiTip
+          title="นัดถัดไป (WHO 8-contact)"
+          body="WHO contact ครั้งถัดไปตามตารางนัด 8 ครั้ง เทียบกับ GA ปัจจุบันและครั้งที่มาแล้ว — เลยกำหนดแสดงสีแดง ควรติดตามตัว ไม่ทราบอายุครรภ์จะประเมินตารางนัดไม่ได้"
+          trigger={<div className="cursor-default" />}
+        >
+          <MetricTile
+            label="NEXT DUE"
+            value={
+              nextSchedule?.status === 'NEXT'
+                ? `${nextSchedule.ga}w`
+                : nextSchedule?.status === 'UNKNOWN_GA'
+                  ? '—'
+                  : 'ครบกำหนด'
+            }
+            sub={
+              nextSchedule?.status === 'NEXT'
+                ? nextSchedule.dueStatus === 'overdue'
+                  ? `เลย ${Math.abs(nextSchedule.weeksAway)}w`
+                  : nextSchedule.dueStatus === 'due-now'
+                    ? 'นัดครั้งถัดไป'
+                    : `อีก ${nextSchedule.weeksAway}w`
+                : nextSchedule?.status === 'UNKNOWN_GA'
+                  ? 'ไม่ทราบอายุครรภ์ — ประเมินตารางนัดไม่ได้'
+                  : 'ครบ 8 contact'
+            }
+            color={
+              nextSchedule?.status === 'NEXT'
+                ? nextSchedule.dueStatus === 'overdue'
+                  ? 'var(--risk-high)'
+                  : nextSchedule.dueStatus === 'due-now'
+                    ? 'var(--risk-medium)'
+                    : 'var(--risk-low)'
+                : nextSchedule?.status === 'UNKNOWN_GA'
+                  ? 'var(--risk-medium)'
+                  : 'var(--risk-low)'
+            }
+            icon={<AlertTriangle className="h-3 w-3" />}
+            tone="bold"
+          />
+        </KpiTip>
       </div>
 
       {/* ─── WHO 8-contact progress ─── */}
-      <div
-        className="bg-white px-5 py-3"
-        style={{ borderBottom: '1px solid var(--rule-strong)' }}
-      >
-        <GaProgressBar
-          gaWeeks={journey.gaWeeks}
-          attendedWeeks={derived?.attendedWeeks ?? []}
-        />
+      <div className="bg-white px-5 py-3" style={{ borderBottom: '1px solid var(--rule-strong)' }}>
+        <GaProgressBar gaWeeks={journey.gaWeeks} attendedWeeks={derived?.attendedWeeks ?? []} />
       </div>
 
       {/* ═══ 2-col main ═══ */}
@@ -1469,7 +1556,6 @@ export default function JourneyDetailPage({
       >
         {/* ─── LEFT: timeline + trends + labs ─── */}
         <div className="min-w-0 border-r border-[var(--rule-strong)] bg-white p-5 space-y-6">
-
           {/* 01 — Vital trends (new) */}
           <section>
             <SectionLabel
@@ -1478,10 +1564,7 @@ export default function JourneyDetailPage({
             >
               Vital trends
             </SectionLabel>
-            <div
-              className="mt-2 border bg-white"
-              style={{ borderColor: 'var(--rule-strong)' }}
-            >
+            <div className="mt-2 border bg-white" style={{ borderColor: 'var(--rule-strong)' }}>
               {(derived?.visitsChrono.length ?? 0) === 0 ? (
                 <div className="px-4 py-8 text-center font-mono text-[11px] text-[var(--ink-navy-muted)]">
                   ยังไม่มีข้อมูลเพียงพอสำหรับแสดงแนวโน้ม
@@ -1509,11 +1592,7 @@ export default function JourneyDetailPage({
                     highBand={BP_SYS_HIGH}
                     color="var(--risk-medium)"
                     severity={(v) =>
-                      v >= BP_SYS_HIGH
-                        ? 'abnormal'
-                        : v >= BP_SYS_AMBER
-                          ? 'borderline'
-                          : 'normal'
+                      v >= BP_SYS_HIGH ? 'abnormal' : v >= BP_SYS_AMBER ? 'borderline' : 'normal'
                     }
                   />
                   <TrendRow
@@ -1523,11 +1602,7 @@ export default function JourneyDetailPage({
                     highBand={BP_DIA_HIGH}
                     color="var(--risk-medium)"
                     severity={(v) =>
-                      v >= BP_DIA_HIGH
-                        ? 'abnormal'
-                        : v >= BP_DIA_AMBER
-                          ? 'borderline'
-                          : 'normal'
+                      v >= BP_DIA_HIGH ? 'abnormal' : v >= BP_DIA_AMBER ? 'borderline' : 'normal'
                     }
                   />
                   <TrendRow
@@ -1571,7 +1646,11 @@ export default function JourneyDetailPage({
           <section>
             <SectionLabel
               idx={2}
-              right={<span>{ancVisits.length} VISIT{ancVisits.length === 1 ? '' : 'S'}</span>}
+              right={
+                <span>
+                  {ancVisits.length} VISIT{ancVisits.length === 1 ? '' : 'S'}
+                </span>
+              }
             >
               ANC visit timeline
             </SectionLabel>
@@ -1614,22 +1693,41 @@ export default function JourneyDetailPage({
                   </div>
                   {derived!.visitsChrono.map((v, idx, arr) => {
                     const prev = idx > 0 ? arr[idx - 1] : null;
-                    const gap = prev
-                      ? daysBetween(prev.visitDate, v.visitDate)
-                      : null;
+                    const gap = prev ? daysBetween(prev.visitDate, v.visitDate) : null;
                     const bpSev = sevBp(v.bpSystolic, v.bpDiastolic);
                     const fhrSev = sevFhr(v.fetalHr);
                     const hbSev = sevHb(v.hbGDl);
+                    const urineProteinSev = sevUrineProtein(v.urineProtein);
+                    const fetalMovementSev = sevFetalMovement(v.fetalMovementOk);
                     const bpHigh = bpSev === 'abnormal';
-                    const proteinuria = v.urineProtein != null && /\+/.test(v.urineProtein);
+                    const proteinuria = urineProteinSev === 'abnormal';
                     const glucosuria = v.urineGlucose != null && /\+/.test(v.urineGlucose);
-                    const anemia = hbSev !== 'normal';
+                    const anemia = hbSev === 'borderline' || hbSev === 'abnormal';
                     const severeAnemia = hbSev === 'abnormal';
                     const preeclampsiaSuspect = bpHigh && proteinuria;
-                    const reducedFm = v.fetalMovementOk === false;
+                    const reducedFm = fetalMovementSev === 'abnormal';
                     const dangers = v.dangerSigns ?? [];
-                    const anyFlag = bpSev !== 'normal' || fhrSev !== 'normal' || proteinuria || glucosuria ||
-                      anemia || preeclampsiaSuspect || reducedFm || dangers.length > 0;
+                    // 'unknown' (missing data) must never widen this — only a
+                    // known abnormal/borderline finding raises a flag.
+                    const anyFlag =
+                      bpSev === 'abnormal' ||
+                      bpSev === 'borderline' ||
+                      fhrSev === 'abnormal' ||
+                      proteinuria ||
+                      glucosuria ||
+                      anemia ||
+                      preeclampsiaSuspect ||
+                      reducedFm ||
+                      dangers.length > 0;
+                    // No known flag fired, but at least one of the five core
+                    // checks couldn't be evaluated — this visit is not fully
+                    // recorded, which is distinct from "checked and normal".
+                    const anyUnknown =
+                      bpSev === 'unknown' ||
+                      fhrSev === 'unknown' ||
+                      hbSev === 'unknown' ||
+                      urineProteinSev === 'unknown' ||
+                      fetalMovementSev === 'unknown';
                     return (
                       <div
                         // Composite key: HOSxP can store duplicate visit_number
@@ -1676,16 +1774,12 @@ export default function JourneyDetailPage({
                             <span className="text-[10px] text-[var(--ink-navy-muted)]">w</span>
                           )}
                         </div>
-                        <div className="font-mono tabular-nums">
-                          {v.fundalHeightCm ?? '—'}
-                        </div>
-                        <div className="font-mono tabular-nums">
-                          {v.weightKg ?? '—'}
-                        </div>
+                        <div className="font-mono tabular-nums">{v.fundalHeightCm ?? '—'}</div>
+                        <div className="font-mono tabular-nums">{v.weightKg ?? '—'}</div>
                         <div
                           className={cn(
                             'inline-flex items-center justify-start rounded-sm px-1.5 font-mono tabular-nums',
-                            bpSev !== 'normal' && 'font-bold',
+                            (bpSev === 'abnormal' || bpSev === 'borderline') && 'font-bold',
                           )}
                           style={{
                             color: sevColor(bpSev),
@@ -1699,7 +1793,7 @@ export default function JourneyDetailPage({
                         <div
                           className={cn(
                             'inline-flex items-center justify-start rounded-sm px-1.5 font-mono tabular-nums',
-                            fhrSev !== 'normal' && 'font-bold',
+                            fhrSev === 'abnormal' && 'font-bold',
                           )}
                           style={{
                             color: sevColor(fhrSev),
@@ -1712,7 +1806,8 @@ export default function JourneyDetailPage({
                           className="font-mono text-[11px] tracking-[0.04em]"
                           style={{
                             color:
-                              v.presentation && /BR|B|BREECH|ก้น|TR|T|OBL|ขวาง/i.test(v.presentation)
+                              v.presentation &&
+                              /BR|B|BREECH|ก้น|TR|T|OBL|ขวาง/i.test(v.presentation)
                                 ? 'var(--risk-medium)'
                                 : undefined,
                           }}
@@ -1757,11 +1852,12 @@ export default function JourneyDetailPage({
                             <VisitChip label={`PROT ${v.urineProtein}`} color="var(--risk-high)" />
                           )}
                           {glucosuria && (
-                            <VisitChip label={`GLUC ${v.urineGlucose}`} color="var(--risk-medium)" />
+                            <VisitChip
+                              label={`GLUC ${v.urineGlucose}`}
+                              color="var(--risk-medium)"
+                            />
                           )}
-                          {reducedFm && (
-                            <VisitChip label="FM↓" color="var(--risk-high)" />
-                          )}
+                          {reducedFm && <VisitChip label="FM↓" color="var(--risk-high)" />}
                           {dangers.map((d) => (
                             <VisitChip key={d} label={dangerLabel(d)} color="var(--risk-high)" />
                           ))}
@@ -1771,12 +1867,15 @@ export default function JourneyDetailPage({
                           {v.ironFolicGiven && (
                             <VisitChip label="Fe+FA" color="var(--ink-navy-muted)" />
                           )}
-                          {v.calciumGiven && (
-                            <VisitChip label="Ca" color="var(--ink-navy-muted)" />
-                          )}
-                          {!anyFlag && (
+                          {v.calciumGiven && <VisitChip label="Ca" color="var(--ink-navy-muted)" />}
+                          {!anyFlag && !anyUnknown && (
                             <span className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--risk-low)]">
                               <CheckCircle2 className="h-2.5 w-2.5" /> OK
+                            </span>
+                          )}
+                          {!anyFlag && anyUnknown && (
+                            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--risk-medium)]">
+                              <HelpCircle className="h-2.5 w-2.5" /> ไม่ได้บันทึกครบ
                             </span>
                           )}
                         </div>
@@ -1828,7 +1927,8 @@ export default function JourneyDetailPage({
                     ห้ามให้ iron supplement
                   </div>
                   <div className="text-[12px] leading-snug text-[var(--ink-navy-dim)]">
-                    ผู้ป่วยมี <b>{derived.ironContra}</b> — ต้องงดธาตุเหล็ก (RTCOG OB 66-029 เนื่องจากภาวะ iron overload)
+                    ผู้ป่วยมี <b>{derived.ironContra}</b> — ต้องงดธาตุเหล็ก (RTCOG OB 66-029
+                    เนื่องจากภาวะ iron overload)
                   </div>
                 </div>
               </div>
@@ -1919,11 +2019,7 @@ export default function JourneyDetailPage({
                   label="MCV (fL)"
                   value={journey.mcvFl != null ? String(journey.mcvFl) : null}
                   status={
-                    journey.mcvFl == null
-                      ? 'missing'
-                      : journey.mcvFl < 80
-                        ? 'abnormal'
-                        : 'normal'
+                    journey.mcvFl == null ? 'missing' : journey.mcvFl < 80 ? 'abnormal' : 'normal'
                   }
                 />
                 <LabTile
@@ -1951,15 +2047,12 @@ export default function JourneyDetailPage({
                 <LabTile
                   label="THAL TYPE"
                   value={
-                    journey.thalassemiaType
-                      ? journey.thalassemiaType.replace(/_/g, ' ')
-                      : null
+                    journey.thalassemiaType ? journey.thalassemiaType.replace(/_/g, ' ') : null
                   }
                   status={
                     !journey.thalassemiaType
                       ? 'missing'
-                      : journey.thalassemiaType === 'NORMAL' ||
-                          journey.thalassemiaType === 'TRAIT'
+                      : journey.thalassemiaType === 'NORMAL' || journey.thalassemiaType === 'TRAIT'
                         ? 'normal'
                         : 'abnormal'
                   }
@@ -2033,6 +2126,99 @@ export default function JourneyDetailPage({
                 </div>
               </div>
             )}
+
+            {/* Sub-group 3d — High-risk history (RTCOG OB 66-029 booking
+                flags). Only renders when at least one flag/value is present. */}
+            {(() => {
+              const hxFlags: Array<{ key: string; label: string; color: string }> = [];
+              if (journey.priorPeDvt)
+                hxFlags.push({ key: 'pe', label: 'เคยมี PE/DVT', color: 'var(--risk-high)' });
+              if (journey.severeLungDisease)
+                hxFlags.push({ key: 'lung', label: 'โรคปอดรุนแรง', color: 'var(--risk-high)' });
+              if (journey.alloimmunizationCde)
+                hxFlags.push({
+                  key: 'allo',
+                  label: 'Alloimmunization (CDE)',
+                  color: 'var(--risk-high)',
+                });
+              if (journey.bariatricSurgeryHx)
+                hxFlags.push({
+                  key: 'bariatric',
+                  label: 'เคยผ่าตัดลดขนาดกระเพาะ',
+                  color: 'var(--risk-medium)',
+                });
+              if (journey.teratogenExposure)
+                hxFlags.push({
+                  key: 'teratogen',
+                  label: 'สัมผัสสารก่อวิรูป (teratogen)',
+                  color: 'var(--risk-medium)',
+                });
+              if (journey.congenitalInfection)
+                hxFlags.push({
+                  key: 'congenital',
+                  label: 'ติดเชื้อก่อวิรูปแต่กำเนิด',
+                  color: 'var(--risk-medium)',
+                });
+              const hasValues =
+                journey.proteinuria24hMg != null ||
+                journey.creatinineMgDl != null ||
+                (journey.gdmRiskFactors?.length ?? 0) > 0;
+              if (hxFlags.length === 0 && !hasValues) return null;
+              return (
+                <div
+                  data-testid="high-risk-history"
+                  className="mt-3 border bg-white px-4 py-3"
+                  style={{
+                    borderColor: 'var(--rule-strong)',
+                    borderLeft: '3px solid var(--risk-medium)',
+                  }}
+                >
+                  <KpiTip
+                    title="ประวัติเสี่ยงสูง"
+                    body="ปัจจัยเสี่ยงระดับประวัติจากระเบียนฝากครรภ์ (RTCOG OB 66-029) — แสดงเฉพาะข้อที่มีข้อมูล; โปรตีนปัสสาวะ 24 ชม. แดงเมื่อเข้าเกณฑ์ครรภ์เป็นพิษ"
+                    trigger={
+                      <div className="cursor-default font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]" />
+                    }
+                  >
+                    HIGH-RISK HISTORY · ประวัติเสี่ยงสูง
+                  </KpiTip>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {hxFlags.map((f) => (
+                      <FlagChip key={f.key} color={f.color}>
+                        {f.label}
+                      </FlagChip>
+                    ))}
+                    {journey.proteinuria24hMg != null && (
+                      <FlagChip
+                        color={
+                          journey.proteinuria24hMg >= PROTEINURIA_24H_HIGH_MG
+                            ? 'var(--risk-high)'
+                            : 'var(--ink-navy-muted)'
+                        }
+                      >
+                        โปรตีนปัสสาวะ 24 ชม. {journey.proteinuria24hMg} mg
+                      </FlagChip>
+                    )}
+                    {journey.creatinineMgDl != null && (
+                      <FlagChip
+                        color={
+                          journey.creatinineMgDl > CREATININE_HIGH_MG_DL
+                            ? 'var(--risk-high)'
+                            : 'var(--ink-navy-muted)'
+                        }
+                      >
+                        Creatinine {journey.creatinineMgDl} mg/dL
+                      </FlagChip>
+                    )}
+                    {(journey.gdmRiskFactors ?? []).map((g) => (
+                      <FlagChip key={g} color="var(--risk-medium)">
+                        GDM: {g}
+                      </FlagChip>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </section>
 
           {/* 04 — Immunization (RTCOG: Tdap every pregnancy 27-36w) */}
@@ -2085,10 +2271,7 @@ export default function JourneyDetailPage({
 
           {/* 05 — Ultrasound timeline (T1 dating, T2 anatomy, T3 wellbeing) */}
           <section>
-            <SectionLabel
-              idx={5}
-              right={<span>T1 DATING · T2 ANATOMY · T3 WELLBEING</span>}
-            >
+            <SectionLabel idx={5} right={<span>T1 DATING · T2 ANATOMY · T3 WELLBEING</span>}>
               Ultrasound &amp; fetal wellbeing
             </SectionLabel>
             <div
@@ -2105,16 +2288,13 @@ export default function JourneyDetailPage({
                 </div>
                 <div className="text-[12px] text-[var(--ink-navy)]">
                   {journey.datingMethod ? (
-                    <span className="font-semibold">
-                      {journey.datingMethod}
-                    </span>
+                    <span className="font-semibold">{journey.datingMethod}</span>
                   ) : (
                     <span className="text-[var(--ink-navy-muted)]">— ไม่ระบุวิธี —</span>
                   )}
                 </div>
                 <div className="font-mono text-[10px] text-[var(--ink-navy-muted)]">
-                  LMP {formatThaiShort(journey.lmp)} · EDC{' '}
-                  {formatThaiShort(journey.edc)}
+                  LMP {formatThaiShort(journey.lmp)} · EDC {formatThaiShort(journey.edc)}
                 </div>
               </div>
 
@@ -2149,14 +2329,10 @@ export default function JourneyDetailPage({
                     className="text-[12px]"
                     style={{
                       color:
-                        (journey.gaWeeks ?? 0) > 22
-                          ? 'var(--risk-high)'
-                          : 'var(--ink-navy-muted)',
+                        (journey.gaWeeks ?? 0) > 22 ? 'var(--risk-high)' : 'var(--ink-navy-muted)',
                     }}
                   >
-                    {(journey.gaWeeks ?? 0) > 22
-                      ? 'OVERDUE — ยังไม่มีผล'
-                      : 'ยังไม่ถึงกำหนด'}
+                    {(journey.gaWeeks ?? 0) > 22 ? 'OVERDUE — ยังไม่มีผล' : 'ยังไม่ถึงกำหนด'}
                   </div>
                 )}
               </div>
@@ -2203,10 +2379,7 @@ export default function JourneyDetailPage({
                         <span
                           className="font-mono"
                           style={{
-                            color:
-                              latestT3.bppScore < 8
-                                ? 'var(--risk-high)'
-                                : 'var(--ink-navy)',
+                            color: latestT3.bppScore < 8 ? 'var(--risk-high)' : 'var(--ink-navy)',
                           }}
                         >
                           BPP: <b>{latestT3.bppScore}/10</b>
@@ -2237,15 +2410,23 @@ export default function JourneyDetailPage({
             <section>
               <SectionLabel
                 idx={4}
-                right={<span>{newborns.length} INFANT{newborns.length === 1 ? '' : 'S'}</span>}
+                right={
+                  <span>
+                    {newborns.length} INFANT{newborns.length === 1 ? '' : 'S'}
+                  </span>
+                }
               >
                 Newborn outcomes
               </SectionLabel>
               <div className="mt-2 grid gap-3 sm:grid-cols-2">
                 {newborns.map((nb) => {
-                  const lbw = nb.birthWeightG != null && nb.birthWeightG < 2500;
-                  const lowApgar1 = nb.apgar1min != null && nb.apgar1min < 7;
-                  const lowApgar5 = nb.apgar5min != null && nb.apgar5min < 7;
+                  const lbw =
+                    nb.birthWeightG != null && nb.birthWeightG < NEWBORN_THRESHOLDS.lbwGrams;
+                  // Same <7 cutoff applies at 1 and 5 minutes.
+                  const lowApgar1 =
+                    nb.apgar1min != null && nb.apgar1min < NEWBORN_THRESHOLDS.apgarLowAt5min;
+                  const lowApgar5 =
+                    nb.apgar5min != null && nb.apgar5min < NEWBORN_THRESHOLDS.apgarLowAt5min;
                   return (
                     <div
                       key={nb.infantNumber}
@@ -2348,21 +2529,30 @@ export default function JourneyDetailPage({
                   <div className="mt-2 flex items-center gap-2">
                     <Pill
                       label={latestRisk.riskLevel}
-                      color={
-                        ANC_RISK_COLOR[latestRisk.riskLevel] ?? 'var(--ink-navy-muted)'
-                      }
+                      color={ANC_RISK_COLOR[latestRisk.riskLevel] ?? 'var(--ink-navy-muted)'}
                     />
                     <span className="text-[12px] text-[var(--ink-navy-dim)]">
-                      {ANC_RISK_LABEL_TH[latestRisk.riskLevel] ??
-                        latestRisk.riskLevel}
+                      {ANC_RISK_LABEL_TH[latestRisk.riskLevel] ?? latestRisk.riskLevel}
                     </span>
                   </div>
+                  {ancAssessment?.incomplete && (
+                    <div className="mt-1.5">
+                      <IncompleteAssessmentMarker
+                        missingCount={ancAssessment.missingRequired.length}
+                      />
+                    </div>
+                  )}
                   <div className="mt-1 font-mono text-[10px] tracking-[0.1em] text-[var(--ink-navy-muted)]">
                     SCREENED {formatThai(latestRisk.screenedAt)}
                   </div>
                   {latestRisk.recommendedFacility && (
-                    <div className="mt-2 rounded-sm border p-2 text-[12px]"
-                         style={{ borderColor: 'var(--rule-strong)', background: 'var(--surface-sunken)' }}>
+                    <div
+                      className="mt-2 rounded-sm border p-2 text-[12px]"
+                      style={{
+                        borderColor: 'var(--rule-strong)',
+                        background: 'var(--surface-sunken)',
+                      }}
+                    >
                       <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--ink-navy-muted)]">
                         แนะนำส่งต่อ ·{' '}
                       </span>
@@ -2387,7 +2577,7 @@ export default function JourneyDetailPage({
                               className="mt-0.5 h-3 w-3 shrink-0"
                               style={{ color: 'var(--risk-medium)' }}
                             />
-                            <span className="font-mono text-[11px]">{rule}</span>
+                            <span className="text-[11px]">{RULE_LABEL_TH[rule] ?? rule}</span>
                           </li>
                         ))}
                       </ul>
@@ -2411,16 +2601,18 @@ export default function JourneyDetailPage({
               style={{
                 borderBottom: '1px solid var(--rule-strong)',
                 borderLeft: `3px solid ${
-                  derived?.next?.status === 'overdue'
+                  nextSchedule?.status === 'NEXT' && nextSchedule.dueStatus === 'overdue'
                     ? 'var(--risk-high)'
-                    : derived?.next?.status === 'due-now'
+                    : (nextSchedule?.status === 'NEXT' && nextSchedule.dueStatus === 'due-now') ||
+                        nextSchedule?.status === 'UNKNOWN_GA'
                       ? 'var(--risk-medium)'
                       : 'var(--primary-teal)'
                 }`,
                 background:
-                  derived?.next?.status === 'overdue'
+                  nextSchedule?.status === 'NEXT' && nextSchedule.dueStatus === 'overdue'
                     ? 'rgba(239, 68, 68, 0.05)'
-                    : derived?.next?.status === 'due-now'
+                    : (nextSchedule?.status === 'NEXT' && nextSchedule.dueStatus === 'due-now') ||
+                        nextSchedule?.status === 'UNKNOWN_GA'
                       ? 'rgba(234, 179, 8, 0.05)'
                       : 'rgba(13, 148, 136, 0.05)',
               }}
@@ -2430,9 +2622,11 @@ export default function JourneyDetailPage({
                   className="inline-flex h-5 min-w-[22px] items-center justify-center rounded-sm px-1.5 font-mono text-[10px] font-bold tracking-[0.08em] text-white"
                   style={{
                     background:
-                      derived?.next?.status === 'overdue'
+                      nextSchedule?.status === 'NEXT' && nextSchedule.dueStatus === 'overdue'
                         ? 'var(--risk-high)'
-                        : derived?.next?.status === 'due-now'
+                        : (nextSchedule?.status === 'NEXT' &&
+                              nextSchedule.dueStatus === 'due-now') ||
+                            nextSchedule?.status === 'UNKNOWN_GA'
                           ? 'var(--risk-medium)'
                           : 'var(--primary-teal)',
                   }}
@@ -2446,77 +2640,106 @@ export default function JourneyDetailPage({
                   Next action
                 </span>
               </div>
-              {derived?.next ? (
+              {nextSchedule?.status === 'NEXT' ? (
                 <div className="mt-2">
                   <div className="flex items-baseline gap-2">
                     <span
                       className="font-mono text-[22px] font-semibold tabular-nums leading-none"
                       style={{
                         color:
-                          derived.next.status === 'overdue'
+                          nextSchedule.dueStatus === 'overdue'
                             ? 'var(--risk-high)'
-                            : derived.next.status === 'due-now'
+                            : nextSchedule.dueStatus === 'due-now'
                               ? 'var(--risk-medium)'
                               : 'var(--accent-navy)',
                       }}
                     >
-                      {derived.next.ga}w
+                      {nextSchedule.ga}w
                     </span>
                     <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
                       WHO CONTACT
                     </span>
                   </div>
-                  <div className="mt-1 text-[12px]"
-                       style={{
-                         color: derived.next.status === 'overdue' ? 'var(--risk-high)' : 'var(--ink-navy-dim)',
-                       }}>
-                    {derived.next.status === 'overdue'
-                      ? `เลยกำหนด ${Math.abs(derived.next.weeksAway)} สัปดาห์ — ควรติดตามด่วน`
-                      : derived.next.status === 'due-now'
+                  <div
+                    className="mt-1 text-[12px]"
+                    style={{
+                      color:
+                        nextSchedule.dueStatus === 'overdue'
+                          ? 'var(--risk-high)'
+                          : 'var(--ink-navy-dim)',
+                    }}
+                  >
+                    {nextSchedule.dueStatus === 'overdue'
+                      ? `เลยกำหนด ${Math.abs(nextSchedule.weeksAway)} สัปดาห์ — ควรติดตามด่วน`
+                      : nextSchedule.dueStatus === 'due-now'
                         ? 'ถึงกำหนดนัดครั้งถัดไป'
-                        : `อีก ${derived.next.weeksAway} สัปดาห์`}
+                        : `อีก ${nextSchedule.weeksAway} สัปดาห์`}
                   </div>
-                  {derived.daysSinceLastAnc != null && derived.daysSinceLastAnc > 28 && (
+                  {derived?.daysSinceLastAnc != null && derived.daysSinceLastAnc > 28 && (
                     <div className="mt-2 flex items-center gap-1 font-mono text-[11px] text-[var(--risk-high)]">
                       <AlertTriangle className="h-3 w-3" />
                       NO ANC FOR {derived.daysSinceLastAnc}d
                     </div>
                   )}
                 </div>
+              ) : nextSchedule?.status === 'UNKNOWN_GA' ? (
+                <div
+                  className="mt-2 flex items-start gap-1.5 text-[12px]"
+                  style={{ color: 'var(--risk-medium)' }}
+                >
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  ไม่ทราบอายุครรภ์ — ประเมินตารางนัดไม่ได้
+                </div>
               ) : (
                 <div className="mt-2 text-[12px] text-[var(--risk-low)]">
                   ครบทั้ง 8 contact แล้ว
                 </div>
               )}
-              {/* RTCOG overdue-investigation list */}
-              {(derived?.overdue.length ?? 0) > 0 && (
+              {/* RTCOG overdue-investigation list. GA unknown → the service
+                  can't determine due-ness at all (overdueInvestigations
+                  coerces to GA 0 and returns []), so show one amber caveat
+                  instead of silently rendering an empty section. */}
+              {journey.gaWeeks == null ? (
                 <div className="mt-3 border-t pt-2" style={{ borderColor: 'var(--rule-hair)' }}>
                   <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
                     RTCOG · การตรวจที่เลยกำหนด
                   </div>
-                  <ul className="mt-1.5 space-y-1">
-                    {derived!.overdue.map((o) => (
-                      <li
-                        key={o.key}
-                        className="flex items-start gap-1.5 text-[11px]"
-                        style={{
-                          color:
-                            o.severity === 'high'
-                              ? 'var(--risk-high)'
-                              : 'var(--risk-medium)',
-                        }}
-                      >
-                        <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                        <span>
-                          {o.labelTh}
-                          <span className="ml-1 font-mono text-[9px] opacity-70">
-                            DUE ≤ {o.dueBy}
-                          </span>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                  <div
+                    className="mt-1.5 flex items-start gap-1.5 text-[11px]"
+                    style={{ color: 'var(--risk-medium)' }}
+                  >
+                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                    ไม่ทราบอายุครรภ์ — ตรวจสอบรายการค้างไม่ได้
+                  </div>
                 </div>
+              ) : (
+                (derived?.overdue.length ?? 0) > 0 && (
+                  <div className="mt-3 border-t pt-2" style={{ borderColor: 'var(--rule-hair)' }}>
+                    <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
+                      RTCOG · การตรวจที่เลยกำหนด
+                    </div>
+                    <ul className="mt-1.5 space-y-1">
+                      {derived!.overdue.map((o) => (
+                        <li
+                          key={o.key}
+                          className="flex items-start gap-1.5 text-[11px]"
+                          style={{
+                            color:
+                              o.severity === 'high' ? 'var(--risk-high)' : 'var(--risk-medium)',
+                          }}
+                        >
+                          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                          <span>
+                            {o.labelTh}
+                            <span className="ml-1 font-mono text-[9px] opacity-70">
+                              DUE ≤ {o.dueBy}
+                            </span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
               )}
             </div>
 
@@ -2526,9 +2749,7 @@ export default function JourneyDetailPage({
               style={{
                 borderBottom: '1px solid var(--rule-strong)',
                 borderLeft: `3px solid ${isReferred ? 'var(--risk-medium)' : 'var(--accent-navy)'}`,
-                background: isReferred
-                  ? 'rgba(234, 179, 8, 0.04)'
-                  : 'white',
+                background: isReferred ? 'rgba(234, 179, 8, 0.04)' : 'white',
               }}
             >
               <div className="flex items-baseline gap-2">
@@ -2615,7 +2836,8 @@ export default function JourneyDetailPage({
                 <span
                   className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 font-mono text-[10px] font-bold tabular-nums"
                   style={{
-                    background: referrals.length > 0 ? 'var(--accent-navy-soft)' : 'var(--surface-sunken)',
+                    background:
+                      referrals.length > 0 ? 'var(--accent-navy-soft)' : 'var(--surface-sunken)',
                     color: 'var(--ink-navy)',
                   }}
                 >
@@ -2629,7 +2851,7 @@ export default function JourneyDetailPage({
               ) : (
                 <div className="mt-2 flex flex-col gap-2">
                   {referrals.map((ref) => {
-                    const statusLabel = REFERRAL_STATUS_LABEL[ref.status] ?? ref.status;
+                    const statusLabel = STATUS_META[ref.status]?.label ?? ref.status;
                     const isArrived = ref.status === 'ARRIVED' || !!ref.arrivedAt;
                     const isUrgent =
                       ref.urgencyLevel === 'URGENT' || ref.urgencyLevel === 'EMERGENCY';
@@ -2652,10 +2874,8 @@ export default function JourneyDetailPage({
                           />
                           {ref.urgencyLevel && (
                             <Pill
-                              label={ref.urgencyLevel}
-                              color={
-                                isUrgent ? 'var(--risk-high)' : 'var(--ink-navy-muted)'
-                              }
+                              label={URGENCY_META[ref.urgencyLevel]?.label ?? ref.urgencyLevel}
+                              color={isUrgent ? 'var(--risk-high)' : 'var(--ink-navy-muted)'}
                             />
                           )}
                         </div>
@@ -2692,9 +2912,7 @@ export default function JourneyDetailPage({
             {/* Tiny id footer */}
             <div className="px-4 py-2 font-mono text-[10px] tracking-[0.08em] text-[var(--ink-navy-muted)]">
               JOURNEY ID{' '}
-              <span className="font-semibold text-[var(--ink-navy)]">
-                {journey.id.slice(0, 8)}
-              </span>
+              <span className="font-semibold text-[var(--ink-navy)]">{journey.id.slice(0, 8)}</span>
             </div>
           </div>
         </aside>
@@ -2714,8 +2932,8 @@ export default function JourneyDetailPage({
               {latestRisk.triggeredRules.length > 0 && (
                 <ul className="text-[12px] space-y-1">
                   {latestRisk.triggeredRules.map((r) => (
-                    <li key={r} className="font-mono text-[11px] text-[var(--ink-navy-dim)]">
-                      · {r}
+                    <li key={r} className="text-[11px] text-[var(--ink-navy-dim)]">
+                      · {RULE_LABEL_TH[r] ?? r}
                     </li>
                   ))}
                 </ul>
@@ -2747,7 +2965,7 @@ export default function JourneyDetailPage({
           JOURNEY ID{' '}
           <span className="font-semibold text-[var(--ink-navy)]">{journey.id.slice(0, 8)}</span>
         </span>
-        <span>REFRESHING EVERY 60s</span>
+        <span>REFRESHING EVERY {REFRESH_INTERVAL_MS / 1000}s</span>
       </div>
     </div>
   );

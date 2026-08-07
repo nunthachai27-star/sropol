@@ -17,6 +17,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { LoadingState } from '@/components/shared/LoadingState';
+import { ErrorState } from '@/components/shared/ErrorState';
 
 interface AdminHospital {
   hcode: string;
@@ -54,17 +55,23 @@ function getTunnelStatus(hospital: AdminHospital): TunnelStatus {
   if (hospital.bmsConfig.hasSession && hasFutureSession(hospital.bmsConfig.sessionExpiresAt)) {
     return 'ONLINE';
   }
-  if (hospital.bmsConfig.sessionExpiresAt && !hasFutureSession(hospital.bmsConfig.sessionExpiresAt)) {
+  if (
+    hospital.bmsConfig.sessionExpiresAt &&
+    !hasFutureSession(hospital.bmsConfig.sessionExpiresAt)
+  ) {
     return 'EXPIRED';
   }
   return 'CONFIGURED';
 }
 
-const TUNNEL_STATUS_META: Record<TunnelStatus, {
-  label: string;
-  color: string;
-  Icon: typeof Wifi;
-}> = {
+const TUNNEL_STATUS_META: Record<
+  TunnelStatus,
+  {
+    label: string;
+    color: string;
+    Icon: typeof Wifi;
+  }
+> = {
   ONLINE: {
     label: 'BMS tunnel online',
     color: 'var(--risk-low)',
@@ -98,7 +105,9 @@ function formatLastSync(value: string | null) {
 }
 
 export function BmsConfigTab() {
-  const { data, isLoading, mutate } = useSWR<{ hospitals: AdminHospital[] }>('/api/admin/hospitals');
+  const { data, isLoading, error, mutate } = useSWR<{ hospitals: AdminHospital[] }>(
+    '/api/admin/hospitals',
+  );
   const [editHospital, setEditHospital] = useState<AdminHospital | null>(null);
   const [tunnelUrl, setTunnelUrl] = useState('');
   const [saving, setSaving] = useState(false);
@@ -137,9 +146,10 @@ export function BmsConfigTab() {
       const result = await res.json();
 
       if (res.ok) {
-        setSaveMessage(result.sessionValidated
-          ? `บันทึกสำเร็จ — Session validated, DB: ${result.databaseType}`
-          : 'บันทึก URL แล้ว — ยังไม่สามารถ validate session ได้'
+        setSaveMessage(
+          result.sessionValidated
+            ? `บันทึกสำเร็จ — Session validated, DB: ${result.databaseType}`
+            : 'บันทึก URL แล้ว — ยังไม่สามารถ validate session ได้',
         );
         mutate();
       } else {
@@ -180,6 +190,14 @@ export function BmsConfigTab() {
 
   return (
     <div className="space-y-5">
+      {error ? (
+        <ErrorState
+          variant="banner"
+          message="โหลดรายชื่อโรงพยาบาลไม่สำเร็จ — ตัวเลขและสถานะ tunnel อาจไม่เป็นปัจจุบัน"
+          onRetry={() => void mutate()}
+        />
+      ) : null}
+
       {/* KPI strip */}
       <div
         className="grid border bg-white"
@@ -212,7 +230,8 @@ export function BmsConfigTab() {
       </div>
 
       {/* Hospital tiles */}
-      <div className="grid grid-cols-1 gap-0 border md:grid-cols-2 xl:grid-cols-3"
+      <div
+        className="grid grid-cols-1 gap-0 border md:grid-cols-2 xl:grid-cols-3"
         style={{ borderColor: 'var(--rule-strong)' }}
       >
         {hospitals.map((h) => {
@@ -255,7 +274,11 @@ export function BmsConfigTab() {
               <div className="flex items-center gap-1.5 font-mono text-[11px]">
                 <TunnelIcon className="h-3 w-3" style={{ color: tunnelStatusMeta.color }} />
                 <span
-                  className={hasConfig ? 'truncate text-[var(--ink-navy-dim)]' : 'text-[var(--ink-navy-muted)]'}
+                  className={
+                    hasConfig
+                      ? 'truncate text-[var(--ink-navy-dim)]'
+                      : 'text-[var(--ink-navy-muted)]'
+                  }
                 >
                   {h.bmsConfig?.tunnelUrl ?? 'ยังไม่ตั้งค่า Tunnel URL'}
                 </span>
@@ -315,9 +338,7 @@ export function BmsConfigTab() {
                   borderColor: saveMessage.includes('สำเร็จ')
                     ? 'var(--risk-low)'
                     : 'var(--risk-high)',
-                  color: saveMessage.includes('สำเร็จ')
-                    ? 'var(--risk-low)'
-                    : 'var(--risk-high)',
+                  color: saveMessage.includes('สำเร็จ') ? 'var(--risk-low)' : 'var(--risk-high)',
                 }}
               >
                 {saveMessage}
@@ -335,7 +356,9 @@ export function BmsConfigTab() {
                 {testResult.connected ? (
                   <div className="space-y-0.5">
                     <div className="font-semibold">เชื่อมต่อสำเร็จ</div>
-                    <div>Database: {testResult.databaseType} — {testResult.databaseVersion}</div>
+                    <div>
+                      Database: {testResult.databaseType} — {testResult.databaseVersion}
+                    </div>
                     <div>Tables: {testResult.tablesFound?.join(', ') ?? 'none'}</div>
                   </div>
                 ) : (

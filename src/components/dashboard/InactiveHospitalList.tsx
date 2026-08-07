@@ -72,7 +72,7 @@ export function InactiveHospitalList({ hospitals }: InactiveHospitalListProps) {
                   className={`inline-block h-2 w-2 rounded-full ${getStatusDotClass(h.connectionStatus)}`}
                   aria-hidden="true"
                 />
-                <span className="text-xs">{getStatusLabel(h.connectionStatus)}</span>
+                <span className="text-sm">{getStatusLabel(h.connectionStatus)}</span>
               </span>
             </button>
           ))}

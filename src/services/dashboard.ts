@@ -13,6 +13,12 @@
 // must be lossless), so the dashboard layer is the right place to honor the
 // flag — one subquery, applied everywhere.
 import type { DatabaseAdapter } from '@/db/adapter';
+import { PARTOGRAPH_QUALITY } from '@/config/hospital-network';
+import { bangkokStartOfMonth, bangkokStartOfToday } from '@/lib/bangkok-time';
+import { referralSlaCutoffs } from '@/config/referral-sla';
+import { ancOpsCutoffs } from '@/config/anc-ops';
+import { ancFreshnessCutoffs, ANC_MAX_GA_WEEKS } from '@/config/anc-freshness';
+import { toIsoString } from '@/lib/dates';
 import type {
   DashboardHospital,
   DashboardSummary,
@@ -29,6 +35,9 @@ import { SYNC_FAILURE_STATUSES } from '@/config/sync-status';
 import { getHospitalCapability } from '@/config/hospital-capabilities';
 import { ANC_RISK_LEVEL_ORDER } from '@/config/anc-risk-rules';
 import { AncRiskLevel } from '@/types/domain';
+import { isMaternalScreenUiEnabled } from '@/lib/feature-flags';
+import type { MaternalScreenLocalTier, MaternalEmergencyAcuity } from '@/types/maternal-screening';
+import type { MaternalScreenSummaryItem } from '@/types/api';
 
 // Reusable subquery — every cached_*/maternal_journeys aggregate joins this
 // against the relevant hospital_id column to honor the operational
@@ -137,13 +146,14 @@ export async function getProvinceDashboard(db: DatabaseAdapter): Promise<Dashboa
       name: h.name,
       level: h.level as HospitalLevel,
       connectionStatus: h.connection_status as ConnectionStatus,
-      lastSyncAt: h.last_sync_at,
+      lastSyncAt: h.last_sync_at ? new Date(h.last_sync_at).toISOString() : null,
       provinceCode: h.province_code,
       districtCode: h.district_code,
       lat: lat !== null && Number.isFinite(lat) ? lat : null,
       lon: lon !== null && Number.isFinite(lon) ? lon : null,
       counts: { low: 0, medium: 0, high: 0, total: 0 },
       ancCounts: { total: 0, hr3: 0 },
+      partographQuality: { laborRecent: 0, withPartograph: 0 },
       syncStatus,
       syncBlockedReason,
     });
@@ -170,6 +180,35 @@ export async function getProvinceDashboard(db: DatabaseAdapter): Promise<Dashboa
     if (!hospital) continue;
     hospital.ancCounts.total = Number(r.total) || 0;
     hospital.ancCounts.hr3 = Number(r.hr3) || 0;
+  }
+
+  // Partograph coverage — labor admissions inside the quality window vs how
+  // many have at least one charted observation. Cutoff computed in JS and
+  // bound as an ISO param (portable across PG + SQLite).
+  const partoCutoff = new Date(
+    Date.now() - PARTOGRAPH_QUALITY.windowDays * 86_400_000,
+  ).toISOString();
+  const partoRows = await db.query<{
+    hcode: string;
+    labor_recent: number;
+    with_partograph: number;
+  }>(
+    `SELECT h.hcode,
+            COUNT(*) AS labor_recent,
+            SUM(CASE WHEN EXISTS (
+              SELECT 1 FROM cached_partograph_observations o WHERE o.patient_id = cp.id
+            ) THEN 1 ELSE 0 END) AS with_partograph
+       FROM cached_patients cp
+       JOIN hospitals h ON h.id = cp.hospital_id
+      WHERE h.is_active = true AND cp.admit_date >= ?
+      GROUP BY h.hcode`,
+    [partoCutoff],
+  );
+  for (const r of partoRows) {
+    const hospital = hospitalMap.get(r.hcode);
+    if (!hospital) continue;
+    hospital.partographQuality.laborRecent = Number(r.labor_recent) || 0;
+    hospital.partographQuality.withPartograph = Number(r.with_partograph) || 0;
   }
 
   for (const row of counts) {
@@ -224,12 +263,84 @@ interface HighRiskRow {
   last_vital_at: string | null;
   partograph_severity: string | null;
   partograph_alert_count: number | null;
+  maternal_screen_local_tier: string | null;
+  maternal_screen_emergency_acuity: string | null;
+  maternal_screen_is_complete: boolean | null;
+  maternal_screen_assessed_at: string | Date | null;
+}
+
+/** Raw `cached_patients.maternal_screen_*` values, keyed the same regardless
+ *  of source row shape (HighRiskRow columns vs the `SELECT cp.*` spread in
+ *  getHospitalPatientList). */
+interface MaternalScreenRawFields {
+  maternal_screen_local_tier: string | null;
+  maternal_screen_emergency_acuity: string | null;
+  maternal_screen_is_complete: boolean | null;
+  maternal_screen_assessed_at: string | Date | null;
+}
+
+interface MaternalScreenProjectedFields {
+  maternalScreenLocalTier: MaternalScreenLocalTier | null;
+  maternalScreenEmergencyAcuity: MaternalEmergencyAcuity | null;
+  maternalScreenIsComplete: boolean | null;
+  maternalScreenAssessedAt: string | null;
+}
+
+/**
+ * GC-W3: server-side flag gate for the maternal-screen axes carried on the
+ * cached-path list projections (getHighRiskPatients, getHospitalPatientList
+ * — the exact same `cached_patients` columns `partograph_severity` flows
+ * through today). `uiEnabled` MUST be resolved once per request by the
+ * caller and passed in here — not re-read per row — so a single request
+ * can't observe the flag flip mid-response.
+ *
+ * GC3: `maternal_screen_*` is a distinct vocabulary from
+ * `partographSeverity`/`CdssSeverity` — DB values are raw strings, narrowed
+ * with an `as` cast (same convention as `partograph_severity` above); an
+ * out-of-vocabulary value is passed through as-is rather than thrown on —
+ * the UI fallback token handles it (see src/config/maternal-screen-display.ts).
+ */
+function projectMaternalScreenFields(
+  uiEnabled: boolean,
+  row: MaternalScreenRawFields,
+): MaternalScreenProjectedFields {
+  if (!uiEnabled) {
+    return {
+      maternalScreenLocalTier: null,
+      maternalScreenEmergencyAcuity: null,
+      maternalScreenIsComplete: null,
+      maternalScreenAssessedAt: null,
+    };
+  }
+  return {
+    maternalScreenLocalTier:
+      (row.maternal_screen_local_tier as MaternalScreenLocalTier | null) ?? null,
+    maternalScreenEmergencyAcuity:
+      (row.maternal_screen_emergency_acuity as MaternalEmergencyAcuity | null) ?? null,
+    maternalScreenIsComplete: row.maternal_screen_is_complete ?? null,
+    // pg returns timestamptz columns as Date objects, SQLite/PGlite as
+    // strings — toIsoString normalizes both and returns null (not a throw)
+    // on an unparseable value, per the service-mapper convention.
+    maternalScreenAssessedAt: toIsoString(row.maternal_screen_assessed_at),
+  };
 }
 
 export async function getHighRiskPatients(
   db: DatabaseAdapter,
-  limit: number = 20,
+  // Safety cap only — the panel's "ALL ACTIVE" tab promises the COMPLETE
+  // province labor roster, so the cap must sit far above any real census
+  // (historical peak 34–39 concurrent; stale-ACTIVE incidents inflate it
+  // further). At 50 it silently truncated the roster the panel claims to
+  // show in full.
+  limit: number = 500,
 ): Promise<HighRiskPatient[]> {
+  // Flag read once per request (GC-W3), not per row.
+  const maternalScreenUiEnabled = isMaternalScreenUiEnabled();
+
+  // The province-wide ACTIVE labor roster, high risk first. LEFT JOIN, not
+  // INNER: the panel's "ALL ACTIVE" tab must show LOW-risk and not-yet-scored
+  // women too — the old HIGH/MEDIUM pre-filter meant "all active" showed one
+  // patient on a calm ward and silently hid unscored admissions.
   const rows = await db.query<HighRiskRow>(
     `
     SELECT
@@ -245,19 +356,21 @@ export async function getHighRiskPatients(
       cp.admit_date,
       cp.partograph_severity,
       cp.partograph_alert_count,
+      cp.maternal_screen_local_tier,
+      cp.maternal_screen_emergency_acuity,
+      cp.maternal_screen_is_complete,
+      cp.maternal_screen_assessed_at,
       (SELECT MAX(cv.measured_at) FROM cached_vital_signs cv WHERE cv.patient_id = cp.id) AS last_vital_at
     FROM cached_patients cp
-    INNER JOIN cpd_scores cs ON cs.patient_id = cp.id
-      AND cs.id = (
+    LEFT JOIN cpd_scores cs ON cs.id = (
         SELECT cs2.id FROM cpd_scores cs2
         WHERE cs2.patient_id = cp.id
         ORDER BY cs2.calculated_at DESC LIMIT 1
       )
     INNER JOIN hospitals h ON h.id = cp.hospital_id
     WHERE cp.labor_status = 'ACTIVE'
-      AND cs.risk_level IN ('HIGH', 'MEDIUM')
       AND h.is_active = true
-    ORDER BY cs.score DESC
+    ORDER BY CASE WHEN cs.score IS NULL THEN 1 ELSE 0 END, cs.score DESC
     LIMIT ?
   `,
     [limit],
@@ -269,15 +382,97 @@ export async function getHighRiskPatients(
     name: decryptSafe(row.name),
     age: row.age,
     gaWeeks: row.ga_weeks,
-    cpdScore: row.cpd_score,
-    riskLevel: row.risk_level,
+    cpdScore: row.cpd_score == null ? 0 : Number(row.cpd_score),
+    riskLevel: row.risk_level ?? 'UNSCORED',
     hospital: row.hospital_name,
     hcode: row.hcode,
-    admitDate: row.admit_date,
-    lastVitalAt: row.last_vital_at,
+    // pg returns timestamptz columns as Date objects, SQLite as strings —
+    // normalize to ISO so the API shape stays a string as declared.
+    admitDate: row.admit_date == null ? null : new Date(row.admit_date).toISOString(),
+    lastVitalAt: row.last_vital_at == null ? null : new Date(row.last_vital_at).toISOString(),
     partographSeverity: (row.partograph_severity as CdssSeverity | null) ?? null,
     partographAlertCount: row.partograph_alert_count ?? null,
+    ...projectMaternalScreenFields(maternalScreenUiEnabled, row),
   }));
+}
+
+export interface PartographAuditAdmission {
+  an: string;
+  name: string;
+  admitDate: string;
+  laborStatus: string;
+  observationCount: number;
+  lastObservedAt: string | null;
+}
+
+export interface HospitalPartographAudit {
+  windowDays: number;
+  laborRecent: number;
+  withPartograph: number;
+  /** Window admissions, never-charted first (they are the action items). */
+  admissions: PartographAuditAdmission[];
+}
+
+/**
+ * Per-hospital partograph charting audit — every labor admission inside the
+ * PARTOGRAPH_QUALITY window with its observation count, so the provincial
+ * team can name the specific uncharted cases, not just the coverage score.
+ * Returns null for an unknown hcode.
+ */
+export async function getHospitalPartographAudit(
+  db: DatabaseAdapter,
+  hcode: string,
+): Promise<HospitalPartographAudit | null> {
+  const hospitals = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [
+    hcode,
+  ]);
+  if (hospitals.length === 0) return null;
+
+  const cutoff = new Date(Date.now() - PARTOGRAPH_QUALITY.windowDays * 86_400_000).toISOString();
+  const rows = await db.query<{
+    an: string;
+    name: string;
+    admit_date: string;
+    labor_status: string;
+    obs_count: number;
+    last_observed_at: string | null;
+  }>(
+    `SELECT cp.an, cp.name, cp.admit_date, cp.labor_status,
+            (SELECT COUNT(*) FROM cached_partograph_observations o
+              WHERE o.patient_id = cp.id) AS obs_count,
+            (SELECT MAX(o.observe_datetime) FROM cached_partograph_observations o
+              WHERE o.patient_id = cp.id) AS last_observed_at
+       FROM cached_patients cp
+      WHERE cp.hospital_id = ? AND cp.admit_date >= ?`,
+    [hospitals[0].id, cutoff],
+  );
+
+  const admissions: PartographAuditAdmission[] = rows
+    .map((r) => ({
+      an: r.an,
+      name: decryptSafe(r.name),
+      // pg returns timestamptz columns as Date objects, SQLite as strings —
+      // normalize to ISO so the API shape (and the sort below) is stable.
+      // .localeCompare on the raw value 500'd this route in production.
+      admitDate: new Date(r.admit_date).toISOString(),
+      laborStatus: r.labor_status,
+      observationCount: Number(r.obs_count) || 0,
+      lastObservedAt:
+        r.last_observed_at == null ? null : new Date(r.last_observed_at).toISOString(),
+    }))
+    .sort((a, b) => {
+      const aCharted = a.observationCount > 0 ? 1 : 0;
+      const bCharted = b.observationCount > 0 ? 1 : 0;
+      if (aCharted !== bCharted) return aCharted - bCharted;
+      return new Date(b.admitDate).getTime() - new Date(a.admitDate).getTime();
+    });
+
+  return {
+    windowDays: PARTOGRAPH_QUALITY.windowDays,
+    laborRecent: admissions.length,
+    withPartograph: admissions.filter((a) => a.observationCount > 0).length,
+    admissions,
+  };
 }
 
 export async function getHospitalPatientList(
@@ -322,7 +517,9 @@ export async function getHospitalPatientList(
     name: hospitalRow.name,
     level: hospitalRow.level,
     connectionStatus: hospitalRow.connection_status,
-    lastSyncAt: hospitalRow.last_sync_at,
+    // pg returns timestamptz as a Date object — normalize to the declared
+    // ISO-string API shape (same pattern as getProvinceDashboard above).
+    lastSyncAt: hospitalRow.last_sync_at ? new Date(hospitalRow.last_sync_at).toISOString() : null,
   };
 
   let whereClause = 'WHERE cp.hospital_id = ?';
@@ -360,6 +557,10 @@ export async function getHospitalPatientList(
     Record<string, unknown> & {
       partograph_severity: string | null;
       partograph_alert_count: number | null;
+      maternal_screen_local_tier: string | null;
+      maternal_screen_emergency_acuity: string | null;
+      maternal_screen_is_complete: boolean | null;
+      maternal_screen_assessed_at: string | Date | null;
     }
   >(
     `SELECT cp.*,
@@ -375,12 +576,39 @@ export async function getHospitalPatientList(
     [...params, perPage, offset],
   );
 
-  const patients = rows.map((r) => ({
-    ...r,
-    name: decryptSafe(typeof r.name === 'string' ? r.name : ''),
-    partographSeverity: (r.partograph_severity as CdssSeverity | null) ?? null,
-    partographAlertCount: r.partograph_alert_count ?? null,
-  }));
+  // Flag read once per request (GC-W3), not per row.
+  const maternalScreenUiEnabled = isMaternalScreenUiEnabled();
+
+  const patients = rows.map((r) => {
+    const projected = projectMaternalScreenFields(maternalScreenUiEnabled, {
+      maternal_screen_local_tier: r.maternal_screen_local_tier,
+      maternal_screen_emergency_acuity: r.maternal_screen_emergency_acuity,
+      maternal_screen_is_complete: r.maternal_screen_is_complete,
+      maternal_screen_assessed_at: r.maternal_screen_assessed_at,
+    });
+
+    // Leak fix (GC-W3): `cp.*` above pulls in every raw snake_case
+    // maternal_screen_* column untyped, regardless of the UI flag. Strip
+    // all six always — the typed camelCase fields from `projected` are the
+    // only supported way to read this data from this response. Widened to
+    // Record<string, unknown> (dropping the row type's explicit non-optional
+    // maternal_screen_* fields) so `delete` is valid under TS 4.4+'s
+    // "operand of delete must be optional" rule.
+    const rest: Record<string, unknown> = { ...r };
+    // Prefix loop, not a name list: a future maternal_screen_* column added
+    // to cached_patients must not silently start leaking through cp.*.
+    for (const key of Object.keys(rest)) {
+      if (key.startsWith('maternal_screen_')) delete rest[key];
+    }
+
+    return {
+      ...rest,
+      name: decryptSafe(typeof r.name === 'string' ? r.name : ''),
+      partographSeverity: (r.partograph_severity as CdssSeverity | null) ?? null,
+      partographAlertCount: r.partograph_alert_count ?? null,
+      ...projected,
+    };
+  });
 
   return {
     hospital,
@@ -394,15 +622,85 @@ export async function getHospitalPatientList(
   };
 }
 
+/**
+ * Phase 6 Task H4 (docs/superpowers/plans/2026-07-17-maternal-screening-hosxp.md,
+ * GC-H4) — per-AN maternal-screen summaries for one hospital's ACTIVE labor
+ * roster. Powers the ward-bed-tile cross-source join: the ward page's
+ * occupancy comes from LIVE HOSxP (BMS Session API), never this central DB,
+ * so the join happens client-side by `an` against this lean summary list.
+ *
+ * Lean sibling of `getHospitalPatientList` above — same
+ * `cached_patients JOIN hospitals WHERE hcode = ? AND labor_status = 'ACTIVE'`
+ * shape, but selects only the `an` + the four `maternal_screen_*` columns
+ * (no pagination, no CPD/partograph fields) since the caller only needs an
+ * `an → summary` lookup, not a patient list.
+ *
+ * GC-H4 flag gate: returns `[]` when `isMaternalScreenUiEnabled()` is false,
+ * mirroring `projectMaternalScreenFields`'s server-side null-out above — a
+ * flag-off hospital never has screening rows to join onto its bed tiles.
+ *
+ * Only rows with at least one non-null axis are returned (WHERE tier OR
+ * acuity IS NOT NULL) — an ACTIVE admission with no assessment yet has
+ * nothing to render as a pill, so it's excluded rather than returned as an
+ * all-null summary the caller would have to filter anyway.
+ */
+export async function listMaternalScreenSummariesForHospital(
+  db: DatabaseAdapter,
+  hcode: string,
+): Promise<MaternalScreenSummaryItem[]> {
+  if (!isMaternalScreenUiEnabled()) return [];
+
+  const rows = await db.query<{
+    an: string;
+    maternal_screen_local_tier: string | null;
+    maternal_screen_emergency_acuity: string | null;
+    maternal_screen_is_complete: boolean | null;
+    maternal_screen_assessed_at: string | Date | null;
+  }>(
+    `SELECT cp.an,
+            cp.maternal_screen_local_tier,
+            cp.maternal_screen_emergency_acuity,
+            cp.maternal_screen_is_complete,
+            cp.maternal_screen_assessed_at
+       FROM cached_patients cp
+       JOIN hospitals h ON h.id = cp.hospital_id
+      WHERE h.hcode = ?
+        AND cp.labor_status = 'ACTIVE'
+        AND (cp.maternal_screen_local_tier IS NOT NULL
+             OR cp.maternal_screen_emergency_acuity IS NOT NULL)`,
+    [hcode],
+  );
+
+  // Same raw-string cast + toIsoString normalization convention as
+  // projectMaternalScreenFields above (GC3: out-of-vocabulary values pass
+  // through as-is; the display-token layer's TOKEN[v] ?? FALLBACK handles it).
+  return rows.map((r) => ({
+    an: r.an,
+    localTier: (r.maternal_screen_local_tier as MaternalScreenLocalTier | null) ?? null,
+    emergencyAcuity: (r.maternal_screen_emergency_acuity as MaternalEmergencyAcuity | null) ?? null,
+    isComplete: r.maternal_screen_is_complete ?? null,
+    assessedAt: toIsoString(r.maternal_screen_assessed_at),
+  }));
+}
+
 // T14: Stage KPIs — pregnancy/labor/delivered counts by risk level
 export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageKPIs> {
-  // Pregnancy counts by ANC risk level
+  // Pregnancy counts by ANC risk level — over the SAME freshness-gated
+  // registry as the /pregnancies board and the alert bar, so the stage card
+  // and the board it links to can never show different totals (raw
+  // care_stage='PREGNANCY' includes lost-to-follow-up and silently-delivered
+  // rows the boards exclude).
+  const { edcOnOrAfter, lastAncOnOrAfter } = ancFreshnessCutoffs(new Date());
   const pregnancyCounts = await db.query<{ anc_risk_level: string; count: number }>(
     `SELECT anc_risk_level, COUNT(*) as count FROM maternal_journeys
      WHERE care_stage = 'PREGNANCY'
+       AND (ga_weeks IS NULL OR ga_weeks <= ${ANC_MAX_GA_WEEKS})
+       AND (edc IS NULL OR edc >= ?)
+       AND (last_anc_date IS NULL OR last_anc_date >= ?)
        AND (hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
             OR current_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})
      GROUP BY anc_risk_level`,
+    [edcOnOrAfter, lastAncOnOrAfter],
   );
 
   const pregnancy = { total: 0, low: 0, hr1: 0, hr2: 0, hr3: 0 };
@@ -436,10 +734,21 @@ export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageK
   }
 
   // Delivered counts (this month) with outcome flags
-  const firstOfMonth = new Date();
-  firstOfMonth.setDate(1);
-  firstOfMonth.setHours(0, 0, 0, 0);
-  const monthStart = firstOfMonth.toISOString();
+  // Bangkok month boundary — consistent with the outcomes board (the old
+  // server-local setHours(0,0,0,0) drifted from every other monthly figure).
+  const monthStart = bangkokStartOfMonth().toISOString();
+
+  // Total comes from journeys: newborn records lag the journey transition
+  // (they arrive via the labour_infant sync), so a delivered card keyed only
+  // on cached_newborns reads 0 while deliveries are demonstrably happening.
+  const deliveredJourneyRows = await db.query<{ total: number }>(
+    `SELECT COUNT(*) as total FROM maternal_journeys mj
+     WHERE mj.care_stage = 'DELIVERED'
+       AND mj.stage_changed_at >= ?
+       AND (mj.hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
+            OR mj.current_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})`,
+    [monthStart],
+  );
 
   const deliveredRows = await db.query<{
     total: number;
@@ -447,9 +756,12 @@ export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageK
     low_apgar: number;
     lbw: number;
   }>(
+    // Low-Apgar uses the 5-minute score (the standard neonatal predictor), the
+    // same column as getNewbornKPIs / the outcomes "LOW APGAR" tile — keep both
+    // in sync so the dashboard and outcomes page report the same count.
     `SELECT COUNT(*) as total,
-            SUM(CASE WHEN cn.apgar_1min < 7 OR cn.birth_weight_g < 2500 THEN 1 ELSE 0 END) as abnormal,
-            SUM(CASE WHEN cn.apgar_1min < 7 THEN 1 ELSE 0 END) as low_apgar,
+            SUM(CASE WHEN cn.apgar_5min < 7 OR cn.birth_weight_g < 2500 THEN 1 ELSE 0 END) as abnormal,
+            SUM(CASE WHEN cn.apgar_5min < 7 THEN 1 ELSE 0 END) as low_apgar,
             SUM(CASE WHEN cn.birth_weight_g < 2500 THEN 1 ELSE 0 END) as lbw
      FROM cached_newborns cn
      JOIN maternal_journeys mj ON mj.id = cn.journey_id
@@ -461,7 +773,12 @@ export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageK
   );
 
   const dr = deliveredRows[0] || { total: 0, abnormal: 0, low_apgar: 0, lbw: 0 };
-  const totalDelivered = Number(dr.total) || 0;
+  const newbornTotal = Number(dr.total) || 0;
+  const journeyTotal = Number(deliveredJourneyRows[0]?.total) || 0;
+  // Journeys lead, newborn records refine — take whichever is larger so the
+  // card is never zero while deliveries exist, and never below the infant
+  // count for multiple births.
+  const totalDelivered = Math.max(journeyTotal, newbornTotal);
   const abnormal = Number(dr.abnormal) || 0;
   const lowApgar = Number(dr.low_apgar) || 0;
   const lbw = Number(dr.lbw) || 0;
@@ -471,48 +788,66 @@ export async function getStageKPIs(db: DatabaseAdapter): Promise<DashboardStageK
     labor,
     delivered: {
       total: totalDelivered,
-      normal: totalDelivered - abnormal,
+      normal: Math.max(totalDelivered - abnormal, 0),
       lowApgar,
       lbw,
     },
   };
 }
 
-// T14: Dashboard alerts — referral alerts, overdue ANC, in-transit referrals
-export async function getDashboardAlerts(db: DatabaseAdapter): Promise<DashboardAlerts> {
-  // Referral alerts: pending referrals (INITIATED or ACCEPTED)
+// T14: Dashboard alerts — recalibrated 2026-07-09. Every cell must be a
+// number that can actually move: the old definitions ("all pending
+// referrals" = permanently ~125, ungated 28-day ANC rule = 817 vs the
+// boards' 138, in-transit = eternally 0) trained users to ignore the ribbon.
+// Thresholds come from the same configs the boards use so the dashboard and
+// the drill-down pages can never disagree.
+export async function getDashboardAlerts(
+  db: DatabaseAdapter,
+  now: Date = new Date(),
+): Promise<DashboardAlerts> {
+  const { overdueBefore } = referralSlaCutoffs(now);
+  const { staleBefore, dueSoonBefore } = ancOpsCutoffs(now);
+  const { edcOnOrAfter, lastAncOnOrAfter } = ancFreshnessCutoffs(now);
+
+  // Actionable referrals: past-SLA INITIATED or active EMERGENCY.
   const refAlerts = await db.query<{ count: number }>(
     `SELECT COUNT(*) as count FROM cached_referrals
-     WHERE status IN ('INITIATED', 'ACCEPTED')
+     WHERE ((status = 'INITIATED' AND initiated_at < ?)
+         OR (urgency_level = 'EMERGENCY' AND status NOT IN ('ARRIVED', 'REJECTED')))
        AND (from_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
             OR to_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})`,
+    [overdueBefore],
   );
 
-  // Overdue ANC: pregnancies where last_anc_date is > 28 days ago
-  // Uses date string comparison — works in both SQLite and PostgreSQL
-  const twentyEightDaysAgo = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString();
+  // Both ANC alerts run over the same gated registry as the pregnancies
+  // board (GA ≤ 42, EDC within grace, last visit within the LTFU window).
+  const gatedAnc = `care_stage = 'PREGNANCY'
+       AND (ga_weeks IS NULL OR ga_weeks <= ${ANC_MAX_GA_WEEKS})
+       AND (edc IS NULL OR edc >= ?)
+       AND (last_anc_date IS NULL OR last_anc_date >= ?)
+       AND (hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
+            OR current_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})`;
+
   const overdueAnc = await db.query<{ count: number }>(
     `SELECT COUNT(*) as count FROM maternal_journeys
-     WHERE care_stage = 'PREGNANCY'
+     WHERE ${gatedAnc}
        AND last_anc_date IS NOT NULL
-       AND last_anc_date < ?
-       AND (hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
-            OR current_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})`,
-    [twentyEightDaysAgo],
+       AND last_anc_date < ?`,
+    [edcOnOrAfter, lastAncOnOrAfter, staleBefore],
   );
 
-  // In-transit referrals
-  const inTransit = await db.query<{ count: number }>(
-    `SELECT COUNT(*) as count FROM cached_referrals
-     WHERE status = 'IN_TRANSIT'
-       AND (from_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL}
-            OR to_hospital_id IN ${ACTIVE_HOSPITAL_IDS_SQL})`,
+  const dueSoon = await db.query<{ count: number }>(
+    `SELECT COUNT(*) as count FROM maternal_journeys
+     WHERE ${gatedAnc}
+       AND edc IS NOT NULL
+       AND edc <= ?`,
+    [edcOnOrAfter, lastAncOnOrAfter, dueSoonBefore],
   );
 
   return {
     referralAlerts: Number(refAlerts[0]?.count) || 0,
     overdueAnc: Number(overdueAnc[0]?.count) || 0,
-    inTransitReferrals: Number(inTransit[0]?.count) || 0,
+    dueSoon: Number(dueSoon[0]?.count) || 0,
   };
 }
 
@@ -540,16 +875,8 @@ function bangkokHourFloor(date: Date): Date {
   return d;
 }
 
-/** Returns the start of today in Asia/Bangkok, expressed as UTC. */
-function bangkokStartOfToday(now: Date = new Date()): Date {
-  // Bangkok is UTC+7, no DST. Compute by shifting now() forward 7h, taking
-  // the UTC date at that shifted point, and then shifting back.
-  const shifted = new Date(now.getTime() + 7 * 3600 * 1000);
-  const shiftedMidnightUtc = new Date(
-    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()),
-  );
-  return new Date(shiftedMidnightUtc.getTime() - 7 * 3600 * 1000);
-}
+// bangkokStartOfToday moved to src/lib/bangkok-time.ts (shared with the
+// referral list service).
 
 /** Returns the Bangkok hour-of-day (0–23) for an ISO timestamp. */
 function bangkokHourOfDay(iso: string): number {

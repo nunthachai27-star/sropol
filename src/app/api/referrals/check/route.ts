@@ -6,48 +6,66 @@ import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
 import { logger } from '@/lib/logger';
 import { apiError } from '@/lib/api-errors';
+import { validateApiKey } from '@/services/webhook';
+import { diagnoseCid, describeCidFailure } from '@/lib/cid';
+import { checkRateLimit } from '@/lib/rate-limit';
 
+// Minimized contract (2026-07-13 PHI review): the only consumer is the HOSxP
+// referral gate, which uses canRefer + reason. Maternity details must never
+// be returned from a CID lookup.
 interface CheckResult {
   canRefer: boolean;
   reason: string;
-  patient: {
-    found: boolean;
-    careStage: string | null;
-    ancRiskLevel: string | null;
-    gravida: number | null;
-    gaWeeks: number | null;
-    ancVisitCount: number | null;
-    lastAncDate: string | null;
-    currentHospitalCode: string | null;
-    currentHospitalName: string | null;
-    originHospitalCode: string | null;
-  } | null;
-  labor: {
-    found: boolean;
-    an: string | null;
-    laborStatus: string | null;
-    admitDate: string | null;
-    hospitalCode: string | null;
-  } | null;
   activeReferrals: number;
 }
+
+const CHECK_RATE_LIMIT = 30; // requests
+const CHECK_RATE_WINDOW_SECONDS = 60;
 
 export async function POST(request: NextRequest) {
   try {
     await ensureInit();
     const db = await getDatabase();
 
+    // Same Bearer webhook-key auth as /api/webhooks/patient-data. The route
+    // stays in middleware PUBLIC_PATHS; this handler check is the auth.
+    const authHeader = request.headers.get('authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return NextResponse.json(apiError('MISSING_AUTH'), { status: 401 });
+    }
+    const keyInfo = await validateApiKey(db, authHeader.slice(7));
+    if (!keyInfo) {
+      return NextResponse.json(apiError('INVALID_API_KEY'), { status: 401 });
+    }
+
+    const rate = await checkRateLimit(
+      `referral-check:${keyInfo.hospitalId}`,
+      CHECK_RATE_LIMIT,
+      CHECK_RATE_WINDOW_SECONDS,
+    );
+    if (!rate.allowed) {
+      logger.warn('referral_check_rate_limited', { hospitalId: keyInfo.hospitalId });
+      return NextResponse.json(apiError('RATE_LIMITED'), { status: 429 });
+    }
+
     const body = await request.json().catch(() => null);
     if (!body || typeof body !== 'object') {
       return NextResponse.json(apiError('INVALID_JSON'), { status: 400 });
     }
-
     const { cid } = body as { cid?: string };
-    if (!cid || typeof cid !== 'string' || cid.length !== 13) {
-      return NextResponse.json(apiError('CID_REQUIRED'), { status: 400 });
+    const cidCheck = diagnoseCid(cid, { requireChecksum: true });
+    if (!cidCheck.ok) {
+      logger.warn('referral_check_invalid_cid', {
+        hospitalId: keyInfo.hospitalId,
+        failure: cidCheck.failure,
+      });
+      return NextResponse.json(
+        apiError('VALIDATION_FAILED', { cid: describeCidFailure(cidCheck.failure) }),
+        { status: 400 },
+      );
     }
 
-    const cidHash = createHash('sha256').update(cid).digest('hex');
+    const cidHash = createHash('sha256').update(cidCheck.cid).digest('hex');
 
     // 1. Check maternal journey (ANC/pregnancy data)
     const journeyRows = await db.query<{
@@ -90,24 +108,9 @@ export async function POST(request: NextRequest) {
       activeReferrals = refCountRows[0]?.cnt ?? 0;
     }
 
-    // Resolve hospital names
-    async function getHospitalInfo(hospitalId: string): Promise<{ hcode: string; name: string } | null> {
-      const rows = await db.query<{ hcode: string; name: string }>(
-        'SELECT hcode, name FROM hospitals WHERE id = ?',
-        [hospitalId],
-      );
-      return rows.length > 0 ? rows[0] : null;
-    }
-
     const hasJourney = journeyRows.length > 0;
     const hasLabor = laborRows.length > 0;
     const journey = hasJourney ? journeyRows[0] : null;
-    const labor = hasLabor ? laborRows[0] : null;
-
-    // Resolve hospital info
-    const currentHosp = journey ? await getHospitalInfo(journey.current_hospital_id) : null;
-    const originHosp = journey ? await getHospitalInfo(journey.hospital_id) : null;
-    const laborHosp = labor ? await getHospitalInfo(labor.hospital_id) : null;
 
     // Determine if referral is possible
     let canRefer = false;
@@ -127,31 +130,7 @@ export async function POST(request: NextRequest) {
       reason = 'พร้อมส่งต่อ';
     }
 
-    const result: CheckResult = {
-      canRefer,
-      reason,
-      patient: hasJourney ? {
-        found: true,
-        careStage: journey!.care_stage,
-        ancRiskLevel: journey!.anc_risk_level,
-        gravida: journey!.gravida,
-        gaWeeks: journey!.ga_weeks,
-        ancVisitCount: journey!.anc_visit_count,
-        lastAncDate: journey!.last_anc_date,
-        currentHospitalCode: currentHosp?.hcode ?? null,
-        currentHospitalName: currentHosp?.name ?? null,
-        originHospitalCode: originHosp?.hcode ?? null,
-      } : null,
-      labor: hasLabor ? {
-        found: true,
-        an: labor!.an,
-        laborStatus: labor!.labor_status,
-        admitDate: labor!.admit_date,
-        hospitalCode: laborHosp?.hcode ?? null,
-      } : null,
-      activeReferrals,
-    };
-
+    const result: CheckResult = { canRefer, reason, activeReferrals };
     return NextResponse.json(result);
   } catch (error) {
     logger.error('referral_check_failed', { error });

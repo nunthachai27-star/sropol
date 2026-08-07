@@ -52,7 +52,9 @@ describe('ClinicalData', () => {
   it('renders Thai labels for every tile', () => {
     render(<ClinicalData {...completeData} />);
     for (const label of [
-      'ครรภ์ที่',
+      // The OB-formula tile labels "G_P_A_L" unless a pregNo is supplied
+      // (completeData has none); with pregNo it would read "ครรภ์ที่ N".
+      'G_P_A_L',
       'อายุครรภ์',
       'ฝากครรภ์',
       'ส่วนสูง',
@@ -102,9 +104,7 @@ describe('ClinicalData', () => {
 
   it('colors weight diff with risk-low token when gain <= 15', () => {
     const { container } = render(<ClinicalData {...completeData} weightKg={70} />);
-    const diff = [...container.querySelectorAll('span')].find(
-      (el) => el.textContent === '+12',
-    );
+    const diff = [...container.querySelectorAll('span')].find((el) => el.textContent === '+12');
     expect(diff).toBeTruthy();
     expect(diff?.getAttribute('style')).toMatch(/--risk-low/);
   });
@@ -113,9 +113,7 @@ describe('ClinicalData', () => {
     const { container } = render(
       <ClinicalData {...completeData} weightKg={75} weightDiffKg={18} />,
     );
-    const diff = [...container.querySelectorAll('span')].find(
-      (el) => el.textContent === '+18',
-    );
+    const diff = [...container.querySelectorAll('span')].find((el) => el.textContent === '+18');
     expect(diff).toBeTruthy();
     expect(diff?.getAttribute('style')).toMatch(/--risk-medium/);
   });
@@ -124,9 +122,7 @@ describe('ClinicalData', () => {
     const { container } = render(
       <ClinicalData {...completeData} weightKg={75} weightDiffKg={25} />,
     );
-    const diff = [...container.querySelectorAll('span')].find(
-      (el) => el.textContent === '+25',
-    );
+    const diff = [...container.querySelectorAll('span')].find((el) => el.textContent === '+25');
     expect(diff).toBeTruthy();
     expect(diff?.getAttribute('style')).toMatch(/--risk-high/);
   });

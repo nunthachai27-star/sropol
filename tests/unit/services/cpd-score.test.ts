@@ -7,7 +7,7 @@ import {
 } from '@/services/cpd-score';
 import { RiskLevel } from '@/types/domain';
 import type { CpdFactors } from '@/types/domain';
-import { classifyRiskLevel } from '@/config/risk-levels';
+import { classifyRiskLevel, isHighRisk } from '@/config/risk-levels';
 
 describe('CPD Score Service', () => {
   describe('calculateCpdScore', () => {
@@ -32,13 +32,13 @@ describe('CPD Score Service', () => {
 
     it('returns zero score when all factors are normal', () => {
       const factors: CpdFactors = {
-        gravida: 3,       // not primigravida → 0
-        ancCount: 5,      // >= 4 → 0
-        gaWeeks: 37,      // < 40 → 0
-        heightCm: 160,    // >= 155 → 0
+        gravida: 3, // not primigravida → 0
+        ancCount: 5, // >= 4 → 0
+        gaWeeks: 37, // < 40 → 0
+        heightCm: 160, // >= 155 → 0
         weightDiffKg: 10, // <= 15 → 0
         fundalHeightCm: 32, // <= 34 → 0
-        usWeightG: 2800,  // <= 3000 → 0
+        usWeightG: 2800, // <= 3000 → 0
         hematocritPct: 35, // >= 30 → 0
       };
       const result = calculateCpdScore(factors);
@@ -83,13 +83,13 @@ describe('CPD Score Service', () => {
 
     it('returns individual factor scores in result', () => {
       const factors: CpdFactors = {
-        gravida: 1,        // 2
-        ancCount: 5,       // 0
-        gaWeeks: 38,       // 0
-        heightCm: 148,     // 2
-        weightDiffKg: 18,  // 1 (>15, <=20)
-        fundalHeightCm: 35,// 1 (>34, <=36)
-        usWeightG: 3200,   // 1 (>3000, <=3500)
+        gravida: 1, // 2
+        ancCount: 5, // 0
+        gaWeeks: 38, // 0
+        heightCm: 148, // 2
+        weightDiffKg: 18, // 1 (>15, <=20)
+        fundalHeightCm: 35, // 1 (>34, <=36)
+        usWeightG: 3200, // 1 (>3000, <=3500)
         hematocritPct: 28, // 1.5
       };
       const result = calculateCpdScore(factors);
@@ -125,6 +125,33 @@ describe('CPD Score Service', () => {
 
     it('score 0 is LOW', () => {
       expect(classifyRiskLevel(0)).toBe(RiskLevel.LOW);
+    });
+  });
+
+  describe('isHighRisk', () => {
+    // isHighRisk is the single, config-derived predicate the UI uses to decide
+    // whether to fire the high-risk alert — no bare numeric literals at the
+    // call sites. Its boundary must track the HIGH classification exactly.
+    it('is false just below the HIGH boundary (9.99)', () => {
+      expect(isHighRisk(9.99)).toBe(false);
+    });
+
+    it('is true at the HIGH boundary (10)', () => {
+      expect(isHighRisk(10)).toBe(true);
+    });
+
+    it('is true above the boundary', () => {
+      expect(isHighRisk(14)).toBe(true);
+    });
+
+    it('is false for low scores', () => {
+      expect(isHighRisk(0)).toBe(false);
+    });
+
+    it('agrees with classifyRiskLevel', () => {
+      for (const score of [0, 4.99, 5, 9.99, 10, 14.5]) {
+        expect(isHighRisk(score)).toBe(classifyRiskLevel(score) === RiskLevel.HIGH);
+      }
     });
   });
 

@@ -16,24 +16,19 @@
 //                                    → ipt_labour_partograph (latest by observe_datetime)
 'use client';
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useBmsSession } from '@/hooks/useBmsSession';
 import { useMaternityWardStateFull } from '@/hooks/useMaternityWardStateFull';
 import { useOnboardHosxpWebhook } from '@/hooks/useOnboardHosxpWebhook';
 import { useOnboardHosxpSync } from '@/hooks/useOnboardHosxpSync';
 import { useBrowserPoll } from '@/hooks/useBrowserPoll';
-import {
-  WardLayoutViewFull,
-  type BedMovePayload,
-} from '@/components/maternity/WardLayoutViewFull';
+import { useMaternalScreenSummaries } from '@/hooks/useMaternalScreenSummaries';
+import { WardLayoutViewFull, type BedMovePayload } from '@/components/maternity/WardLayoutViewFull';
 import { PatientDrawer } from '@/components/maternity/PatientDrawer';
-import {
-  getBedMoveReasons,
-  movePatientBed,
-} from '@/services/maternity-ward';
-import { AlertCircle, ArrowLeft, RefreshCw } from 'lucide-react';
+import { getBedMoveReasons, movePatientBed } from '@/services/maternity-ward';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 
 const LIVE_GREEN = '#059669';
+const LIVE_AMBER = '#D97706';
 const SLATE_INK = '#0F172A';
 const SLATE_MUTE = '#64748B';
 const ACCENT_BLUE = '#1565C0';
@@ -42,15 +37,53 @@ const FONT_MONO = "'IBM Plex Mono', 'SF Mono', Consolas, monospace";
 
 function Skeleton({ className = '' }: { className?: string }) {
   return (
+    <div className={`animate-pulse rounded-md bg-slate-200/70 ${className}`} aria-hidden="true" />
+  );
+}
+
+// Shared dismissible alert strip. Both the HOSxP-webhook onboarding error and
+// the bed-move write-failure surface use it so the two never drift apart in
+// style (constitution III — extract the pattern once it appears twice).
+function AlertBanner({
+  badge,
+  title,
+  detail,
+  onDismiss,
+}: {
+  badge: string;
+  title: string;
+  detail?: string | null;
+  onDismiss: () => void;
+}) {
+  return (
     <div
-      className={`animate-pulse rounded-md bg-slate-200/70 ${className}`}
-      aria-hidden="true"
-    />
+      role="alert"
+      className="mb-3 flex items-start gap-3 rounded-lg border bg-white px-4 py-3 text-sm shadow-sm"
+      style={{ borderColor: CRIT_RED }}
+    >
+      <div
+        className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-white"
+        style={{ background: CRIT_RED }}
+      >
+        {badge}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="font-semibold text-slate-900">{title}</div>
+        {detail && <div className="mt-0.5 break-words text-xs text-slate-600">{detail}</div>}
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="shrink-0 rounded border border-slate-300 bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-slate-600 hover:bg-slate-50"
+      >
+        ซ่อน
+      </button>
+    </div>
   );
 }
 
 export default function HospitalMaternityWardPage() {
-  const { isReady, error: sessionError, config, userInfo } = useBmsSession();
+  const { isReady, error: sessionError, config, userInfo, marketplaceToken } = useBmsSession();
   const { state: onboardingState } = useOnboardHosxpWebhook();
   // Provision the polling pipeline alongside the webhook. Without this,
   // a nurse who only ever lands on /hospital-maternity-ward never gets
@@ -64,14 +97,33 @@ export default function HospitalMaternityWardPage() {
   // ipt_labour / partograph updates to the central cache after server-side
   // polling was disabled.
   useBrowserPoll();
+  // Cross-source maternal-screen summaries (Phase 6 Task H4, GC-H4) — a
+  // SEPARATE central-DB fetch, independent of the live HOSxP feed above. A
+  // failed/slow fetch here degrades `byAn` to an empty map (see the hook),
+  // so every bed tile renders exactly as it does today; it can never block
+  // or error the ward board.
+  const { byAn: maternalScreenSummaries } = useMaternalScreenSummaries(userInfo?.hospcode ?? null);
   const [onboardingErrorDismissed, setOnboardingErrorDismissed] = useState(false);
-  const showOnboardingError =
-    !!onboardingState?.error && !onboardingErrorDismissed;
+  const showOnboardingError = !!onboardingState?.error && !onboardingErrorDismissed;
 
-  const { wards, ward, beds, occupancy, isLoading, error, mutateBeds, mutateOccupancy } =
-    useMaternityWardStateFull();
+  const {
+    wards,
+    ward,
+    selectedWard,
+    setSelectedWard,
+    beds,
+    occupancy,
+    isLoading,
+    error,
+    health,
+    mutateBeds,
+    mutateOccupancy,
+  } = useMaternityWardStateFull();
   const [selectedAn, setSelectedAn] = useState<string | null>(null);
   const [reasons, setReasons] = useState<string[]>([]);
+  // Write-failure strip (bed move + rejected move). No shared toast system
+  // exists yet, so this local banner is how write errors reach the nurse.
+  const [writeError, setWriteError] = useState<{ message: string; detail?: string } | null>(null);
 
   // 60s tick — drives hours-since-admit + crit severity classification.
   const [now, setNow] = useState<number>(() => Date.now());
@@ -113,16 +165,18 @@ export default function HospitalMaternityWardPage() {
       </div>
     );
   }
-  if (error) {
+  // Full-page takeover only for an initial-load failure (no ward resolved yet).
+  // Once a ward is on screen, a transient beds/occupancy refresh error keeps the
+  // cached board visible and degrades to the masthead LIVE badge instead — the
+  // nurse never loses the board over a blip (constitution VI: show cached data).
+  if (error && !ward) {
     return (
       <div
         role="alert"
         className="mx-auto mt-12 flex max-w-xl flex-col items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-8 text-center"
       >
         <AlertCircle className="h-10 w-10 text-red-500" aria-hidden />
-        <p className="text-base font-semibold text-red-700">
-          ไม่สามารถโหลดข้อมูลห้องคลอด
-        </p>
+        <p className="text-base font-semibold text-red-700">ไม่สามารถโหลดข้อมูลห้องคลอด</p>
         <p className="text-sm text-red-600">{error.message}</p>
         <button
           type="button"
@@ -140,11 +194,10 @@ export default function HospitalMaternityWardPage() {
   if (!isLoading && wards.length === 0) {
     return (
       <div className="mx-auto mt-12 max-w-xl rounded-xl border border-slate-200 bg-slate-50 p-8 text-center">
-        <p className="text-base font-semibold text-slate-700">
-          ไม่มีห้องคลอดที่ใช้งานได้
-        </p>
+        <p className="text-base font-semibold text-slate-700">ไม่มีห้องคลอดที่ใช้งานได้</p>
         <p className="mt-2 text-sm text-slate-500">
-          กรุณาตรวจสอบ <code className="font-mono">ward.is_maternity_ward = &apos;Y&apos;</code> ใน HOSxP
+          กรุณาตรวจสอบ <code className="font-mono">ward.is_maternity_ward = &apos;Y&apos;</code> ใน
+          HOSxP
         </p>
       </div>
     );
@@ -202,23 +255,58 @@ export default function HospitalMaternityWardPage() {
         newRoomno: payload.newRoomno,
         reason: payload.reason,
       });
+      setWriteError(null);
       await Promise.all([mutateBeds(), mutateOccupancy()]);
     } catch (e) {
-      // TODO: replace with the shared toast component when available.
       console.error('[bed-move] movePatientBed failed:', e);
+      // movePatientBed is a non-atomic two-step write (iptadm bedno/roomno
+      // update, THEN the iptbedmove audit insert) that surfaces a single opaque
+      // error — timeouts/connection failures at either step carry no table
+      // identity, so we cannot tell from here whether iptadm already changed.
+      // Warn that the move may have applied without a complete audit record and
+      // resnap the board to server truth so the tile reflects reality.
+      const detail = e instanceof Error ? e.message : String(e);
+      setWriteError({
+        message:
+          'ย้ายเตียงไม่สำเร็จ — เตียงอาจถูกย้ายแล้วแต่บันทึกประวัติไม่ครบ กรุณาตรวจสอบสถานะเตียงใน HOSxP แล้วรีเฟรชก่อนลองใหม่',
+        detail,
+      });
+      void mutateOccupancy();
     }
   };
 
   const handleMoveRejected = (reason: 'locked' | 'occupied' | 'no-op') => {
-    const msg =
+    // 'no-op' = dropped back on the same bed. Benign — clear any stale strip and
+    // stay quiet rather than nag the nurse. No server write happened in any of
+    // these branches, so the board never changed and needs no resnap.
+    if (reason === 'no-op') {
+      setWriteError(null);
+      console.warn('[bed-move] rejected: เตียงเดิม — ไม่ต้องย้าย');
+      return;
+    }
+    const banner =
       reason === 'locked'
-        ? 'เตียงถูกล็อก'
-        : reason === 'occupied'
-          ? 'เตียงไม่ว่าง'
-          : 'เตียงเดิม — ไม่ต้องย้าย';
-    // TODO: replace with the shared toast component when available.
-    console.warn(`[bed-move] rejected: ${msg}`);
+        ? {
+            message: 'ย้ายเตียงไม่ได้ — เตียงปลายทางถูกล็อก',
+            detail: 'ปลดล็อกเตียงใน HOSxP ก่อน หรือเลือกเตียงว่างอื่น',
+          }
+        : {
+            message: 'ย้ายเตียงไม่ได้ — เตียงปลายทางไม่ว่าง',
+            detail: 'เลือกเตียงที่ว่างและไม่ถูกล็อก แล้วลองอีกครั้ง',
+          };
+    console.warn(`[bed-move] rejected: ${banner.message}`);
+    setWriteError(banner);
   };
+
+  // Masthead LIVE badge, driven by real feed health from the hook. The error
+  // message rides along in a title attr when offline so a nurse can hover for
+  // the underlying cause without leaving the board.
+  const liveBadge =
+    health === 'reconnecting'
+      ? { color: LIVE_AMBER, label: 'BMS · RECONNECTING', title: error?.message }
+      : health === 'error'
+        ? { color: CRIT_RED, label: 'BMS · OFFLINE', title: error?.message }
+        : { color: LIVE_GREEN, label: 'LIVE · BMS SESSION API', title: undefined };
 
   return (
     <div
@@ -226,33 +314,21 @@ export default function HospitalMaternityWardPage() {
       style={{ padding: '0 28px 80px', background: '#F4F7FB', minHeight: '100vh' }}
     >
       {showOnboardingError && (
-        <div
-          role="alert"
-          className="mb-3 flex items-start gap-3 rounded-lg border bg-white px-4 py-3 text-sm shadow-sm"
-          style={{ borderColor: CRIT_RED }}
-        >
-          <div
-            className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-white"
-            style={{ background: CRIT_RED }}
-          >
-            HOSxP WEBHOOK
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="font-semibold text-slate-900">
-              ไม่สามารถอัปเดต webhook_setting บน HOSxP
-            </div>
-            <div className="mt-0.5 truncate text-xs text-slate-600">
-              {onboardingState?.error}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setOnboardingErrorDismissed(true)}
-            className="shrink-0 rounded border border-slate-300 bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-slate-600 hover:bg-slate-50"
-          >
-            ซ่อน
-          </button>
-        </div>
+        <AlertBanner
+          badge="HOSxP WEBHOOK"
+          title="ไม่สามารถอัปเดต webhook_setting บน HOSxP"
+          detail={onboardingState?.error}
+          onDismiss={() => setOnboardingErrorDismissed(true)}
+        />
+      )}
+
+      {writeError && (
+        <AlertBanner
+          badge="ย้ายเตียง"
+          title={writeError.message}
+          detail={writeError.detail}
+          onDismiss={() => setWriteError(null)}
+        />
       )}
 
       {/* Masthead */}
@@ -267,31 +343,6 @@ export default function HospitalMaternityWardPage() {
         }}
       >
         <div>
-          {/* This page lives in the (hospital) route group, which has no top
-              nav bar, so carry an explicit way back to the provincial
-              dashboard. href="/" — Next prepends the basePath at runtime. */}
-          <Link
-            href="/"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              marginBottom: 14,
-              fontFamily: FONT_MONO,
-              fontSize: 11,
-              letterSpacing: '0.14em',
-              textTransform: 'uppercase',
-              fontWeight: 700,
-              color: ACCENT_BLUE,
-              textDecoration: 'none',
-              border: `1.5px solid ${ACCENT_BLUE}`,
-              borderRadius: 2,
-              padding: '6px 12px',
-            }}
-          >
-            <ArrowLeft size={14} strokeWidth={2.5} aria-hidden="true" />
-            แดชบอร์ด
-          </Link>
           <div
             style={{
               display: 'flex',
@@ -305,7 +356,9 @@ export default function HospitalMaternityWardPage() {
               fontWeight: 600,
             }}
           >
-            <span style={{ display: 'inline-block', width: 28, height: 5, background: ACCENT_BLUE }} />
+            <span
+              style={{ display: 'inline-block', width: 28, height: 5, background: ACCENT_BLUE }}
+            />
             <span style={{ color: SLATE_INK, fontWeight: 800, letterSpacing: '0.24em' }}>
               SR-LRMS / OneLR
             </span>
@@ -325,6 +378,44 @@ export default function HospitalMaternityWardPage() {
               ห้องคลอด<span style={{ color: ACCENT_BLUE }}>.</span>
             </h1>
             <span style={{ fontSize: 14, color: '#1E293B', fontWeight: 600 }}>{wardName}</span>
+            {wards.length > 1 && (
+              <label
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontFamily: FONT_MONO,
+                  fontSize: 11,
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  color: SLATE_MUTE,
+                  fontWeight: 600,
+                }}
+              >
+                วอร์ด:
+                <select
+                  value={selectedWard ?? ''}
+                  onChange={(e) => setSelectedWard(e.target.value)}
+                  style={{
+                    fontFamily: FONT_MONO,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: SLATE_INK,
+                    border: `1px solid ${SLATE_INK}`,
+                    background: 'white',
+                    padding: '4px 8px',
+                    borderRadius: 2,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {wards.map((w) => (
+                    <option key={w.ward} value={w.ward}>
+                      {w.name} ({w.ward})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
         </div>
         <div
@@ -341,8 +432,11 @@ export default function HospitalMaternityWardPage() {
           }}
         >
           <div
+            role="status"
+            aria-live="polite"
+            title={liveBadge.title}
             style={{
-              color: LIVE_GREEN,
+              color: liveBadge.color,
               fontWeight: 700,
               display: 'flex',
               justifyContent: 'flex-end',
@@ -351,15 +445,16 @@ export default function HospitalMaternityWardPage() {
             }}
           >
             <span
+              className={health === 'ok' ? undefined : 'animate-pulse'}
               style={{
                 display: 'inline-block',
                 width: 7,
                 height: 7,
-                background: LIVE_GREEN,
+                background: liveBadge.color,
                 borderRadius: '50%',
               }}
             />
-            LIVE · BMS SESSION API
+            {liveBadge.label}
           </div>
           <div>อัปเดตอัตโนมัติทุก 20 วินาที</div>
         </div>
@@ -483,6 +578,9 @@ export default function HospitalMaternityWardPage() {
           onBedMove={(p) => void handleBedMove(p)}
           onMoveRejected={handleMoveRejected}
           reasons={reasons}
+          config={config}
+          marketplaceToken={marketplaceToken}
+          maternalScreenSummaries={maternalScreenSummaries}
         />
       </div>
 

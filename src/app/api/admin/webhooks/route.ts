@@ -3,11 +3,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { createApiKey, listApiKeys } from '@/services/webhook';
 import { logger } from '@/lib/logger';
 
 export async function GET() {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const db = await getDatabase();
 
@@ -29,15 +33,15 @@ export async function GET() {
     });
   } catch (error) {
     logger.error('admin_webhooks_list_failed', { error });
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const db = await getDatabase();
 
@@ -65,20 +69,20 @@ export async function POST(request: NextRequest) {
     const hospitalId = hospitals[0].id;
     const result = await createApiKey(db, hospitalId, body.label);
 
-    return NextResponse.json({
-      id: result.id,
-      apiKey: result.rawKey,
-      keyPrefix: result.keyPrefix,
-      hospitalName: hospitals[0].name,
-      hcode: body.hcode,
-      label: body.label,
-      message: 'API key created. Save this key — it will not be shown again.',
-    }, { status: 201 });
+    return NextResponse.json(
+      {
+        id: result.id,
+        apiKey: result.rawKey,
+        keyPrefix: result.keyPrefix,
+        hospitalName: hospitals[0].name,
+        hcode: body.hcode,
+        label: body.label,
+        message: 'API key created. Save this key — it will not be shown again.',
+      },
+      { status: 201 },
+    );
   } catch (error) {
     logger.error('admin_webhooks_create_failed', { error });
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -1,0 +1,1704 @@
+[
+  {
+    "name": "all-unknown input never yields a normal/stable result",
+    "input": {},
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "GA 19+6 alone matches no local rule",
+    "input": {
+      "gaWeeks": 19,
+      "gaDays": 6
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "GA 20+0 alone matches no local rule",
+    "input": {
+      "gaWeeks": 20,
+      "gaDays": 0
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "bleeding at GA 25+6 is below local APH threshold but previa pattern still fires",
+    "input": {
+      "gaWeeks": 25,
+      "gaDays": 6,
+      "vaginalBleeding": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PLACENTA_PREVIA"],
+      "matchedRuleIds": ["APH-PREVIA-PATTERN"],
+      "missingRequiredFields": [
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "bleeding at GA 26+0 meets local APH threshold and previa pattern also fires",
+    "input": {
+      "gaWeeks": 26,
+      "gaDays": 0,
+      "vaginalBleeding": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["ANTEPARTUM_HEMORRHAGE", "PLACENTA_PREVIA"],
+      "matchedRuleIds": ["APH-GA26-VAGINAL-BLEEDING", "APH-PREVIA-PATTERN"],
+      "missingRequiredFields": [
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "bleeding at GA 23+6 below local APH threshold, previa pattern still fires",
+    "input": {
+      "gaWeeks": 23,
+      "gaDays": 6,
+      "vaginalBleeding": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PLACENTA_PREVIA"],
+      "matchedRuleIds": ["APH-PREVIA-PATTERN"],
+      "missingRequiredFields": [
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "bleeding at GA 24+0 below local APH threshold, previa pattern still fires",
+    "input": {
+      "gaWeeks": 24,
+      "gaDays": 0,
+      "vaginalBleeding": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PLACENTA_PREVIA"],
+      "matchedRuleIds": ["APH-PREVIA-PATTERN"],
+      "missingRequiredFields": [
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "bleeding with unknown GA does not downgrade; gaWeeks reported missing",
+    "input": {
+      "vaginalBleeding": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PLACENTA_PREVIA"],
+      "matchedRuleIds": ["APH-PREVIA-PATTERN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "SBP 139 alone matches no local rule",
+    "input": {
+      "systolicBp": 139
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "SBP 140 alone is local mild",
+    "input": {
+      "systolicBp": 140
+    },
+    "expect": {
+      "localTier": "LOCAL_MILD",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-BP-MILD-140"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "SBP 149 alone is local mild",
+    "input": {
+      "systolicBp": 149
+    },
+    "expect": {
+      "localTier": "LOCAL_MILD",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-BP-MILD-140"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "SBP 150 alone is local moderate",
+    "input": {
+      "systolicBp": 150
+    },
+    "expect": {
+      "localTier": "LOCAL_MODERATE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-BP-MILD-140", "PE-BP-MODERATE-SBP-150"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "SBP 159 alone is local moderate",
+    "input": {
+      "systolicBp": 159
+    },
+    "expect": {
+      "localTier": "LOCAL_MODERATE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-BP-MILD-140", "PE-BP-MODERATE-SBP-150"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "SBP 160 alone is local severe",
+    "input": {
+      "systolicBp": 160
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-BP-MILD-140", "PE-BP-MODERATE-SBP-150", "PE-BP-SEVERE-SBP-160"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "DBP 89 alone matches no local rule",
+    "input": {
+      "diastolicBp": 89
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "DBP 90 alone is local mild",
+    "input": {
+      "diastolicBp": 90
+    },
+    "expect": {
+      "localTier": "LOCAL_MILD",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-BP-MILD-140"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "DBP 99 alone is local mild",
+    "input": {
+      "diastolicBp": 99
+    },
+    "expect": {
+      "localTier": "LOCAL_MILD",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-BP-MILD-140"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "DBP 100 alone is local moderate",
+    "input": {
+      "diastolicBp": 100
+    },
+    "expect": {
+      "localTier": "LOCAL_MODERATE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-BP-MILD-140", "PE-BP-MODERATE-DBP-100"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "DBP 109 alone is local moderate",
+    "input": {
+      "diastolicBp": 109
+    },
+    "expect": {
+      "localTier": "LOCAL_MODERATE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-BP-MILD-140", "PE-BP-MODERATE-DBP-100"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "DBP 110 alone is local severe",
+    "input": {
+      "diastolicBp": 110
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-BP-MILD-140", "PE-BP-MODERATE-DBP-100", "PE-BP-SEVERE-DBP-110"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "creatinine 1.10 alone matches no local rule (not strictly greater than 1.1)",
+    "input": {
+      "creatinineMgDl": 1.1
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "creatinine 1.11 alone is local severe (strictly greater than 1.1)",
+    "input": {
+      "creatinineMgDl": 1.11
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-LAB-SEVERE-CREATININE-1_1"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "creatinine doubling from baseline without crossing 1.1 is not evaluated by any encoded local rule",
+    "input": {
+      "creatinineMgDl": 0.9,
+      "creatinineBaselineMgDl": 0.4
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "platelets 100000 alone matches no local rule (not strictly less than 100000)",
+    "input": {
+      "plateletPerUl": 100000
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "platelets 99999 alone is local severe (strictly less than 100000)",
+    "input": {
+      "plateletPerUl": 99999
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-LAB-SEVERE-PLATELET-100K"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "FHR 109 with bleeding triggers abruptio fetal-distress evidence plus previa pattern",
+    "input": {
+      "vaginalBleeding": true,
+      "fetalHeartRateBpm": 109
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["ABRUPTIO_PLACENTAE", "PLACENTA_PREVIA"],
+      "matchedRuleIds": ["APH-ABRUPTIO-PATTERN", "APH-PREVIA-PATTERN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "FHR 110 with bleeding is normal (inclusive) and only previa pattern fires",
+    "input": {
+      "vaginalBleeding": true,
+      "fetalHeartRateBpm": 110
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PLACENTA_PREVIA"],
+      "matchedRuleIds": ["APH-PREVIA-PATTERN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "FHR 160 with bleeding is normal (inclusive) and only previa pattern fires",
+    "input": {
+      "vaginalBleeding": true,
+      "fetalHeartRateBpm": 160
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PLACENTA_PREVIA"],
+      "matchedRuleIds": ["APH-PREVIA-PATTERN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "FHR 161 with bleeding triggers abruptio fetal-distress evidence plus previa pattern",
+    "input": {
+      "vaginalBleeding": true,
+      "fetalHeartRateBpm": 161
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["ABRUPTIO_PLACENTAE", "PLACENTA_PREVIA"],
+      "matchedRuleIds": ["APH-ABRUPTIO-PATTERN", "APH-PREVIA-PATTERN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "normal FHR does not downgrade maternal instability from shock signs",
+    "input": {
+      "shockSignsPresent": true,
+      "fetalHeartRateBpm": 140,
+      "fetalTracingPattern": "REASSURING"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "EMERGENCY",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": ["EA-SHOCK-SIGNS-EMERGENCY"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "maternalPulseBpm",
+        "consciousness"
+      ]
+    }
+  },
+  {
+    "name": "headache SEVERE alone is local severe",
+    "input": {
+      "headache": "SEVERE"
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-HEADACHE-IN-LOCAL-SEVERE-COLUMN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "blurred vision alone is local severe",
+    "input": {
+      "blurredVision": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-BLURRED-VISION-IN-LOCAL-SEVERE-COLUMN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "epigastric pain alone is local severe",
+    "input": {
+      "epigastricPain": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-EPIGASTRIC-PAIN-IN-LOCAL-SEVERE-COLUMN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "pulmonary edema alone is local severe",
+    "input": {
+      "pulmonaryEdema": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-PULMONARY-EDEMA-IN-LOCAL-SEVERE-COLUMN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "textbook abruptio pattern: bleeding with pain, tenderness, and frequent contractions",
+    "input": {
+      "vaginalBleeding": true,
+      "abdominalOrBackPain": true,
+      "uterineTenderness": true,
+      "frequentContractions": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["ABRUPTIO_PLACENTAE"],
+      "matchedRuleIds": ["APH-ABRUPTIO-PATTERN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "concealed abruption with no visible vaginal bleeding still flags the pattern",
+    "input": {
+      "vaginalBleeding": false,
+      "concealedBleedingSuspected": true,
+      "uterineTenderness": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["ABRUPTIO_PLACENTAE"],
+      "matchedRuleIds": ["APH-ABRUPTIO-PATTERN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "painless bleeding remains suspected previa, never diagnosed",
+    "input": {
+      "vaginalBleeding": true,
+      "abdominalOrBackPain": false
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PLACENTA_PREVIA"],
+      "matchedRuleIds": ["APH-PREVIA-PATTERN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "suspected uterine rupture from intra-abdominal signs with no vaginal bleeding",
+    "input": {
+      "vaginalBleeding": false,
+      "suprapubicTenderness": true,
+      "bandlsRing": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["UTERINE_RUPTURE"],
+      "matchedRuleIds": ["APH-RUPTURE-UTERUS-PATTERN"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "vasa-previa-compatible bleeding with ruptured membranes and sinusoidal tracing (also flags abruptio and previa patterns by conservative design)",
+    "input": {
+      "vaginalBleeding": true,
+      "membranesRuptured": true,
+      "fetalTracingPattern": "SINUSOIDAL"
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "EMERGENCY",
+      "isComplete": false,
+      "suspectedConditions": ["ABRUPTIO_PLACENTAE", "PLACENTA_PREVIA", "VASA_PREVIA"],
+      "matchedRuleIds": [
+        "APH-ABRUPTIO-PATTERN",
+        "APH-PREVIA-PATTERN",
+        "APH-VASA-PREVIA-PATTERN",
+        "EA-FETAL-SINUSOIDAL-EMERGENCY"
+      ],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "proteinuria ONE_PLUS alone is local mild",
+    "input": {
+      "proteinuriaGrade": "ONE_PLUS"
+    },
+    "expect": {
+      "localTier": "LOCAL_MILD",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-PROT-MILD-1PLUS"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "proteinuria TWO_PLUS alone is local severe (overlap resolves to severe)",
+    "input": {
+      "proteinuriaGrade": "TWO_PLUS"
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-PROT-SEVERE-2TO3PLUS"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "proteinuria THREE_PLUS alone is local severe",
+    "input": {
+      "proteinuriaGrade": "THREE_PLUS"
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-PROT-SEVERE-2TO3PLUS"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "proteinuria FOUR_PLUS alone is local severe (conservative extension beyond PDF 3+ ceiling)",
+    "input": {
+      "proteinuriaGrade": "FOUR_PLUS"
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-PROT-SEVERE-2TO3PLUS"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "proteinuria NEGATIVE alone matches no local rule",
+    "input": {
+      "proteinuriaGrade": "NEGATIVE"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "proteinuria TRACE alone matches no local rule",
+    "input": {
+      "proteinuriaGrade": "TRACE"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "proteinuria explicitly UNKNOWN is treated as not assessed",
+    "input": {
+      "proteinuriaGrade": "UNKNOWN"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "consciousness UNRESPONSIVE alone is emergency acuity",
+    "input": {
+      "consciousness": "UNRESPONSIVE"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "EMERGENCY",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": ["EA-CONSCIOUSNESS-DEPRESSED-EMERGENCY"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "consciousness PAIN alone is emergency acuity",
+    "input": {
+      "consciousness": "PAIN"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "EMERGENCY",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": ["EA-CONSCIOUSNESS-DEPRESSED-EMERGENCY"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "consciousness VOICE alone with other acuity fields missing is unknown, not stable",
+    "input": {
+      "consciousness": "VOICE"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "oxygen saturation 94 alone is urgent acuity",
+    "input": {
+      "oxygenSaturationPct": 94
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "URGENT",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": ["EA-OXYGEN-SAT-LOW-URGENT"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "oxygen saturation 95 alone with other acuity fields missing is unknown, not stable",
+    "input": {
+      "oxygenSaturationPct": 95
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "maternal pulse 121 alone is urgent acuity",
+    "input": {
+      "maternalPulseBpm": 121
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "URGENT",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": ["EA-PULSE-HIGH-URGENT"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "maternal pulse 120 alone with other acuity fields missing is unknown, not stable",
+    "input": {
+      "maternalPulseBpm": 120
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "non-reassuring fetal tracing alone is urgent acuity",
+    "input": {
+      "fetalTracingPattern": "NON_REASSURING"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "URGENT",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": ["EA-FETAL-NON-REASSURING-URGENT"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "heavy bleeding rate alone is emergency acuity, independent of local tier",
+    "input": {
+      "bleedingRate": "HEAVY"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "EMERGENCY",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": ["EA-BLEEDING-HEAVY-EMERGENCY"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "all six acuity fields assessed and normal yields stable acuity despite incomplete overall screen",
+    "input": {
+      "shockSignsPresent": false,
+      "consciousness": "ALERT",
+      "oxygenSaturationPct": 98,
+      "maternalPulseBpm": 80,
+      "bleedingRate": "SPOTTING",
+      "fetalTracingPattern": "REASSURING"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "STABLE",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm"
+      ]
+    }
+  },
+  {
+    "name": "multiple simultaneous severe findings across preeclampsia, hemorrhage, and acuity axes",
+    "input": {
+      "headache": "SEVERE",
+      "systolicBp": 170,
+      "vaginalBleeding": true,
+      "abdominalOrBackPain": true,
+      "shockSignsPresent": true
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "EMERGENCY",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA", "ABRUPTIO_PLACENTAE"],
+      "matchedRuleIds": [
+        "PE-HEADACHE-IN-LOCAL-SEVERE-COLUMN",
+        "PE-BP-MILD-140",
+        "PE-BP-MODERATE-SBP-150",
+        "PE-BP-SEVERE-SBP-160",
+        "APH-ABRUPTIO-PATTERN",
+        "EA-SHOCK-SIGNS-EMERGENCY"
+      ],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness"
+      ]
+    }
+  },
+  {
+    "name": "severe platelet finding coexists with completely missing unrelated fields",
+    "input": {
+      "plateletPerUl": 50000
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-LAB-SEVERE-PLATELET-100K"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "severe proteinuria fires despite early GA and undiagnosed PIH (no prerequisite gating)",
+    "input": {
+      "gaWeeks": 15,
+      "gaDays": 0,
+      "piHDiagnosed": false,
+      "proteinuriaGrade": "THREE_PLUS"
+    },
+    "expect": {
+      "localTier": "LOCAL_SEVERE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-PROT-SEVERE-2TO3PLUS"],
+      "missingRequiredFields": [
+        "systolicBp",
+        "diastolicBp",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "fully complete and entirely normal input is the only case yielding a stable, matched result",
+    "input": {
+      "gaWeeks": 30,
+      "gaDays": 0,
+      "piHDiagnosed": false,
+      "systolicBp": 110,
+      "diastolicBp": 70,
+      "proteinuriaGrade": "NEGATIVE",
+      "headache": "NONE",
+      "vaginalBleeding": false,
+      "fetalHeartRateBpm": 140,
+      "maternalPulseBpm": 80,
+      "consciousness": "ALERT",
+      "shockSignsPresent": false,
+      "oxygenSaturationPct": 98,
+      "bleedingRate": "SPOTTING",
+      "fetalTracingPattern": "REASSURING"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "STABLE",
+      "isComplete": true,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": []
+    }
+  },
+  {
+    "name": "mild (tolerable) headache alone is local moderate (PDF moderate clinical cell)",
+    "input": {
+      "headache": "MILD"
+    },
+    "expect": {
+      "localTier": "LOCAL_MODERATE",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": false,
+      "suspectedConditions": ["PREECLAMPSIA"],
+      "matchedRuleIds": ["PE-HEADACHE-MODERATE-TOLERABLE"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "contradictory input: heavy bleeding rate reported with vaginalBleeding false still escalates to emergency acuity (concealed-bleeding safety)",
+    "input": {
+      "vaginalBleeding": false,
+      "bleedingRate": "HEAVY"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "EMERGENCY",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": ["EA-BLEEDING-HEAVY-EMERGENCY"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "fetalHeartRateBpm",
+        "maternalPulseBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "two acuity rules of different rank fire simultaneously: EMERGENCY (sinusoidal) wins over URGENT (pulse) on the max-rank acuity axis",
+    "input": {
+      "maternalPulseBpm": 130,
+      "fetalTracingPattern": "SINUSOIDAL"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "EMERGENCY",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": ["EA-FETAL-SINUSOIDAL-EMERGENCY", "EA-PULSE-HIGH-URGENT"],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm",
+        "consciousness",
+        "shockSignsPresent"
+      ]
+    }
+  },
+  {
+    "name": "all mandatory fields assessed and normal, but acuity-only fields (oxygenSaturationPct/bleedingRate/fetalTracingPattern) unassessed: isComplete true coexists with emergencyAcuity UNKNOWN",
+    "input": {
+      "gaWeeks": 30,
+      "gaDays": 0,
+      "systolicBp": 110,
+      "diastolicBp": 70,
+      "proteinuriaGrade": "NEGATIVE",
+      "headache": "NONE",
+      "vaginalBleeding": false,
+      "fetalHeartRateBpm": 140,
+      "maternalPulseBpm": 80,
+      "consciousness": "ALERT",
+      "shockSignsPresent": false
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "UNKNOWN",
+      "isComplete": true,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": []
+    }
+  },
+  {
+    "name": "P0-GAP (T1-VOICE-MODERATE-STABLE): consciousness VOICE with all six stability fields assessed and all else normal currently yields STABLE — awaiting clinical sign-off (candidate: VOICE => URGENT)",
+    "input": {
+      "shockSignsPresent": false,
+      "consciousness": "VOICE",
+      "oxygenSaturationPct": 98,
+      "maternalPulseBpm": 80,
+      "bleedingRate": "SPOTTING",
+      "fetalTracingPattern": "REASSURING"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "STABLE",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm"
+      ]
+    }
+  },
+  {
+    "name": "P0-GAP (T1-VOICE-MODERATE-STABLE): bleedingRate MODERATE with all six stability fields assessed and all else normal currently yields STABLE — awaiting clinical sign-off (candidate: MODERATE => URGENT)",
+    "input": {
+      "shockSignsPresent": false,
+      "consciousness": "ALERT",
+      "oxygenSaturationPct": 98,
+      "maternalPulseBpm": 80,
+      "bleedingRate": "MODERATE",
+      "fetalTracingPattern": "REASSURING"
+    },
+    "expect": {
+      "localTier": "NO_LOCAL_MATCH",
+      "emergencyAcuity": "STABLE",
+      "isComplete": false,
+      "suspectedConditions": [],
+      "matchedRuleIds": [],
+      "missingRequiredFields": [
+        "gaWeeks",
+        "gaDays",
+        "systolicBp",
+        "diastolicBp",
+        "proteinuriaGrade",
+        "headache",
+        "vaginalBleeding",
+        "fetalHeartRateBpm"
+      ]
+    }
+  }
+]

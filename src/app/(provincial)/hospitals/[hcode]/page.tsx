@@ -12,9 +12,17 @@ import { use, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import { maskName } from '@/lib/pii-mask';
+import {
+  classifyPartographCoverage,
+  needsPartographNudge,
+  PARTOGRAPH_QUALITY,
+  STALE_ADMISSION,
+} from '@/config/hospital-network';
+import { KpiTip } from '@/components/shared/KpiTip';
 import { formatRelativeAge } from '@/lib/relative-time';
 import { useSetBreadcrumbs } from '@/components/layout/BreadcrumbContext';
 import { LoadingState } from '@/components/shared/LoadingState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { ConnectionStatus } from '@/components/shared/ConnectionStatus';
 import { ANC_RISK_RULES } from '@/config/anc-risk-rules';
 import { buildPatientId } from '@/lib/utils';
@@ -50,6 +58,24 @@ interface LaborPatient {
     dbp: number | null;
   } | null;
   latest_cervix_cm?: number | null;
+  /** NULL until the first partograph observation syncs (then 0+). */
+  partograph_alert_count?: number | null;
+}
+
+interface PartographAuditAdmission {
+  an: string;
+  name: string;
+  admitDate: string;
+  laborStatus: string;
+  observationCount: number;
+  lastObservedAt: string | null;
+}
+
+interface PartographAudit {
+  windowDays: number;
+  laborRecent: number;
+  withPartograph: number;
+  admissions: PartographAuditAdmission[];
 }
 
 interface HospitalInfo {
@@ -62,6 +88,9 @@ interface HospitalInfo {
 interface LaborResponse {
   hospital?: HospitalInfo;
   patients: LaborPatient[];
+  /** True COUNT(*) over the ward census — the rows above are a paged subset. */
+  pagination?: { total: number };
+  partographAudit?: PartographAudit | null;
 }
 
 type TabKey = 'labor' | 'anc';
@@ -163,7 +192,110 @@ function laborConcerns(p: LaborPatient): Array<{ label: string; warn?: boolean }
   const hrs = hoursSince(p.admit_date);
   if (hrs != null && hrs >= 12) out.push({ label: `${Math.floor(hrs)}h admit`, warn: true });
   if ((p.cpd_score ?? 0) >= 40) out.push({ label: 'CPD↑' });
+  // Long-stay prompt — the usual cause is a skipped HOSxP discharge entry
+  // (dchdate never filled in), so name that action instead of just the age.
+  if (
+    p.labor_status === 'ACTIVE' &&
+    hrs != null &&
+    hrs / 24 >= STALE_ADMISSION.checkDischargeAfterDays
+  ) {
+    out.push({ label: 'ตรวจสอบจำหน่าย', warn: true });
+  }
+  // Charting nudge — ACTIVE past the grace window with no partograph at all.
+  // Absence used to read as "fine"; make it an explicit ward-level prompt.
+  if (
+    p.labor_status === 'ACTIVE' &&
+    needsPartographNudge(p.admit_date, p.partograph_alert_count ?? null)
+  ) {
+    out.push({ label: 'NO PARTO', warn: true });
+  }
   return out;
+}
+
+// ─── Partograph charting audit panel ────────────────────────────────────────
+// The /hospitals board scores charting coverage; this panel names the actual
+// uncharted admissions in the window so the provincial team can cite specific
+// cases when following up with the ward.
+const AUDIT_STATUS_TH: Record<string, string> = {
+  ACTIVE: 'รอคลอด',
+  DELIVERED: 'คลอดแล้ว',
+  DISCHARGED: 'จำหน่าย',
+  TRANSFERRED: 'ส่งต่อ',
+};
+
+function fmtAuditDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('th-TH', {
+    timeZone: 'Asia/Bangkok',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function PartographAuditPanel({ audit }: { audit: PartographAudit | null | undefined }) {
+  if (!audit || audit.laborRecent === 0) return null;
+  const cls = classifyPartographCoverage(audit.laborRecent, audit.withPartograph);
+  const pct = Math.round((audit.withPartograph / audit.laborRecent) * 100);
+  const color =
+    cls === 'ok' ? 'var(--risk-low)' : cls === 'warn' ? 'var(--risk-medium)' : 'var(--risk-high)';
+  const uncharted = audit.admissions.filter((a) => a.observationCount === 0);
+  return (
+    <div
+      className="mt-4 border bg-white"
+      data-testid="partograph-audit"
+      style={{ borderColor: 'var(--rule-strong)', borderLeft: `3px solid ${color}` }}
+    >
+      <div
+        className="flex flex-wrap items-baseline justify-between gap-2 px-3 py-2"
+        style={{ borderBottom: '1px solid var(--rule-strong)' }}
+      >
+        <KpiTip
+          title="คุณภาพการบันทึก Partograph"
+          body={`ผู้คลอดที่รับใหม่ใน ${audit.windowDays} วันที่ผ่านมา และมีบันทึก partograph อย่างน้อย 1 จุด — รายชื่อด้านล่างคือรายที่ยังไม่มีบันทึกเลย ใช้ติดตามกับห้องคลอดได้เป็นรายกรณี`}
+          trigger={
+            <div className="cursor-help font-mono text-[12px] uppercase tracking-[0.14em] text-[var(--ink-navy-muted)]" />
+          }
+        >
+          PARTOGRAPH QUALITY · {audit.windowDays}D
+        </KpiTip>
+        <span className="font-mono text-[14px] font-semibold tabular-nums" style={{ color }}>
+          {pct}%{' '}
+          <span className="font-normal text-[12px] text-[var(--ink-navy-muted)]">
+            ({audit.withPartograph}/{audit.laborRecent} ราย)
+          </span>
+        </span>
+      </div>
+      {uncharted.length === 0 ? (
+        <div className="px-3 py-2 font-mono text-[12px]" style={{ color: 'var(--risk-low)' }}>
+          บันทึกครบทุกราย
+        </div>
+      ) : (
+        <div className="max-h-56 overflow-y-auto">
+          {uncharted.map((a) => (
+            <div
+              key={a.an}
+              className="flex flex-wrap items-center gap-2 border-b px-3 py-1.5 text-[13px]"
+              style={{ borderColor: 'var(--rule-hair)' }}
+            >
+              <span
+                className="border px-1 py-px font-mono text-[11px] font-semibold"
+                style={{ color: 'var(--risk-high)', borderColor: 'var(--risk-high)' }}
+              >
+                ไม่มีบันทึก
+              </span>
+              <span className="text-[var(--ink-navy)]">{maskName(a.name)}</span>
+              <span className="font-mono text-[11px] text-[var(--ink-navy-muted)]">
+                AN {a.an} · ADMIT {fmtAuditDate(a.admitDate)} ·{' '}
+                {AUDIT_STATUS_TH[a.laborStatus] ?? a.laborStatus}
+              </span>
+            </div>
+          ))}
+          <div className="px-3 py-1.5 font-mono text-[11px] text-[var(--ink-navy-muted)]">
+            บันทึกแล้ว {audit.withPartograph} ราย · ยังไม่บันทึก {uncharted.length} ราย
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ancConcerns(j: JourneyListItem): Array<{ label: string; warn?: boolean }> {
@@ -1023,13 +1155,31 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
   // now for "EDC in N days"–style copy.
   const [now] = useState<number>(() => Date.now());
 
-  const { data: laborData, isLoading: laborLoading } = useSWR<LaborResponse>(
-    `/api/hospitals/${hcode}/patients`,
-    { refreshInterval: 30000 },
-  );
-  const { data: ancData, isLoading: ancLoading } = useSWR<JourneyListResponse>(
-    `/api/hospitals/${hcode}/journeys?stage=PREGNANCY&per_page=200`,
-    { refreshInterval: 60000 },
+  const {
+    data: laborData,
+    isLoading: laborLoading,
+    error: laborError,
+    mutate: laborMutate,
+    // Without per_page the route defaults to 20 rows — below the historical
+    // ward-census peak (34–39), so the floor roster silently dropped the
+    // oldest admissions and every KPI undercounted. 500 covers any real
+    // census; the registered-KPI itself reads pagination.total regardless.
+  } = useSWR<LaborResponse>(`/api/hospitals/${hcode}/patients?per_page=500`, {
+    refreshInterval: 30000,
+  });
+  const {
+    data: ancData,
+    isLoading: ancLoading,
+    error: ancError,
+    mutate: ancMutate,
+    // per_page must exceed the largest hospital registry (435 today) or the
+    // roster silently drops women — KPIs no longer depend on it (they read the
+    // server's DB-wide counts), but the visible list should still be complete.
+  } = useSWR<JourneyListResponse>(
+    `/api/hospitals/${hcode}/journeys?stage=PREGNANCY&per_page=1000`,
+    {
+      refreshInterval: 60000,
+    },
   );
   // Pregnancies elsewhere whose capability rules say they'll be referred
   // here for delivery. Only meaningful for hub hospitals (spokes return 0).
@@ -1055,6 +1205,8 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
       (a, b) => (order[a.cpd_risk_level ?? 'LOW'] ?? 3) - (order[b.cpd_risk_level ?? 'LOW'] ?? 3),
     );
   }, [laborData]);
+  // True ward census from the server COUNT — same contract as ancTotal below.
+  const laborTotal = laborData?.pagination?.total ?? labor.length;
 
   // Stable reference for downstream memos — `ancData?.journeys ?? []` would
   // otherwise create a new array on every render.
@@ -1116,7 +1268,15 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
     return m;
   }, [labor]);
 
+  // True registry size + risk mix come from the server's DB-wide aggregates
+  // (pagination.total / counts) — deriving them from the fetched rows showed
+  // the fetch cap as the registry size (e.g. "200" for 435 pregnancies).
+  // Row-derived values remain only as a fallback for a cached response from
+  // a build without `counts`.
+  const ancTotal = ancData?.pagination.total ?? journeys.length;
   const ancMix = useMemo(() => {
+    const c = ancData?.counts;
+    if (c) return { low: c.low, medium: c.hr1 + c.hr2, high: c.hr3 };
     const m = { low: 0, medium: 0, high: 0 };
     for (const j of journeys) {
       const t = ancTier(j.ancRiskLevel);
@@ -1125,7 +1285,7 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
       else m.low++;
     }
     return m;
-  }, [journeys]);
+  }, [ancData?.counts, journeys]);
   const ancHr3 = ancMix.high;
   const ancOverdue = useMemo(
     () =>
@@ -1145,8 +1305,26 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
     [journeys, now],
   );
 
-  if (laborLoading && ancLoading) {
+  // Wait for BOTH primary feeds before painting — `&&` let the page render a
+  // half-empty console the moment the faster feed resolved, so the labor tab
+  // could flash "no patients" while its own fetch was still in flight.
+  if (laborLoading || ancLoading) {
     return <LoadingState message="กำลังโหลดข้อมูลโรงพยาบาล…" />;
+  }
+
+  // Both primary feeds failed with nothing cached — there is no console to
+  // show, so surface the failure with a retry that revalidates both.
+  if (laborError && ancError && !laborData && !ancData) {
+    return (
+      <ErrorState
+        message="ไม่สามารถโหลดข้อมูลโรงพยาบาลได้"
+        detail={laborError instanceof Error ? laborError.message : String(laborError ?? ancError)}
+        onRetry={() => {
+          laborMutate();
+          ancMutate();
+        }}
+      />
+    );
   }
 
   return (
@@ -1207,6 +1385,24 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
         </div>
       </div>
 
+      {/* Per-feed staleness banners — one feed can fail while the other keeps
+          serving cached data, so name which registry went stale rather than
+          replacing the whole console. */}
+      {laborError && (
+        <ErrorState
+          variant="banner"
+          message="โหลดข้อมูลห้องคลอดไม่สำเร็จ — แสดงข้อมูลเดิมจากแคช"
+          onRetry={() => laborMutate()}
+        />
+      )}
+      {ancError && (
+        <ErrorState
+          variant="banner"
+          message="โหลดข้อมูลฝากครรภ์ไม่สำเร็จ — แสดงข้อมูลเดิมจากแคช"
+          onRetry={() => ancMutate()}
+        />
+      )}
+
       {/* KPI strip — 7 cells: 3 LABOR + 3 ANC + 1 REFER-IN (hub-only signal) */}
       <div
         className="grid bg-white"
@@ -1218,7 +1414,7 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
         <KpiCell
           group="LABOR"
           label="ON FLOOR"
-          value={String(labor.length)}
+          value={String(laborTotal)}
           unit="ราย"
           riskMix={laborMix}
         />
@@ -1240,7 +1436,7 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
         <KpiCell
           group="ANC"
           label="ANC ลงทะเบียน"
-          value={String(journeys.length)}
+          value={String(ancTotal)}
           unit="ราย"
           riskMix={ancMix}
         />
@@ -1250,11 +1446,7 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
           value={String(ancHr3)}
           unit="ราย"
           valueColor={ancHr3 > 0 ? 'var(--risk-high)' : undefined}
-          sub={
-            journeys.length > 0
-              ? `${((ancHr3 / journeys.length) * 100).toFixed(1)}% ของลงทะเบียน`
-              : '—'
-          }
+          sub={ancTotal > 0 ? `${((ancHr3 / ancTotal) * 100).toFixed(1)}% ของลงทะเบียน` : '—'}
         />
         <KpiCell
           group="ANC"
@@ -1424,7 +1616,7 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
               color: tab === 'labor' ? 'var(--accent-navy)' : 'var(--ink-navy-muted)',
             }}
           >
-            {labor.length}
+            {laborTotal}
           </span>
           {laborAlarmCount > 0 && (
             <span
@@ -1452,7 +1644,7 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
               color: tab === 'anc' ? 'var(--accent-navy)' : 'var(--ink-navy-muted)',
             }}
           >
-            {journeys.length}
+            {ancTotal}
           </span>
           {ancHr3 > 0 && (
             <span
@@ -1490,36 +1682,46 @@ export default function HospitalConsolePage({ params }: { params: Promise<{ hcod
                 : 'ANC LIST · เรียงตามไตรมาส / ความเสี่ยง'}
             </div>
             <div className="font-mono text-[10px] tracking-[0.08em] text-[var(--ink-navy-muted)]">
-              {tab === 'labor' ? `${labor.length} PATIENTS` : `${journeys.length} PATIENTS`} · LIVE
+              {tab === 'labor'
+                ? labor.length < laborTotal
+                  ? `แสดง ${labor.length} จาก ${laborTotal} PATIENTS`
+                  : `${laborTotal} PATIENTS`
+                : journeys.length < ancTotal
+                  ? `แสดง ${journeys.length} จาก ${ancTotal} PATIENTS`
+                  : `${ancTotal} PATIENTS`}{' '}
+              · LIVE
             </div>
           </div>
 
           {tab === 'labor' ? (
-            labor.length === 0 ? (
-              <div
-                className="border bg-white py-10 text-center"
-                style={{ borderColor: 'var(--rule-strong)' }}
-              >
-                <p className="font-mono text-[11px] text-[var(--ink-navy-muted)]">
-                  ไม่มีผู้คลอดในขณะนี้
-                </p>
-              </div>
-            ) : (
-              <div>
-                <GroupHeader title="ALL PATIENTS" sub="sorted by CPD risk" count={labor.length} />
-                <div>
-                  {labor.map((p) => (
-                    <LaborRow
-                      key={p.an}
-                      p={p}
-                      isSelected={effectiveLabor === p.an}
-                      onSelect={() => setSelectedLabor(p.an)}
-                      onOpen={() => router.push(`/patients/${buildPatientId(hcode, p.an)}`)}
-                    />
-                  ))}
+            <>
+              {labor.length === 0 ? (
+                <div
+                  className="border bg-white py-10 text-center"
+                  style={{ borderColor: 'var(--rule-strong)' }}
+                >
+                  <p className="font-mono text-[11px] text-[var(--ink-navy-muted)]">
+                    ไม่มีผู้คลอดในขณะนี้
+                  </p>
                 </div>
-              </div>
-            )
+              ) : (
+                <div>
+                  <GroupHeader title="ALL PATIENTS" sub="sorted by CPD risk" count={labor.length} />
+                  <div>
+                    {labor.map((p) => (
+                      <LaborRow
+                        key={p.an}
+                        p={p}
+                        isSelected={effectiveLabor === p.an}
+                        onSelect={() => setSelectedLabor(p.an)}
+                        onOpen={() => router.push(`/patients/${buildPatientId(hcode, p.an)}`)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+              <PartographAuditPanel audit={laborData?.partographAudit} />
+            </>
           ) : journeys.length === 0 ? (
             <div
               className="border bg-white py-10 text-center"

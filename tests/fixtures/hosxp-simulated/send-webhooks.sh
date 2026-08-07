@@ -56,6 +56,7 @@ send_webhook() {
 referral_check() {
   local label="$1"
   local cid="$2"
+  local api_key="${3:-$API_KEY_10679}"
 
   log "=== Referral Check: $label ==="
   log "URL:  POST $BASE_URL/api/referrals/check"
@@ -65,6 +66,7 @@ referral_check() {
   response=$(curl -sS -w "\n__HTTP_STATUS__%{http_code}" \
     -X POST "$BASE_URL/api/referrals/check" \
     -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $api_key" \
     -d "{\"cid\": \"$cid\"}")
 
   local http_status

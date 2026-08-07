@@ -1,5 +1,6 @@
-// Task 29: PatientDrawer shell — side-anchored sheet with 10 stub tabs.
-// Tasks 30-39 will swap in real tab content where <TabPlaceholder/> sits.
+// PatientDrawer — side-anchored sheet with 10 tabs, each backed by a real tab
+// component (Partograph … Discharge). The original stub-placeholder fallback is
+// gone now that every PATIENT_DRAWER_TABS value has its own branch.
 'use client';
 
 import { useEffect } from 'react';
@@ -43,13 +44,6 @@ export const PATIENT_DRAWER_TABS: TabDefinition[] = [
   { value: 'bed', label: 'Bed' },
   { value: 'discharge', label: 'Discharge' },
 ];
-
-/** Stub content for each tab. Tasks 30-39 swap real content here. */
-function TabPlaceholder({ name }: { name: string }) {
-  return (
-    <div className="p-4 text-sm text-slate-500">Tab: {name}</div>
-  );
-}
 
 function safeAge(birthday: string | null): number | null {
   if (!birthday) return null;
@@ -132,9 +126,7 @@ function InfoField({
 }) {
   return (
     <div className={cn('min-w-0', className)}>
-      <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">
-        {label}
-      </div>
+      <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-0.5 whitespace-normal break-words text-[12px] font-semibold leading-tight text-slate-900">
         {display(value)}
       </div>
@@ -213,16 +205,22 @@ function PatientHeader({ occupant }: { occupant: BedOccupancy }) {
   const bp = formatBp(last_bp_sys, last_bp_dia);
   const displayWeight = formatNumber(last_weight ?? admit_bw_kg, 1);
   const displayHeight = formatNumber(last_height ?? patient_height);
-  const bodyMetrics = [
-    displayWeight ? `${displayWeight} kg` : null,
-    displayHeight ? `${displayHeight} cm` : null,
-    last_bsa ? `BSA ${formatNumber(last_bsa, 2)}` : null,
-  ].filter(Boolean).join(' · ') || '—';
-  const demographics = [
-    age !== null ? `${age} ปี` : null,
-    gravida !== null ? `G${gravida}` : null,
-    ga !== null ? `GA ${ga}` : null,
-  ].filter(Boolean).join(' · ') || '—';
+  const bodyMetrics =
+    [
+      displayWeight ? `${displayWeight} kg` : null,
+      displayHeight ? `${displayHeight} cm` : null,
+      last_bsa ? `BSA ${formatNumber(last_bsa, 2)}` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ') || '—';
+  const demographics =
+    [
+      age !== null ? `${age} ปี` : null,
+      gravida !== null ? `G${gravida}` : null,
+      ga !== null ? `GA ${ga}` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ') || '—';
 
   return (
     <div className="border-b border-slate-200 bg-white px-4 py-2.5">
@@ -238,9 +236,7 @@ function PatientHeader({ occupant }: { occupant: BedOccupancy }) {
               <div className="mt-0.5 whitespace-normal break-words text-lg font-semibold leading-tight text-slate-950">
                 {name}
               </div>
-              <div className="mt-0.5 text-xs font-medium text-slate-700">
-                {demographics}
-              </div>
+              <div className="mt-0.5 text-xs font-medium text-slate-700">{demographics}</div>
             </div>
 
             <div className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-1.5 border-t border-slate-100 pt-2 md:border-l md:border-t-0 md:pl-3 md:pt-0">
@@ -260,9 +256,7 @@ function PatientHeader({ occupant }: { occupant: BedOccupancy }) {
         <div className="grid grid-cols-[auto_auto] gap-2 lg:justify-end">
           <div className="grid grid-cols-2 overflow-hidden rounded border border-slate-300 bg-slate-50 text-center">
             <div className="border-r border-slate-300 px-2.5 py-1.5">
-              <div className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
-                Bed
-              </div>
+              <div className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Bed</div>
               <div className="font-mono text-base font-bold leading-none text-slate-950">
                 {bedno}
               </div>
@@ -482,10 +476,11 @@ export function PatientDrawer({ open, occupant, onClose }: PatientDrawerProps) {
                       <InfantTab an={occupant.an} />
                     ) : t.value === 'bed' ? (
                       <BedTab occupant={occupant} />
-                    ) : t.value === 'discharge' ? (
-                      <DischargeTab occupant={occupant} />
                     ) : (
-                      <TabPlaceholder name={t.value} />
+                      // Terminal branch — the only remaining tab is 'discharge'.
+                      // Every PATIENT_DRAWER_TABS value now has a real branch, so
+                      // there is no placeholder fallback to render.
+                      <DischargeTab occupant={occupant} />
                     )}
                   </TabsContent>
                 ))}

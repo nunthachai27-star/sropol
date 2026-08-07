@@ -40,7 +40,7 @@ export function RiskBar({
         {seg(high, highColor)}
       </div>
       {showNums && (
-        <div className="flex gap-3 font-mono text-[11px]">
+        <div className="flex gap-3 font-mono text-[13px]">
           <span style={{ color: lowColor }}>L {low}</span>
           <span style={{ color: medColor }}>M {medium}</span>
           <span style={{ color: highColor, fontWeight: 600 }}>H {high}</span>
@@ -83,17 +83,17 @@ export function StatCell({
       className={cn('flex flex-col gap-0.5 px-4 py-3', className)}
       style={{ borderLeft: `2px solid ${color || 'var(--accent-navy)'}` }}
     >
-      <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
+      <div className="font-mono text-[12px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
         {label}
       </div>
       <div className="flex items-baseline gap-2">
         <div
-          className="font-mono text-2xl font-semibold leading-none text-[var(--ink-navy)] tabular-nums"
+          className="font-mono text-[28px] font-semibold leading-none text-[var(--ink-navy)] tabular-nums"
         >
           {value}
         </div>
         {delta != null && (
-          <div className="font-mono text-[11px]" style={{ color: deltaColor }}>
+          <div className="font-mono text-[13px]" style={{ color: deltaColor }}>
             {deltaStr}
           </div>
         )}
@@ -115,15 +115,15 @@ export function SectionLabel({
   return (
     <div className="flex items-center justify-between pb-1.5">
       <div className="flex items-baseline gap-2">
-        <span className="font-mono text-[10px] font-bold tracking-[0.14em] text-[var(--accent-navy)]">
+        <span className="font-mono text-[12px] font-bold tracking-[0.14em] text-[var(--accent-navy)]">
           {String(idx).padStart(2, '0')}
         </span>
-        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-navy)]">
+        <span className="text-[13px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-navy)]">
           {children}
         </span>
       </div>
       {right && (
-        <div className="font-mono text-[10px] tracking-[0.1em] text-[var(--ink-navy-muted)]">
+        <div className="font-mono text-[12px] tracking-[0.1em] text-[var(--ink-navy-muted)]">
           {right}
         </div>
       )}
@@ -176,12 +176,12 @@ export function PartographCell({
           />
         ))}
       </div>
-      <span className="font-mono text-[10px] tracking-[0.06em]" style={{ color }}>
+      <span className="font-mono text-[12px] tracking-[0.06em]" style={{ color }}>
         {label}
       </span>
       {count != null && count > 0 && (
         <span
-          className="font-mono text-[10px]"
+          className="font-mono text-[12px]"
           style={{ color: variant === 'kiosk' ? 'var(--kiosk-dim)' : 'var(--ink-navy-muted)' }}
         >
           ·{count}

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { randomBytes } from 'crypto';
 import { buildProviderAuthorizeUrl } from '@/lib/provider-id';
+import { sanitizeCallbackUrl } from '@/lib/safe-callback-url';
 import { logger } from '@/lib/logger';
 import { withBasePath } from '@/lib/base-path';
 
@@ -14,11 +15,6 @@ function getBaseUrl(request: NextRequest): string {
   const forwardedProto = request.headers.get('x-forwarded-proto') ?? 'https';
   const host = forwardedHost ?? request.headers.get('host');
   return host ? `${forwardedProto}://${host}` : request.nextUrl.origin;
-}
-
-function sanitizeCallbackUrl(value: string | null): string {
-  if (!value || !value.startsWith('/') || value.startsWith('//')) return '/';
-  return value;
 }
 
 export async function GET(request: NextRequest) {

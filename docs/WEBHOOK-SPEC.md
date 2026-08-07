@@ -1,6 +1,6 @@
 # KK-LRMS Webhook API Specification
 
-**Version:** 2.6
+**Version:** 2.7
 **Base URL:** `https://kk-lrms.bmscloud.in.th`
 **Contact:** สำนักงานสาธารณสุขจังหวัดขอนแก่น (สสจ.ขอนแก่น)
 
@@ -248,6 +248,252 @@ These are the **one-shot vitals and cervical exam captured at the moment of `ipt
 | `effacement_pct_admit`      | number | Cervical effacement at admission (%). **HOSxP:** `ipt_pregnancy_vital_sign.eff`. |
 | `station_admit`             | string | Fetal head station at admission. Free-form (`-3`, `-2`, `-1`, `0`, `+1`, `+2`, `+3`). **HOSxP:** `ipt_pregnancy_vital_sign.station`. |
 
+### Optional Fields — Maternal Labor-Triage Screening (PROVISIONAL, flag-gated)
+
+> **⚠️ PROVISIONAL / UNAPPROVED.** This object is evaluated against a
+> provisional, clinically-unsigned-off rule set (`ruleSetVersion:
+> "0.1.0-provisional"`). It has **no effect at all** unless the server-side
+> flag `MATERNAL_SCREEN_INGEST_ENABLED=true` is set (default **OFF**). When
+> the flag is off, `maternal_screening` is silently ignored — no validation
+> runs, nothing is stored, and the labor payload behaves exactly as it always
+> has (see **Backward Compatibility** below). Even when the flag is on, the
+> server **always recomputes** `localTier` / `emergencyAcuity` /
+> `isComplete` from the raw fields you send — there is no field in this
+> object for a sender-supplied tier, acuity, or completeness.
+
+Attach one `maternal_screening` object to a labor patient entry to record a
+preeclampsia/eclampsia/hemorrhage/obstructed-labor/fetal-instability triage
+screening performed at (or shortly after) admission. It rides on the same
+patient entry as every other labor field — there is no separate endpoint.
+
+```json
+{
+  "hn": "HN-12345",
+  "an": "AN-2026-0001",
+  "name": "นาง สมศรี ใจดี",
+  "cid": "1100500012345",
+  "age": 28,
+  "admit_date": "2026-07-16T06:00:00+07:00",
+  "bp_systolic_admit": 165,
+  "bp_diastolic_admit": 112,
+  "maternal_screening": {
+    "source_pk": "SCR-0001",
+    "assessed_at": "2026-07-16T06:05:00+07:00",
+    "assessed_by": "RN สมหญิง",
+    "pih_diagnosed": false,
+    "proteinuria_grade": "2+",
+    "headache": "SEVERE",
+    "blurred_vision": true,
+    "epigastric_pain": false,
+    "vaginal_bleeding": false,
+    "fetal_heart_rate_bpm": 140,
+    "maternal_pulse_bpm": 88,
+    "consciousness": "ALERT",
+    "shock_signs_present": false
+  }
+}
+```
+
+**Admission BP and GA are NOT part of this object.** They are reused from the
+**same payload's** `bp_systolic_admit` / `bp_diastolic_admit` / `ga_weeks` /
+`ga_day` — never from a previously-cached vital. If you have new screening
+findings but stale/unknown admission vitals, omit those `*_admit`/`ga_*`
+fields (they become `null` inputs, not fabricated values).
+
+| Field                                    | Type              | Description |
+|-------------------------------------------|-------------------|-------------|
+| `source_pk`                                | string ≤150       | Sender idempotency key. Replaying the same key on the same admission is a no-op (see **Idempotency** below). Omit for one-off manual entries. |
+| `assessed_at`                              | string (required) | **Strict** ISO 8601 instant with a `Z` or `±HH:MM` offset (e.g. `"2026-07-16T06:05:00+07:00"`) — a bare local time without an offset is rejected. May lead the server clock by at most 24 hours. |
+| `assessed_by`                              | string ≤150 \| null | Free-text assessor identity (name/role), snapshotted as-is — not a user-account reference. |
+| `pih_diagnosed`                            | boolean \| null   | Pre-existing/gestational hypertension diagnosis on record. |
+| `proteinuria_grade`                        | string \| null    | Dipstick grade. Accepts `NEGATIVE`, `TRACE`, `ONE_PLUS`…`FOUR_PLUS`, or common shorthand — `"negative"`, `"neg"`, `"nil"`, `"-"`, `"0"`, `"trace"`, `"tr"`, `"1+"`…`"4+"`, `"1 plus"`, Thai `"ลบ"` / `"ไม่พบ"` / `"ร่องรอย"` — case-insensitive. Unrecognized text maps to `UNKNOWN`, never rejected. |
+| `creatinine_mg_dl`                         | number \| null    | Serum creatinine (mg/dL). Bound 0.05–100. |
+| `creatinine_baseline_mg_dl`                | number \| null    | Pre-pregnancy/early-pregnancy baseline creatinine, for acute-rise comparison. Bound 0.05–100. |
+| `platelet_per_ul`                          | number \| null    | Platelet count (/µL). Bound 500–5,000,000. |
+| `ast_iu_l` / `alt_iu_l`                    | number \| null    | Liver transaminases (IU/L). Bound 1–50,000. |
+| `urine_output_ml_per_hour`                 | number \| null    | Urine output (mL/h). Bound 0–5,000 (`0` = anuria, a real finding — kept). |
+| `headache`                                 | string \| null    | `NONE` \| `MILD` \| `SEVERE`. |
+| `blurred_vision`, `epigastric_pain`, `pulmonary_edema`, `right_upper_quadrant_pain` | boolean \| null | Preeclampsia-spectrum symptoms. |
+| `vaginal_bleeding`                         | boolean \| null   | `false` means **visibly assessed absent** — it does NOT rule out concealed/internal bleeding (see abruptio pattern below). |
+| `estimated_bleeding_ml`                    | number \| null    | Bound 0–20,000 (0 = assessed, no visible loss). |
+| `bleeding_rate`                            | string \| null    | `SPOTTING` \| `LIGHT` \| `MODERATE` \| `HEAVY`. |
+| `concealed_bleeding_suspected`              | boolean \| null   | Clinician suspicion of internal/concealed hemorrhage — can be `true` even when `vaginal_bleeding` is `false`. |
+| `abdominal_or_back_pain`, `uterine_tenderness`, `frequent_contractions`, `contraction_duration_exceeds_interval`, `suprapubic_tenderness`, `bandls_ring` | boolean \| null | Abruptio-placentae / uterine-rupture pattern findings. |
+| `membranes_ruptured`, `abnormal_presentation` | boolean \| null | Obstructed-labor findings. |
+| `fetal_heart_rate_bpm`                     | number \| null    | Bound 0–350 (`0` = assessed absent FHR, a real finding). |
+| `fetal_tracing_pattern`                    | string \| null    | `REASSURING` \| `NON_REASSURING` \| `SINUSOIDAL`. |
+| `maternal_pulse_bpm`                       | number \| null    | Bound 0–350. |
+| `respiratory_rate_per_min`                 | number \| null    | Bound 0–150. |
+| `oxygen_saturation_pct`                    | number \| null    | Bound 0–100 (a value over 100 is physically impossible and is rejected). |
+| `consciousness`                            | string \| null    | `ALERT` \| `VOICE` \| `PAIN` \| `UNRESPONSIVE` (AVPU scale). |
+| `shock_signs_present`                      | boolean \| null   | Clinical gestalt "shock" (any combination of pulse/BP/consciousness/skin findings). |
+| `placenta_previa_excluded`                 | boolean \| null   | See safety rule below — **do not** send `true` without `placenta_location_source`. |
+| `placenta_location_source`                 | string \| null    | `ULTRASOUND` \| `OTHER_DOCUMENTED`. Required whenever `placenta_previa_excluded: true` is sent. |
+
+All boolean and enum fields are **three-state**: `true`/a named enum value
+(assessed, present), `false`/`NONE`-type value (assessed, absent), or
+`null`/omitted (not assessed). See **Unknown vs. False Semantics** below —
+never substitute one for another.
+
+**Enum values are case-insensitive** (`"severe"`, `"SEVERE"`, and `"Severe"`
+all match); an unrecognized enum value (other than `proteinuria_grade`, which
+falls back to `UNKNOWN`) is a **validation error** for that patient, not a
+silent drop — fix the spelling.
+
+**Safety rule — `placenta_previa_excluded`:** the server will **reject** the
+whole `maternal_screening` object if `placenta_previa_excluded: true` is sent
+without a `placenta_location_source` of `ULTRASOUND` or `OTHER_DOCUMENTED`.
+This field supports a clinician's own documented safety assessment; it must
+never be inferable from convenience, and it never authorizes or recommends a
+digital pelvic examination.
+
+#### Unknown vs. False Semantics (GC1)
+
+An unassessed finding and a negative finding are **never interchangeable**.
+Sending `false`/`NONE` asserts *"this was checked and is absent"*; omitting
+the field or sending `null` asserts *"this was not checked"*. The scoring
+engine treats `null`/`UNKNOWN` as **unknown**, not as a reassuring/normal
+result — a screening with several unassessed fields can still surface
+`isComplete: false` alongside a proven severe/emergency finding from the
+fields that *were* assessed. Do not send `false` "to be safe" for a field
+you didn't actually check — that suppresses a legitimate "needs assessment"
+signal on the dashboard.
+
+#### Idempotency
+
+`source_pk` scopes uniqueness to `(hospitalCode, source_pk)` **within one
+labor admission**. Replaying the exact same `source_pk` for the same
+admission is a safe no-op (no duplicate row, summary unchanged). Reusing the
+same `source_pk` for a **different** admission is treated as a sender error
+and is rejected — use a fresh key per admission (e.g. include the AN in your
+key). Omit `source_pk` entirely for manual/one-off entries that have no
+natural idempotency key; each omitted-key save creates a new row.
+
+To **correct** a prior assessment (not merely replay it), this is a
+Phase-4/manual-UI capability — the webhook ingest path does not currently
+accept a correction reference. Send corrected findings as a new assessment
+with a new `source_pk`; the dashboard's read API exposes the full history so
+a clinician can see the sequence.
+
+#### Rule-Set Version
+
+Every stored assessment is stamped with the rule-set version that evaluated
+it (currently `"0.1.0-provisional"`). Senders never supply this — it is
+purely a server-side provenance marker so a future clinical sign-off/version
+bump can be distinguished from the provisional data that came before it in
+the assessment history.
+
+#### Backward Compatibility
+
+`maternal_screening` is **entirely optional**. Every existing sender that
+has never heard of this field keeps working byte-for-byte unchanged:
+`patientsProcessed`/`newAdmissions`/`discharges`/`transfers`/`deleted` are
+the only response keys, no `maternal_screening_assessments` row is ever
+written, and no extra validation runs. This holds **even when the server
+flag is ON** — the object is simply absent from those payloads, so there is
+nothing to evaluate.
+
+#### Examples
+
+```bash
+# LOCAL TIER — preeclampsia-with-severe-features pattern (LOCAL_SEVERE)
+curl -X POST https://kk-lrms.bmscloud.in.th/api/webhooks/patient-data \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kklrms_your_api_key_here" \
+  -d '{
+    "hospitalCode": "10679",
+    "patients": [{
+      "hn": "HN-20001", "an": "AN-2026-2001",
+      "name": "นาง ทดสอบ หนึ่ง", "cid": "1100500099001", "age": 32,
+      "admit_date": "2026-07-16T06:00:00+07:00",
+      "bp_systolic_admit": 165, "bp_diastolic_admit": 112,
+      "maternal_screening": {
+        "source_pk": "SCR-2001-01",
+        "assessed_at": "2026-07-16T06:05:00+07:00",
+        "proteinuria_grade": "2+",
+        "headache": "SEVERE",
+        "blurred_vision": true,
+        "vaginal_bleeding": false,
+        "fetal_heart_rate_bpm": 140,
+        "maternal_pulse_bpm": 88,
+        "consciousness": "ALERT",
+        "shock_signs_present": false
+      }
+    }]
+  }'
+
+# EMERGENCY ACUITY — maternal shock (EMERGENCY), independent of local tier
+curl -X POST https://kk-lrms.bmscloud.in.th/api/webhooks/patient-data \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kklrms_your_api_key_here" \
+  -d '{
+    "hospitalCode": "10679",
+    "patients": [{
+      "hn": "HN-20002", "an": "AN-2026-2002",
+      "name": "นาง ทดสอบ สอง", "cid": "1100500099002", "age": 27,
+      "admit_date": "2026-07-16T06:10:00+07:00",
+      "bp_systolic_admit": 90, "bp_diastolic_admit": 60,
+      "maternal_screening": {
+        "source_pk": "SCR-2002-01",
+        "assessed_at": "2026-07-16T06:12:00+07:00",
+        "maternal_pulse_bpm": 128,
+        "respiratory_rate_per_min": 26,
+        "oxygen_saturation_pct": 91,
+        "consciousness": "VOICE",
+        "shock_signs_present": true,
+        "vaginal_bleeding": false
+      }
+    }]
+  }'
+
+# HEMORRHAGE PATTERN — suspected concealed abruptio (visible bleeding ABSENT)
+curl -X POST https://kk-lrms.bmscloud.in.th/api/webhooks/patient-data \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kklrms_your_api_key_here" \
+  -d '{
+    "hospitalCode": "10679",
+    "patients": [{
+      "hn": "HN-20003", "an": "AN-2026-2003",
+      "name": "นาง ทดสอบ สาม", "cid": "1100500099003", "age": 30,
+      "admit_date": "2026-07-16T06:15:00+07:00",
+      "bp_systolic_admit": 100, "bp_diastolic_admit": 65,
+      "maternal_screening": {
+        "source_pk": "SCR-2003-01",
+        "assessed_at": "2026-07-16T06:20:00+07:00",
+        "vaginal_bleeding": false,
+        "concealed_bleeding_suspected": true,
+        "abdominal_or_back_pain": true,
+        "uterine_tenderness": true,
+        "frequent_contractions": true,
+        "fetal_heart_rate_bpm": 90,
+        "fetal_tracing_pattern": "NON_REASSURING",
+        "maternal_pulse_bpm": 110
+      }
+    }]
+  }'
+```
+
+#### Errors — `maternal_screening`-specific
+
+Validation failures for `maternal_screening` are **per-patient, non-fatal**:
+the rest of the batch (including that patient's own labor upsert) still
+processes normally. The failure surfaces in the response's
+`maternalScreenIngestErrors` array (see the extended **Response** section
+below) rather than as an HTTP 4xx for the whole request.
+
+| Condition | Example message |
+|-----------|------------------|
+| Unknown field | `patients[0].maternal_screening has unrecognized field(s): shock_sign_present — check for typos; only documented maternal_screening keys are accepted (spec §9.1)` |
+| Missing/malformed `assessed_at` | `patients[0].maternal_screening.assessed_at is required and must be a strict ISO 8601 instant (...); got "2026-07-16"` |
+| `assessed_at` too far in the future | `patients[0].maternal_screening.assessed_at is more than 24 hours in the future (got "...") — check the sender clock/timezone offset` |
+| Impossible numeric value | `patients[0].maternal_screening.oxygen_saturation_pct 130 is outside the physiologically possible range 0–100 — send null when not assessed` |
+| Bad enum value | `patients[0].maternal_screening.headache must be one of NONE\|MILD\|SEVERE\|UNKNOWN or null (got "bad")` |
+| Non-three-state boolean | `patients[0].maternal_screening.shock_signs_present must be true, false, or null (three-state assessed/absent/not-assessed; got "yes")` |
+| Previa exclusion without provenance | `patients[0].maternal_screening.placenta_previa_excluded=true requires placenta_location_source ULTRASOUND or OTHER_DOCUMENTED — previa exclusion is not accepted without documented provenance` |
+| `source_pk` reused across admissions | Assessment rejected with `INVALID_PARAMS`; the sender must use a distinct key per admission. |
+| Screening object on a `delete` action | `patients[0].maternal_screening: ignored because the patient is marked action:'delete' — screening cannot attach to a deleted admission; send it on an upsert` |
+| Ingest flag OFF | No error at all — the object is silently ignored (GC7); nothing is validated or stored. |
+
 ### Ingestion Modes
 
 | Mode | Behavior | Use Case |
@@ -268,6 +514,33 @@ These are the **one-shot vitals and cervical exam captured at the moment of `ipt
   "timestamp": "2026-03-08T08:00:05.123Z"
 }
 ```
+
+**Maternal screening extension (PROVISIONAL, flag-gated):** when
+`MATERNAL_SCREEN_INGEST_ENABLED=true` AND at least one patient in the batch
+carried a `maternal_screening` object, three extra keys appear. Legacy
+responses (flag off, or no `maternal_screening` sent) stay **byte-identical**
+to the shape above — these keys are never present otherwise (GC7):
+
+```json
+{
+  "success": true,
+  "patientsProcessed": 1,
+  "newAdmissions": 1,
+  "discharges": 0,
+  "transfers": 0,
+  "deleted": 0,
+  "timestamp": "2026-07-16T06:05:05.123Z",
+  "maternalScreenAssessments": 1,
+  "maternalScreenDuplicates": 0,
+  "maternalScreenIngestErrors": []
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `maternalScreenAssessments` | number | Screenings newly written this request (new rows — corrections count here too). |
+| `maternalScreenDuplicates` | number | Screenings that were an idempotent replay of an existing `source_pk` (no row written). |
+| `maternalScreenIngestErrors` | string[] | PHI-free, actionable `patients[i].maternal_screening…` messages for any screening that was rejected — see **Errors — `maternal_screening`-specific** above. The rest of the batch (including that patient's labor upsert) is unaffected. |
 
 ### Examples
 
@@ -901,6 +1174,7 @@ All webhook operations trigger real-time SSE events to connected dashboard clien
 | Referral — delete | `patient_update` | `type: "referral_update"`, `fromHcode`, `referralId`, `status: "DELETED"` |
 | Pregnancy overlap | `patient_update` | `type: "pregnancy_overlap_warning"`, `hcode`, `oldJourneyId`, `oldPregNo`, `oldCareStage`, `newPregNo`, `daysSinceLastUpdate` |
 | Referral no data | `patient_update` | `type: "referral_no_monitoring_warning"`, `fromHcode`, `toHcode`, `referralId`, `hn`, `journeyId`, `message` |
+| Maternal screening — state change (PROVISIONAL, flag-gated) | `patient_update` | `type: "maternal_screen_state_changed"`, `patientId`, `previousLocalTier`, `localTier`, `previousEmergencyAcuity`, `emergencyAcuity`, `isComplete`, `suspectedConditions`, `assessedAt`. Only fires when `MATERNAL_SCREEN_EVENTS_ENABLED=true` (default OFF) AND `localTier`/`emergencyAcuity` actually changed — never on an idempotent replay, never on a same-state re-save. See **Optional Fields — Maternal Labor-Triage Screening** above. |
 | Sync complete | `sync_complete` | `hcode`, `patientsUpdated`, `source: "webhook"` |
 
 ---
@@ -955,7 +1229,12 @@ Pre-check whether a patient is eligible for referral **before** sending the refe
 POST /api/referrals/check
 ```
 
-> **No API key required** — this endpoint uses session authentication (dashboard login).
+> **Requires the same webhook API key as `/api/webhooks/patient-data`** —
+> `Authorization: Bearer <api-key>`. (Prior versions of this doc said this
+> endpoint used session authentication; that was incorrect — the endpoint was
+> fully public until the 2026-07-13 PHI review locked it down.) Responses are
+> rate-limited to 30 requests/minute per hospital (HTTP 429 `RATE_LIMITED`
+> when exceeded).
 
 ### Request Body
 
@@ -967,27 +1246,17 @@ POST /api/referrals/check
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `cid` | string | Yes | เลขบัตรประชาชน 13 หลัก (plain text — hashed server-side) |
+| `cid` | string | Yes | เลขบัตรประชาชน 13 หลัก (plain text — hashed server-side, checksum-validated) |
 
 ### Response
+
+The response is intentionally minimized — it returns only the referral
+decision, never maternity/patient details:
 
 ```json
 {
   "canRefer": true,
   "reason": "พร้อมส่งต่อ",
-  "patient": {
-    "found": true,
-    "careStage": "PREGNANCY",
-    "ancRiskLevel": "HR2",
-    "gravida": 1,
-    "gaWeeks": 34,
-    "ancVisitCount": 5,
-    "lastAncDate": "2026-03-15",
-    "currentHospitalCode": "10679",
-    "currentHospitalName": "รพ.น้ำพอง",
-    "originHospitalCode": "10679"
-  },
-  "labor": null,
   "activeReferrals": 0
 }
 ```
@@ -998,14 +1267,6 @@ POST /api/referrals/check
 |-------|------|-------------|
 | `canRefer` | boolean | Whether a referral is advisable |
 | `reason` | string | Thai explanation of the result |
-| `patient` | object/null | Maternal journey data (ANC/pregnancy) |
-| `patient.careStage` | string | `PREGNANCY`, `LABOR`, `DELIVERED`, `POSTPARTUM` |
-| `patient.ancRiskLevel` | string | `LOW`, `HR1`, `HR2`, `HR3` |
-| `patient.currentHospitalCode` | string | HCODE of hospital currently managing the patient |
-| `patient.currentHospitalName` | string | Name of current hospital |
-| `labor` | object/null | Active labor room data (if admitted) |
-| `labor.an` | string | Admission number |
-| `labor.laborStatus` | string | `ACTIVE` or `DELIVERED` |
 | `activeReferrals` | number | Number of referrals still in progress (not ARRIVED/REJECTED) |
 
 ### Decision Logic
@@ -1017,13 +1278,23 @@ POST /api/referrals/check
 | Active ANC/labor, no existing referral | `true` | พร้อมส่งต่อ |
 | Active ANC/labor, has existing referral | `true` | มีใบส่งต่อที่ยังดำเนินการอยู่ — ควรตรวจสอบใบส่งต่อเดิม |
 
+### Errors
+
+| Status | Code | Cause |
+|--------|------|-------|
+| 401 | `MISSING_AUTH` | No `Authorization: Bearer` header |
+| 401 | `INVALID_API_KEY` | Key not found, inactive, or revoked |
+| 400 | `INVALID_JSON` | Body is not a JSON object |
+| 400 | `VALIDATION_FAILED` | `cid` missing, wrong length, non-digit, or fails the Thai checksum |
+| 429 | `RATE_LIMITED` | More than 30 requests/minute from this hospital's key |
+
 ### Examples
 
 ```bash
 # Check if patient can be referred
 curl -X POST https://kk-lrms.bmscloud.in.th/api/referrals/check \
   -H "Content-Type: application/json" \
-  -H "Cookie: next-auth.session-token=..." \
+  -H "Authorization: Bearer kklrms_..." \
   -d '{ "cid": "1100700123456" }'
 ```
 
@@ -1032,7 +1303,7 @@ curl -X POST https://kk-lrms.bmscloud.in.th/api/referrals/check \
 ```
 1. Hospital checks patient eligibility
    POST /api/referrals/check  { cid: "1100700123456" }
-   → canRefer: true, careStage: "PREGNANCY", ancRiskLevel: "HR2"
+   → canRefer: true, reason: "พร้อมส่งต่อ"
 
 2. Hospital sends referral
    POST /api/webhooks/patient-data  { type: "referral", ... }
@@ -1156,6 +1427,7 @@ All data transmitted over HTTPS/TLS.
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.7     | 2026-07-16 | **Maternal labor-triage screening (PROVISIONAL, flag-gated — not clinically approved):** new optional `maternal_screening` object on the labor payload (preeclampsia/eclampsia local tier, independent emergency acuity, suspected hemorrhage/obstructed-labor patterns). No effect at all unless `MATERNAL_SCREEN_INGEST_ENABLED=true` (default OFF); the server always recomputes tier/acuity/completeness server-side and never accepts a sender-supplied value. New response fields `maternalScreenAssessments`/`maternalScreenDuplicates`/`maternalScreenIngestErrors` appear ONLY when the flag is on AND a screening rode along — legacy responses stay byte-identical (GC7). New SSE event `maternal_screen_state_changed` (also flag-gated, `MATERNAL_SCREEN_EVENTS_ENABLED`, default OFF; fires only on a real tier/acuity transition, never on a replay). New read-only `GET /api/patients/{an}/maternal-screenings` endpoint (latest summary + paginated, correction-aware history) — session-authenticated, same tenant isolation as the existing patient routes. No sender action required; this section can be ignored until your hospital is asked to pilot it. |
 | 2.6     | 2026-04-28 | **Labor payload — Obstetric formula completion:** new optional fields `para`, `abortion`, `living_children`, `preg_no` so the dashboard can render the full `G3 P2 A0 L2` pill instead of just `G3`. **GA precision:** new optional `ga_day` (0–6) renders `38⁺4` instead of `38`. **Pre-pregnancy anchor:** new optional `pre_pregnancy_weight_kg` (from earliest `person_anc_screen.bw`); server **derives** `weight_diff_kg` automatically when sender supplies both anchors but omits the diff. **Admission snapshot:** new optional `bp_systolic_admit`, `bp_diastolic_admit`, `pulse_admit`, `rr_admit`, `temperature_admit`, `cervical_open_cm_admit`, `effacement_pct_admit`, `station_admit` (all from the single `ipt_pregnancy_vital_sign` row), driving a new "ADMISSION SNAPSHOT" card on the patient detail page with clinical severity coloring. All fields are optional and back-compat — v2.5 payloads continue to work unchanged. New Edge Cases: partial G_P_A_L components, server-side `weight_diff_kg` derivation, admission snapshot vs. partograph distinction. |
 | 2.5     | 2026-04-07 | **ANC `hn` now optional** (`string \| null`): community-registered patients have no HN; when null, CID hash becomes sole match key. Record matching table updated. **HOSxP ANC registry clarification:** `person` vs `patient` table distinction documented. **`fundalHeightCm` and `fetalHr`** marked optional but strongly recommended; clarified as unavailable from HOSxP ANC tables. **`referralId` opaque string:** both slash format (`"3803/68"`) and zero-padded format (`"00000014"`) are valid. **`referout.pdx`:** corrected column name (not `icd10`). **`referout.hn` join path:** direct to `patient.hn`, no `ovst` needed. **`referout_emergency_type_id` null note:** maps to ROUTINE at hospitals that don't use it. **New Edge Cases:** null HN for community ANC patients, missing ANC visit vitals, empty `person_anc_risk` → LOW, null `anc_count` in labor, null location codes. |
 | 2.4     | 2026-04-07 | **HOSxP integration clarity:** document `age` derivation from `birthday`, `admit_date` from `regdate`+`regtime`. **New optional field:** `hematocritPct` in ANC visits (from `person_anc.blood_hct_result`). **HOSxP urgencyLevel mapping table:** numeric `referout_emergency_type_id` → `ROUTINE/URGENT/EMERGENCY`. **Edge Cases section:** no-CID patients, null LMP/EDC behavior, missing CPD factors, `visitNumber` cumulative semantics. **Null field guidance:** `fetalHr` null at early visits is expected; `gaWeeks: null` preferred over `0` for unknown GA. **`referralId` slash format** documented as valid. |

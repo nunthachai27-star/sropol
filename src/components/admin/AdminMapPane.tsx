@@ -10,13 +10,10 @@ import { useMemo } from 'react';
 import useSWR from 'swr';
 import { MapPin } from 'lucide-react';
 import { ProvinceMap } from '@/components/dashboard/ProvinceMap';
-import { DEFAULT_PROVINCE_CODE } from '@/config/province';
 import { LoadingState } from '@/components/shared/LoadingState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import type { DashboardHospital, DashboardSyncStatus } from '@/types/api';
-import {
-  ConnectionStatus as ConnectionStatusEnum,
-  HospitalLevel,
-} from '@/types/domain';
+import { ConnectionStatus as ConnectionStatusEnum, HospitalLevel } from '@/types/domain';
 import { isSyncFailureStatus } from '@/config/sync-status';
 
 interface AdminHospital {
@@ -52,9 +49,7 @@ function coerceLevel(raw: string): HospitalLevel {
 }
 
 function coerceConn(raw: string): ConnectionStatusEnum {
-  return VALID_CONN.has(raw)
-    ? (raw as ConnectionStatusEnum)
-    : ConnectionStatusEnum.UNKNOWN;
+  return VALID_CONN.has(raw) ? (raw as ConnectionStatusEnum) : ConnectionStatusEnum.UNKNOWN;
 }
 
 interface AdminMapPaneProps {
@@ -64,19 +59,27 @@ interface AdminMapPaneProps {
 }
 
 export function AdminMapPane({ onSelectHospital }: AdminMapPaneProps = {}) {
-  const { data: hospitalsData, isLoading } = useSWR<{ hospitals: AdminHospital[] }>(
-    '/api/admin/hospitals',
-  );
-  const { data: configData } = useSWR<{ config: { active_province_code?: string } }>(
-    '/api/admin/config',
-  );
-  const { data: provincesData } = useSWR<{ provinces: ProvinceRow[] }>(
-    '/api/admin/provinces',
-  );
+  const {
+    data: hospitalsData,
+    isLoading,
+    error: hospitalsError,
+    mutate: mutateHospitals,
+  } = useSWR<{ hospitals: AdminHospital[] }>('/api/admin/hospitals');
+  const {
+    data: configData,
+    error: configError,
+    mutate: mutateConfig,
+  } = useSWR<{ config: { active_province_code?: string } }>('/api/admin/config');
+  const {
+    data: provincesData,
+    error: provincesError,
+    mutate: mutateProvinces,
+  } = useSWR<{ provinces: ProvinceRow[] }>('/api/admin/provinces');
 
-  const activeCode = configData?.config?.active_province_code ?? DEFAULT_PROVINCE_CODE;
-  const activeName =
-    provincesData?.provinces.find((p) => p.code === activeCode)?.name ?? '—';
+  const loadError = hospitalsError || configError || provincesError;
+
+  const activeCode = configData?.config?.active_province_code ?? '40';
+  const activeName = provincesData?.provinces.find((p) => p.code === activeCode)?.name ?? '—';
 
   // The map component expects DashboardHospital objects (with risk counts).
   // Admin context has no live counts — zero them so pins render in the "idle"
@@ -116,6 +119,7 @@ export function AdminMapPane({ onSelectHospital }: AdminMapPaneProps = {}) {
           lon: h.lon,
           counts: { low: 0, medium: 0, high: 0, total: 0 },
           ancCounts: { total: 0, hr3: 0 },
+          partographQuality: { laborRecent: 0, withPartograph: 0 },
           syncStatus,
           syncBlockedReason,
         };
@@ -146,7 +150,19 @@ export function AdminMapPane({ onSelectHospital }: AdminMapPaneProps = {}) {
         className="relative w-full overflow-hidden border bg-white"
         style={{ borderColor: 'var(--rule-strong)', height: 560 }}
       >
-        {isLoading ? (
+        {loadError ? (
+          // Bordered placeholder (the frame already has a border) so the admin
+          // sees an actionable failure instead of a silently blank map.
+          <ErrorState
+            message="โหลดข้อมูลแผนที่ไม่สำเร็จ — ไม่สามารถแสดงตำแหน่งโรงพยาบาลได้"
+            detail="ตรวจสอบการเชื่อมต่อเครือข่ายหรือสิทธิ์ผู้ดูแลระบบ แล้วกดลองใหม่"
+            onRetry={() => {
+              void mutateHospitals();
+              void mutateConfig();
+              void mutateProvinces();
+            }}
+          />
+        ) : isLoading ? (
           <LoadingState message="กำลังโหลดข้อมูลโรงพยาบาล..." />
         ) : (
           <ProvinceMap
@@ -161,7 +177,8 @@ export function AdminMapPane({ onSelectHospital }: AdminMapPaneProps = {}) {
         )}
       </div>
       <p className="mt-2 font-mono text-[10px] leading-snug text-[var(--ink-navy-muted)]">
-        แผนที่ใช้ active province จากการตั้งค่า · โรงพยาบาลที่ไม่มีพิกัดจะใช้ centroid ของอำเภอเป็นจุดแสดง
+        แผนที่ใช้ active province จากการตั้งค่า · โรงพยาบาลที่ไม่มีพิกัดจะใช้ centroid
+        ของอำเภอเป็นจุดแสดง
       </p>
     </div>
   );

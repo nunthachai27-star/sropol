@@ -63,8 +63,7 @@ export const HOSPITAL_LEVELS: Record<HospitalLevel, HospitalLevelConfig> = {
     level: HospitalLevel.S_C,
     nameTh: 'ระดับ S (เงื่อนไข)',
     nameEn: 'S — conditional',
-    description:
-      'หน่วยบริการระดับ S พร้อมเงื่อนไขการพัฒนา (SAP) — ดูคอลัมน์ development_condition',
+    description: 'หน่วยบริการระดับ S พร้อมเงื่อนไขการพัฒนา (SAP) — ดูคอลัมน์ development_condition',
     sortOrder: 7,
   },
   [HospitalLevel.M]: {
@@ -188,4 +187,15 @@ export const KK_HOSPITALS: KkHospitalSeed[] = [
 
 export function getHospitalLevelConfig(level: HospitalLevel): HospitalLevelConfig {
   return HOSPITAL_LEVELS[level];
+}
+
+// MOPH hospital_type_id → sensible default HospitalLevel guess (admin can
+// override per hospital afterwards). Single source of truth shared by the
+// admin HospitalsTab (single add) and BulkAddHospitalsDialog (bulk add) so the
+// mapping can never drift between the two entry points.
+export function guessHospitalLevel(typeId: number | null): HospitalLevel {
+  if (typeId === 5) return HospitalLevel.A_S;
+  if (typeId === 6) return HospitalLevel.M1;
+  if (typeId === 7) return HospitalLevel.F2;
+  return HospitalLevel.F3;
 }

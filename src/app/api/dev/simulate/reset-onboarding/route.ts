@@ -16,17 +16,17 @@
 // taken too because they FK-reference hospital ids; keeping them would block
 // the DELETE FROM hospitals statement.
 import { NextResponse } from 'next/server';
+import { v4 as uuidv4 } from 'uuid';
 import { simulationGuard } from '../_guard';
 import { simulationOrchestrator } from '@/services/dev-simulation/orchestrator';
 import { resetPool } from '@/services/dev-simulation/pool';
-import {
-  clearDevApiKeyCache,
-  getDevApiKeyCacheSize,
-} from '@/services/dev-simulation/api-keys';
+import { clearDevApiKeyCache, getDevApiKeyCacheSize } from '@/services/dev-simulation/api-keys';
 import { SseManager } from '@/lib/sse';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
 import { logger } from '@/lib/logger';
+import { tryLogAccess } from '@/services/audit';
+import { auditActorFromSession } from '@/lib/audit-actor';
 
 // FK-dependent tables on hospitals (and on each other). Order matters for
 // hard-delete: leaves first, parents last. Mirrors the order used in
@@ -47,8 +47,10 @@ const FK_DEPENDENT_TABLES = [
 ] as const;
 
 export async function POST() {
-  const guard = simulationGuard();
-  if (guard) return guard;
+  const guard = await simulationGuard();
+  if (guard instanceof NextResponse) return guard;
+  const session = guard;
+  const requestId = uuidv4();
 
   // Drop in-memory key cache + stop orchestrator before touching the DB so a
   // running sim tick can't re-create rows mid-wipe.
@@ -67,25 +69,29 @@ export async function POST() {
   const counts: Record<string, number> = {};
 
   try {
-    // Snapshot row counts before wiping so the response shows what was deleted.
-    for (const t of FK_DEPENDENT_TABLES) {
-      const before = await db.query<{ n: number }>(`SELECT COUNT(*) as n FROM ${t}`);
-      counts[t] = Number(before[0]?.n ?? 0);
-    }
-    const beforeHospitals = await db.query<{ n: number }>(
-      'SELECT COUNT(*) as n FROM hospitals',
-    );
-    counts['hospitals'] = Number(beforeHospitals[0]?.n ?? 0);
+    // Wipe FK leaves → roots, plus the final hospitals delete, inside one
+    // transaction so a mid-loop failure rolls back everything instead of
+    // leaving a partially wiped registry.
+    await db.transaction(async (tx) => {
+      for (const t of FK_DEPENDENT_TABLES) {
+        const before = await tx.query<{ n: number }>(`SELECT COUNT(*) as n FROM ${t}`);
+        counts[t] = Number(before[0]?.n ?? 0);
+        await tx.execute(`DELETE FROM ${t}`);
+      }
 
-    // Wipe FK leaves → roots. Anything still holding FKs to hospitals after
-    // this loop will block the final DELETE.
-    for (const t of FK_DEPENDENT_TABLES) {
-      await db.execute(`DELETE FROM ${t}`);
-    }
+      // HARD delete hospitals — registry truly empty after this. Re-add via
+      // /admin → โรงพยาบาล tab (re-creates the row from MoPH master).
+      const beforeHospitals = await tx.query<{ n: number }>(`SELECT COUNT(*) as n FROM hospitals`);
+      counts['hospitals'] = Number(beforeHospitals[0]?.n ?? 0);
+      await tx.execute('DELETE FROM hospitals');
+    });
 
-    // HARD delete hospitals — registry truly empty after this. Re-add via
-    // /admin → โรงพยาบาล tab (re-creates the row from MoPH master).
-    await db.execute('DELETE FROM hospitals');
+    await tryLogAccess(db, {
+      ...auditActorFromSession(session),
+      action: 'dev_simulation_reset_onboarding',
+      resourceType: 'simulation',
+      metadata: { requestId, environment: process.env.NODE_ENV, counts },
+    });
 
     // Reset in-process state belt-and-suspenders.
     resetPool();
@@ -102,6 +108,7 @@ export async function POST() {
     });
 
     logger.warn('sim_onboarding_reset', {
+      requestId,
       counts,
       cacheEntriesPurged: cachedBefore,
       orchestratorWasRunning,
@@ -109,6 +116,7 @@ export async function POST() {
 
     return NextResponse.json({
       ok: true,
+      requestId,
       cleared: counts,
       diagnostics: {
         cacheEntriesPurged: cachedBefore,
@@ -121,14 +129,16 @@ export async function POST() {
     // FK violations from missed dependent tables, etc.).
     const message = error instanceof Error ? error.message : String(error);
     logger.error('sim_onboarding_reset_failed', {
+      requestId,
       error: message,
       countsBeforeFailure: counts,
     });
     return NextResponse.json(
       {
         ok: false,
-        error: 'reset-onboarding failed',
+        error: 'reset-onboarding failed — no data was deleted (transaction rolled back)',
         detail: message,
+        requestId,
         countsBeforeFailure: counts,
       },
       { status: 500 },

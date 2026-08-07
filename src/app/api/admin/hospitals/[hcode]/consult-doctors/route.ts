@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { ensureHospitalConsultDoctorsSchema } from '@/lib/hospital-consult-doctors-schema';
 import { logger } from '@/lib/logger';
 
@@ -71,6 +72,9 @@ export async function GET(
   { params }: { params: Promise<{ hcode: string }> },
 ) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     await ensureHospitalConsultDoctorsSchema();
     const { hcode } = await params;
@@ -102,6 +106,9 @@ export async function POST(
   { params }: { params: Promise<{ hcode: string }> },
 ) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     await ensureHospitalConsultDoctorsSchema();
     const { hcode } = await params;

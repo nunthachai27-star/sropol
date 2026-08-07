@@ -1,7 +1,10 @@
 // T050: GET /api/hospitals/[hcode]/patients — patient list per hospital
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDatabase } from '@/db/connection';
-import { getHospitalPatientList } from '@/services/dashboard';
+import { getHospitalPatientList, getHospitalPartographAudit } from '@/services/dashboard';
+import { auth } from '@/lib/auth';
+import { tryLogAccess } from '@/services/audit';
+import { auditActorFromSession } from '@/lib/audit-actor';
 import { ensureInit } from '@/lib/ensure-init';
 import { logger } from '@/lib/logger';
 
@@ -30,7 +33,22 @@ export async function GET(
       dateTo,
     });
 
-    return NextResponse.json(result);
+    // PDPA access log — fire-and-forget (tryLogAccess never throws).
+    const session = await auth();
+    if (session?.user) {
+      await tryLogAccess(db, {
+        ...auditActorFromSession(session),
+        action: 'VIEW_HOSPITAL_PATIENTS',
+        resourceType: 'HOSPITAL',
+        resourceId: hcode,
+      });
+    }
+
+    // Charting audit rides along so the detail page renders the
+    // data-quality panel without a second fetch.
+    const partographAudit = await getHospitalPartographAudit(db, hcode);
+
+    return NextResponse.json({ ...result, partographAudit });
   } catch (error) {
     logger.error('patients_api_failed', { error });
     return NextResponse.json(

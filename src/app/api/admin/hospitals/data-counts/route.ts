@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { logger } from '@/lib/logger';
 
 interface PerHospitalCount {
@@ -18,9 +19,18 @@ interface PerHospitalCount {
 
 const PER_HOSPITAL_TABLES = [
   // tables with their own hospital_id column
-  { key: 'cached_patients', sql: 'SELECT hospital_id, COUNT(*) AS cnt FROM cached_patients GROUP BY hospital_id' },
-  { key: 'cached_partograph_observations', sql: 'SELECT hospital_id, COUNT(*) AS cnt FROM cached_partograph_observations GROUP BY hospital_id' },
-  { key: 'cached_anc_visits', sql: 'SELECT hospital_id, COUNT(*) AS cnt FROM cached_anc_visits WHERE hospital_id IS NOT NULL GROUP BY hospital_id' },
+  {
+    key: 'cached_patients',
+    sql: 'SELECT hospital_id, COUNT(*) AS cnt FROM cached_patients GROUP BY hospital_id',
+  },
+  {
+    key: 'cached_partograph_observations',
+    sql: 'SELECT hospital_id, COUNT(*) AS cnt FROM cached_partograph_observations GROUP BY hospital_id',
+  },
+  {
+    key: 'cached_anc_visits',
+    sql: 'SELECT hospital_id, COUNT(*) AS cnt FROM cached_anc_visits WHERE hospital_id IS NOT NULL GROUP BY hospital_id',
+  },
 ];
 
 const JOURNEY_HOSPITAL_TABLES = [
@@ -39,6 +49,9 @@ const PATIENT_CHILD_TABLES = [
 
 export async function GET() {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const db = await getDatabase();
 
@@ -64,7 +77,6 @@ export async function GET() {
 
     // 1. Tables that carry their own hospital_id
     for (const t of PER_HOSPITAL_TABLES) {
-       
       const rows = await db.query<PerHospitalCount>(t.sql);
       for (const r of rows) addCount(r.hospital_id, t.key, r.cnt);
     }
@@ -103,7 +115,7 @@ export async function GET() {
     }
     for (const t of JOURNEY_HOSPITAL_TABLES) {
       if (t.key === 'maternal_journeys') continue; // handled above
-       
+
       const rows = await db.query<{ hospital_id: string; cnt: number | string }>(
         `SELECT mj.hospital_id, COUNT(*) AS cnt
            FROM ${t.key} child
@@ -115,7 +127,6 @@ export async function GET() {
 
     // 4. cached_patients children — attribute to the patient's hospital_id
     for (const t of PATIENT_CHILD_TABLES) {
-       
       const rows = await db.query<{ hospital_id: string; cnt: number | string }>(
         `SELECT cp.hospital_id, COUNT(*) AS cnt
            FROM ${t.key} child

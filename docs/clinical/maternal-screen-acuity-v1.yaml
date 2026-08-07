@@ -1,0 +1,215 @@
+# Maternal Screen — Emergency Acuity Rules
+#
+# STATUS: PROVISIONAL_UNAPPROVED. SEPARATE fixture from
+# maternal-screen-rules-v1.yaml (design doc AC #24 / spec §6.2, §7.2, §7.3).
+# `emergencyAcuity` is calculated independently of suspected cause and
+# independently of visible blood volume (spec §7.2 step 3, §7.4.3). It is NOT
+# the same axis as `localTier` and must never be merged into one enum (GC3).
+#
+# No rule in this file may drive a production alert. Consumed by:
+#   - tests/fixtures/maternal-screen-clinical-cases.json (the test oracle)
+#   - src/config/maternal-screen-rules.ts (Phase 1, mirrors this file)
+#   - src/services/maternal-screening.ts (Phase 1 pure rule engine)
+
+metadata:
+  ruleSetVersion: "0.1.0-provisional"
+  status: PROVISIONAL_UNAPPROVED
+  approvedBy: null
+  approvedAt: null
+  sourcePdf: "docs/maternal-screen.pdf"
+  purpose: EMERGENCY_ACUITY
+  designDoc: "docs/maternal-screen-plan.md"
+  evidenceRegister: "docs/clinical/maternal-screen-evidence-register.md"
+  companionFixture: "docs/clinical/maternal-screen-rules-v1.yaml"
+
+# Ranking used to select the single highest-matched emergencyAcuity across
+# ALL firing rules, mirroring localTierRank in the companion fixture. UNKNOWN
+# is not itself a "matched" outcome — it is the fallback used when no rule
+# fires AND stabilityDeterminationFields below are not all assessed (GC1: a
+# lower acuity never replaces a higher proven acuity; missing data must never
+# fabricate STABLE).
+emergencyAcuityRank:
+  UNKNOWN: 0
+  STABLE: 1
+  URGENT: 2
+  EMERGENCY: 3
+
+# Fields consulted ONLY to decide STABLE vs UNKNOWN when no instability rule
+# below fires. This list is intentionally separate and narrower than
+# maternal-screen-rules-v1.yaml's `mandatoryFields` (which drives the overall
+# MaternalScreenResult.isComplete / missingRequiredFields). A case can be
+# emergencyAcuity: STABLE while isComplete: false, because the two
+# completeness concepts are orthogonal (spec §6.2).
+#
+# Determination algorithm (T1-ACUITY-DETERMINATION, ref below):
+#   1. Evaluate every rule in this file. If any fires, emergencyAcuity is the
+#      highest-ranked matched acuity (EMERGENCY beats URGENT).
+#   2. Otherwise, if every field in stabilityDeterminationFields is
+#      explicitly assessed (non-null, non-'UNKNOWN'), emergencyAcuity is
+#      STABLE.
+#   3. Otherwise (no rule fired AND at least one stability field is
+#      unassessed), emergencyAcuity is UNKNOWN. It is NEVER STABLE by
+#      default from missing data (GC1).
+stabilityDeterminationFields:
+  - shockSignsPresent
+  - consciousness
+  - oxygenSaturationPct
+  - maternalPulseBpm
+  - bleedingRate
+  - fetalTracingPattern
+
+clinicalDecisions:
+  - ref: "7.5-14"
+    question: "Which findings determine emergencyAcuity, independent of the PDF tier?"
+    choice: >
+      Instability findings map to EMERGENCY when they represent immediately
+      life-threatening / peri-arrest signs, and to URGENT when they
+      represent significant instability requiring prompt evaluation but not
+      immediately peri-arrest. This EMERGENCY/URGENT split is a Task 1
+      fixture-design judgment call (the design doc lists the finding set —
+      spec §7.5 item 14 — but does not itself assign each finding to
+      EMERGENCY vs URGENT); it is explicitly flagged provisional and must be
+      reconciled with clinical judgment at sign-off.
+    approved: false
+  - ref: "T1-ACUITY-DETERMINATION"
+    question: "How is STABLE distinguished from UNKNOWN when no instability rule fires?"
+    choice: >
+      See stabilityDeterminationFields and the algorithm documented above.
+      STABLE requires all six listed fields to be explicitly assessed;
+      otherwise the result is UNKNOWN, never STABLE, consistent with GC1
+      ("never fabricate normal from missing data").
+    approved: false
+  - ref: "T1-OXYGEN-PULSE-SOURCING"
+    question: "What is the evidentiary basis for the SpO2<95 and pulse>120 numeric thresholds?"
+    choice: >
+      These two numeric cutoffs are a locally engineered conservative safety
+      threshold, not drawn verbatim from a single cited guideline number.
+      SRC-WHO-EMERGENCY-VAGINAL-BLEEDING discusses shock and tachycardia
+      qualitatively (not a specific SpO2/pulse cutoff) in the context of
+      obstetric hemorrhage; it is recorded as the closest supporting source.
+      This must be replaced with an approved clinical threshold (or an
+      explicit adoption of the WHO/ACOG qualitative description) at Phase 0
+      sign-off.
+    approved: false
+  - ref: "T1-VOICE-MODERATE-STABLE"
+    question: >
+      Should consciousness=VOICE or bleedingRate=MODERATE (with all six
+      stabilityDeterminationFields assessed and no other rule firing) really
+      yield STABLE?
+    choice: >
+      CURRENT (provisional) behavior, deliberately pinned by the test oracle
+      (tests/fixtures/maternal-screen-clinical-cases.json, "P0-GAP" cases):
+      when all six stabilityDeterminationFields are assessed and no rule
+      fires, the result is STABLE — and neither consciousness=VOICE (AVPU one
+      step below ALERT; EA-CONSCIOUSNESS-DEPRESSED-EMERGENCY only fires on
+      PAIN/UNRESPONSIVE) nor bleedingRate=MODERATE (EA-BLEEDING-HEAVY-EMERGENCY
+      only fires on HEAVY) fires any rule. So a VOICE-responsive or
+      moderately-bleeding patient who is otherwise assessed-normal is
+      currently classified STABLE. This is a KNOWN provisional-behavior gap
+      flagged for the clinical owner. Candidate resolution at Phase 0
+      sign-off: escalate consciousness=VOICE to URGENT and
+      bleedingRate=MODERATE to URGENT (each as a new rule), or explicitly
+      approve STABLE as intended.
+    approved: false
+  - ref: "T1-BLEEDINGRATE-NONE"
+    question: >
+      How should "bleeding assessed, none present" be expressed, given
+      bleedingRate has no NONE member?
+    choice: >
+      CURRENT (provisional) behavior: the bleedingRate enum is
+      SPOTTING|LIGHT|MODERATE|HEAVY|UNKNOWN — "assessed, no bleeding" is
+      inexpressible on this axis. A sender who assessed the patient and found
+      no bleeding can only transmit UNKNOWN (or omit the field), which marks
+      the stability field unassessed, so an otherwise-normal screen yields
+      emergencyAcuity UNKNOWN rather than STABLE. This is CONSERVATIVE (GC1:
+      never fabricate STABLE from missing data) but understates genuinely
+      assessed-stable patients. Phase 0 must decide: add a NONE member to
+      bleedingRate, or treat vaginalBleeding=false as satisfying the
+      bleeding-stability determination.
+    approved: false
+
+rules:
+  - id: EA-SHOCK-SIGNS-EMERGENCY
+    purpose: EMERGENCY_ACUITY
+    controllingSourceId: SRC-WHO-EMERGENCY-VAGINAL-BLEEDING
+    supportingSourceIds: []
+    emergencyAcuity: EMERGENCY
+    logic:
+      anyOf:
+        - { field: shockSignsPresent, operator: "==", value: true }
+    clinicalDecision: { ref: "7.5-14", choice: "shockSignsPresent=true is immediately life-threatening", approved: false }
+
+  - id: EA-CONSCIOUSNESS-DEPRESSED-EMERGENCY
+    purpose: EMERGENCY_ACUITY
+    controllingSourceId: SRC-WHO-EMERGENCY-VAGINAL-BLEEDING
+    supportingSourceIds: []
+    emergencyAcuity: EMERGENCY
+    logic:
+      anyOf:
+        - { field: consciousness, operator: "in", value: ["PAIN", "UNRESPONSIVE"] }
+    clinicalDecision:
+      ref: "7.5-14"
+      choice: >
+        AVPU consciousness responding only to pain, or unresponsive, is
+        treated as EMERGENCY (conservative: both depressed-consciousness
+        states are escalated equally rather than splitting PAIN to URGENT).
+      approved: false
+
+  - id: EA-BLEEDING-HEAVY-EMERGENCY
+    purpose: EMERGENCY_ACUITY
+    controllingSourceId: SRC-WHO-EMERGENCY-VAGINAL-BLEEDING
+    supportingSourceIds: [SRC-ACOG-BLEEDING-FAQ]
+    emergencyAcuity: EMERGENCY
+    logic:
+      anyOf:
+        - { field: bleedingRate, operator: "==", value: "HEAVY" }
+    clinicalDecision:
+      ref: "7.5-14"
+      choice: >
+        bleedingRate=HEAVY is EMERGENCY regardless of suspected cause or
+        localTier match (spec §7.2 step 3: acuity is independent of visible
+        blood volume and suspected cause; GC4).
+      approved: false
+
+  - id: EA-FETAL-SINUSOIDAL-EMERGENCY
+    purpose: EMERGENCY_ACUITY
+    controllingSourceId: SRC-SMFM-CONSULT-37-VASA-PREVIA
+    supportingSourceIds: []
+    emergencyAcuity: EMERGENCY
+    logic:
+      anyOf:
+        - { field: fetalTracingPattern, operator: "==", value: "SINUSOIDAL" }
+    clinicalDecision: { ref: "7.5-14", choice: "sinusoidal fetal tracing is an ominous pattern treated as EMERGENCY", approved: false }
+
+  - id: EA-OXYGEN-SAT-LOW-URGENT
+    purpose: EMERGENCY_ACUITY
+    controllingSourceId: SRC-WHO-EMERGENCY-VAGINAL-BLEEDING
+    supportingSourceIds: []
+    emergencyAcuity: URGENT
+    logic:
+      anyOf:
+        - { field: oxygenSaturationPct, operator: "<", value: 95 }
+    clinicalDecision: { ref: "T1-OXYGEN-PULSE-SOURCING", choice: "SpO2 < 95% is URGENT; see sourcing caveat above", approved: false }
+
+  - id: EA-PULSE-HIGH-URGENT
+    purpose: EMERGENCY_ACUITY
+    controllingSourceId: SRC-WHO-EMERGENCY-VAGINAL-BLEEDING
+    supportingSourceIds: []
+    emergencyAcuity: URGENT
+    logic:
+      anyOf:
+        - { field: maternalPulseBpm, operator: ">", value: 120 }
+    clinicalDecision: { ref: "T1-OXYGEN-PULSE-SOURCING", choice: "maternal pulse > 120 bpm is URGENT; see sourcing caveat above", approved: false }
+
+  - id: EA-FETAL-NON-REASSURING-URGENT
+    purpose: EMERGENCY_ACUITY
+    controllingSourceId: SRC-WHO-EMERGENCY-VAGINAL-BLEEDING
+    supportingSourceIds: [SRC-SMFM-CONSULT-37-VASA-PREVIA]
+    emergencyAcuity: URGENT
+    logic:
+      anyOf:
+        - { field: fetalTracingPattern, operator: "==", value: "NON_REASSURING" }
+    clinicalDecision:
+      ref: "7.5-14"
+      choice: "non-reassuring (but not sinusoidal) fetal tracing is URGENT, one rank below SINUSOIDAL's EMERGENCY"
+      approved: false

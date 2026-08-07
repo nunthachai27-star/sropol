@@ -1,20 +1,15 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { requireAdmin } from '@/lib/admin-guard';
 import { cacheStatus } from '@/lib/cache';
 import { logger } from '@/lib/logger';
 import { listOnlineUsers } from '@/lib/presence';
 
 export async function GET() {
   try {
-    const session = await auth();
-    if (session?.user?.role !== 'ADMIN') {
-      return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
-    }
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
 
-    const [users, cache] = await Promise.all([
-      listOnlineUsers(),
-      cacheStatus(),
-    ]);
+    const [users, cache] = await Promise.all([listOnlineUsers(), cacheStatus()]);
 
     return NextResponse.json({
       users,

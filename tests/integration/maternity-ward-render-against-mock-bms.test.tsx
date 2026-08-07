@@ -32,7 +32,7 @@ vi.mock('next-auth/react', () => ({
   }),
   signOut: vi.fn(),
 }));
-vi.mock('next/navigation', () => ({ usePathname: () => '/hospital-maternity-ward' }));
+vi.mock('next/navigation', () => ({ usePathname: () => '/hospital-maternity-ward', useRouter: () => ({ push: () => {}, back: () => {}, replace: () => {}, prefetch: () => {} }) }));
 
 const PASTE_JSON_URL = 'https://hosxp.net/phapi/PasteJSON';
 
@@ -49,16 +49,9 @@ beforeEach(async () => {
   // Intercept ONLY the PasteJSON URL; everything else (including the
   // 127.0.0.1:<port> mock server URL) falls through to the real native fetch.
   originalFetch = global.fetch;
-  global.fetch = (async (
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ): Promise<Response> => {
+  global.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url =
-      typeof input === 'string'
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
+      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     if (url.startsWith(PASTE_JSON_URL)) {
       // Real PasteJSON shape (verified live): connection details nest under
       // result.user_info; bms_session_code is the bearer token (key_value as
@@ -101,9 +94,7 @@ const PAGE = (
 
 describe('Maternity ward page (against in-process mock BMS server)', () => {
   it('renders ward header + 4 bed tiles after a real BMS roundtrip', async () => {
-    server.setSqlResponse('FROM ward', [
-      { ward: '03', name: 'ห้องคลอด', real_bedcount: 4 },
-    ]);
+    server.setSqlResponse('FROM ward', [{ ward: '03', name: 'ห้องคลอด', real_bedcount: 4 }]);
     server.setSqlResponse('FROM bedno', [
       {
         bedno: '01',
@@ -168,27 +159,31 @@ describe('Maternity ward page (against in-process mock BMS server)', () => {
     window.history.replaceState({}, '', 'http://localhost/?bms-session-id=fake-sid');
     render(PAGE);
 
+    // The clinical-density redesign renders a KPI masthead + WardLayoutViewFull
+    // dense tiles. Wait for the occupancy roundtrip to place the patient into
+    // bed 01 (name is masked for PDPA → "นาง A.").
     await waitFor(
       () => {
-        expect(screen.getByText(/4 เตียง · ใช้งาน 1 · ว่าง 3/)).toBeInTheDocument();
+        expect(screen.getByText(/นาง A/)).toBeInTheDocument();
       },
       { timeout: 3000 },
     );
 
-    // Two rooms render
+    // Two rooms render (room_name from the bedno inventory)
     expect(screen.getByText('LR1')).toBeInTheDocument();
     expect(screen.getByText('LR2')).toBeInTheDocument();
-    // Occupied bed shows the patient
-    expect(screen.getByText(/นาง A/)).toBeInTheDocument();
+    // KPI masthead summarises the ward. "Total Beds" / "Occupied" are unique to
+    // the masthead; the "Available" KPI label is intentionally not asserted here
+    // because the empty BedTileFull tiles also carry an "Available" status pill.
+    expect(screen.getByText('Total Beds')).toBeInTheDocument();
+    expect(screen.getByText('Occupied')).toBeInTheDocument();
     // 3 empty beds (occupant lookup uses bedno; the only occupant is at bed 01)
     const empty = screen.getAllByText('ว่าง');
     expect(empty.length).toBe(3);
   });
 
   it('mock server received SQL queries for wards, beds, and occupancy', async () => {
-    server.setSqlResponse('FROM ward', [
-      { ward: '03', name: 'ห้องคลอด', real_bedcount: 0 },
-    ]);
+    server.setSqlResponse('FROM ward', [{ ward: '03', name: 'ห้องคลอด', real_bedcount: 0 }]);
     server.setSqlResponse('FROM bedno', []);
     server.setSqlResponse('FROM ipt i', []);
 

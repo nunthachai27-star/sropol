@@ -51,7 +51,7 @@ export function useBrowserPoll(options: UseBrowserPollOptions = {}): {
   runNow: () => Promise<BrowserPollResult | null>;
 } {
   const { data: session } = useSession();
-  const { config, marketplaceToken, isReady } = useBmsSession();
+  const { config, marketplaceToken, sessionId, isReady } = useBmsSession();
 
   const intervalMs = Math.max(MIN_INTERVAL_MS, options.intervalMs ?? DEFAULT_INTERVAL_MS);
   const autoStart = options.autoStart ?? true;
@@ -102,6 +102,10 @@ export function useBrowserPoll(options: UseBrowserPollOptions = {}): {
       const result = await runBrowserPoll({
         config,
         marketplaceToken,
+        // Rides along on the push so the server can stamp it on the sync-run
+        // record — operators use it to run diagnostic SQL against this
+        // hospital's HOSxP via the BMS Session API.
+        bmsSessionId: sessionId,
         signal: controller.signal,
       });
       if (result.permanentBlock) {
@@ -136,7 +140,7 @@ export function useBrowserPoll(options: UseBrowserPollOptions = {}): {
       runningRef.current = false;
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [config, marketplaceToken, skip]);
+  }, [config, marketplaceToken, sessionId, skip]);
 
   // Surface readiness state so consumers can show "waiting for HOSxP gateway"
   // before the first cycle has even tried to fire.

@@ -1,8 +1,10 @@
-// StageKPICards — demoted to below-the-fold per the 2026-04-21 redesign (§5 of brief).
-// Now a flat 3-up card strip with simple breakdown rows; no gradients, no overlap
-// with the province vitals strip.
+// StageKPICards — care-continuum 3-up strip. Each card links to its board
+// (2026-07-09): the dashboard summarises, the boards operate. The delivered
+// card is labeled by its real window (Bangkok month — it previously said
+// "24h" over a monthly query).
 'use client';
 
+import Link from 'next/link';
 import type { DashboardStageKPIs } from '@/types/api';
 
 interface StageKPICardsProps {
@@ -12,15 +14,19 @@ interface StageKPICardsProps {
 interface StageCardProps {
   title: string;
   total: number;
+  href: string;
   rows: Array<[string, number, string]>;
 }
 
-function StageCard({ title, total, rows }: StageCardProps) {
+function StageCard({ title, total, href, rows }: StageCardProps) {
   return (
-    <div className="border border-[var(--rule-strong)] bg-white p-3.5">
+    <Link
+      href={href}
+      className="block border border-[var(--rule-strong)] bg-white p-3.5 transition-colors hover:bg-[var(--accent-navy-soft)]"
+    >
       <div className="flex items-baseline justify-between">
-        <div className="text-[13px] font-semibold text-[var(--ink-navy)]">{title}</div>
-        <div className="font-mono text-2xl font-semibold tabular-nums text-[var(--ink-navy)]">
+        <div className="text-[15px] font-semibold text-[var(--ink-navy)]">{title}</div>
+        <div className="font-mono text-[28px] font-semibold tabular-nums text-[var(--ink-navy)]">
           {total}
         </div>
       </div>
@@ -28,7 +34,7 @@ function StageCard({ title, total, rows }: StageCardProps) {
         {rows.map(([label, value, color]) => (
           <div
             key={label}
-            className="flex items-center gap-2 font-mono text-[11px] text-[var(--ink-navy-dim)]"
+            className="flex items-center gap-2 font-mono text-[13px] text-[var(--ink-navy-dim)]"
           >
             <div style={{ width: 6, height: 6, background: color }} aria-hidden="true" />
             <div className="flex-1">{label}</div>
@@ -36,7 +42,7 @@ function StageCard({ title, total, rows }: StageCardProps) {
           </div>
         ))}
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -46,6 +52,7 @@ export function StageKPICards({ stageKPIs }: StageKPICardsProps) {
       <StageCard
         title="ANC กำลังติดตาม"
         total={stageKPIs.pregnancy.total}
+        href="/pregnancies"
         rows={[
           ['LOW', stageKPIs.pregnancy.low, 'var(--risk-low)'],
           ['HR1', stageKPIs.pregnancy.hr1, 'var(--risk-medium)'],
@@ -56,6 +63,7 @@ export function StageKPICards({ stageKPIs }: StageKPICardsProps) {
       <StageCard
         title="ในห้องคลอด"
         total={stageKPIs.labor.total}
+        href="/hospitals"
         rows={[
           ['LOW', stageKPIs.labor.low, 'var(--risk-low)'],
           ['MED', stageKPIs.labor.medium, 'var(--risk-medium)'],
@@ -63,8 +71,9 @@ export function StageKPICards({ stageKPIs }: StageKPICardsProps) {
         ]}
       />
       <StageCard
-        title="คลอดแล้ว · 24h"
+        title="คลอดแล้ว · เดือนนี้"
         total={stageKPIs.delivered.total}
+        href="/outcomes"
         rows={[
           ['NORMAL', stageKPIs.delivered.normal, 'var(--risk-low)'],
           ['LOW APGAR', stageKPIs.delivered.lowApgar, 'var(--risk-medium)'],

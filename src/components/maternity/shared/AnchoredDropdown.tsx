@@ -11,7 +11,14 @@
 //     whenever the `open` prop transitions from false → true.
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 
 interface AnchoredDropdownProps {
@@ -27,7 +34,11 @@ interface AnchoredDropdownProps {
 }
 
 export function AnchoredDropdown({
-  open, anchorRef, onDismiss, className, children,
+  open,
+  anchorRef,
+  onDismiss,
+  className,
+  children,
 }: AnchoredDropdownProps) {
   const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
@@ -36,7 +47,9 @@ export function AnchoredDropdown({
   // avoids a flash of the dropdown at (0,0) on first open.
   useLayoutEffect(() => {
     if (!open || !anchorRef.current) {
-      setPos(null);
+      // No sync setState here (react-hooks/set-state-in-effect): the render
+      // guard `if (!open || !pos) return null` hides the closed dropdown, and
+      // reopening re-measures below before paint, so stale pos never shows.
       return;
     }
     const measure = () => {

@@ -2,9 +2,10 @@
 // Browser-side service layer (Tasks 41+) calls this after every BMS write.
 // Contract: validate hcode matches the session, insert the row, never block.
 import { NextRequest, NextResponse } from 'next/server';
-import { v4 as uuidv4 } from 'uuid';
 import { auth } from '@/lib/auth';
 import { getDatabase } from '@/db/connection';
+import { tryLogAccess } from '@/services/audit';
+import { auditActorFromSession } from '@/lib/audit-actor';
 
 interface AuditLogBody {
   entity?: string;
@@ -30,25 +31,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'hcode mismatch' }, { status: 403 });
   }
 
-  // Fire-and-forget contract: never block the caller, never throw.
+  // Fire-and-forget contract: never block the caller, never throw. tryLogAccess
+  // already swallows insert failures (warn-only); the outer try guards the
+  // getDatabase() call itself.
   try {
     const db = await getDatabase();
-    await db.execute(
-      'INSERT INTO audit_logs (id, user_id, action, resource_type, resource_id, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [
-        uuidv4(),
-        session.user.id,
-        `bms.${body.entity}.${body.op}`,
-        body.entity,
-        body.resourceId ?? null,
-        JSON.stringify({
-          fieldsTouched: body.fieldsTouched,
-          hcode: body.hcode,
-          staff: body.staff,
-        }),
-        new Date().toISOString(),
-      ],
-    );
+    await tryLogAccess(db, {
+      ...auditActorFromSession(session),
+      action: `bms.${body.entity}.${body.op}`,
+      resourceType: body.entity,
+      resourceId: body.resourceId,
+      metadata: {
+        fieldsTouched: body.fieldsTouched,
+        hcode: body.hcode,
+        staff: body.staff,
+      },
+    });
   } catch {
     // swallow — caller does not retry
   }

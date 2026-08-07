@@ -1,22 +1,19 @@
 // T084: Audit service tests — TDD: write tests FIRST
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
-import { logAccess, tryLogAccess } from '@/services/audit';
+import { createTestDb } from '../../helpers/testDb';
 import type { DatabaseAdapter } from '@/db/adapter';
+import { logAccess, tryLogAccess } from '@/services/audit';
 
 describe('Audit Service', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter();
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     // Seed a user for FK constraint
     await db.execute(
       `INSERT INTO users (id, bms_user_name, role, is_active, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      ['user-1', 'Test User', 'NURSE', 1, new Date().toISOString(), new Date().toISOString()],
+      ['user-1', 'Test User', 'NURSE', true, new Date().toISOString(), new Date().toISOString()],
     );
   });
 
@@ -67,10 +64,44 @@ describe('Audit Service', () => {
       metadata: { reason: 'routine check', screen: 'detail' },
     });
 
-    const logs = await db.query<{ metadata: string }>('SELECT metadata FROM audit_logs');
+    // JSONB columns come back pre-parsed as objects under Postgres (unlike
+    // SQLite's TEXT storage, which required JSON.parse on the raw string).
+    const logs = await db.query<{ metadata: string | Record<string, unknown> }>(
+      'SELECT metadata FROM audit_logs',
+    );
     expect(logs.length).toBe(1);
-    const parsed = JSON.parse(logs[0].metadata);
+    const parsed =
+      typeof logs[0].metadata === 'string' ? JSON.parse(logs[0].metadata) : logs[0].metadata;
     expect(parsed.reason).toBe('routine check');
+  });
+
+  it('records the actor identity snapshot (name/role/hospital) inline', async () => {
+    // A BMS-session actor: user_id is the session id (no matching users row),
+    // which must now be accepted (no FK) and the human-readable identity stored
+    // inline for the PDPA audit trail.
+    await logAccess(db, {
+      userId: 'bms-session-xyz',
+      userName: 'นาง ทดสอบ ระบบ',
+      userRole: 'NURSE',
+      hospitalCode: '10670',
+      action: 'VIEW_PATIENT',
+      resourceType: 'PATIENT',
+      resourceId: 'AN123',
+    });
+
+    const rows = await db.query<{
+      user_id: string;
+      user_name: string;
+      user_role: string;
+      hospital_code: string;
+    }>('SELECT user_id, user_name, user_role, hospital_code FROM audit_logs');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      user_id: 'bms-session-xyz',
+      user_name: 'นาง ทดสอบ ระบบ',
+      user_role: 'NURSE',
+      hospital_code: '10670',
+    });
   });
 
   it('validates required fields', async () => {
@@ -114,7 +145,7 @@ describe('Audit Service', () => {
 
     it('does NOT throw when the underlying INSERT fails', async () => {
       // Simulate a DB outage by stubbing execute to reject. Using a fake
-      // adapter rather than mocking the real SqliteAdapter keeps the test
+      // adapter rather than mocking the real adapter keeps the test
       // independent of better-sqlite3 internals.
       const failingDb = {
         execute: vi.fn().mockRejectedValue(new Error('database is locked')),

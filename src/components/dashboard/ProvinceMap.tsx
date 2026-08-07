@@ -31,7 +31,7 @@ const ProvinceMapLeaflet = dynamic(() => import('./ProvinceMapLeaflet'), {
       className="grid h-full w-full place-items-center"
       style={{ background: 'var(--surface-cool)' }}
     >
-      <span className="font-mono text-[10px] tracking-[0.18em] text-[var(--ink-navy-muted)]">
+      <span className="font-mono text-[12px] tracking-[0.18em] text-[var(--ink-navy-muted)]">
         LOADING MAP…
       </span>
     </div>

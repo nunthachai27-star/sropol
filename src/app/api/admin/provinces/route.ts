@@ -3,10 +3,14 @@
 import { NextResponse } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { logger } from '@/lib/logger';
 
 export async function GET() {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const db = await getDatabase();
     const rows = await db.query<{ province_code: string; province_name: string }>(

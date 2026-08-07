@@ -6,17 +6,54 @@ import { WardLayoutView } from '@/components/maternity/WardLayoutView';
 import type { BedSlot, BedOccupancy } from '@/types/maternity-ward';
 
 const beds: BedSlot[] = [
-  { bedno: '02', roomno: 'LR1', bed_order: 2, bed_lock: 'N', bed_status_type_id: 1, room_name: 'Labor Room 1', room_display_number: 1 },
-  { bedno: '01', roomno: 'LR1', bed_order: 1, bed_lock: 'N', bed_status_type_id: 1, room_name: 'Labor Room 1', room_display_number: 1 },
-  { bedno: '05', roomno: 'LR2', bed_order: 1, bed_lock: 'N', bed_status_type_id: 1, room_name: 'Labor Room 2', room_display_number: 2 },
+  {
+    bedno: '02',
+    roomno: 'LR1',
+    bed_order: 2,
+    bed_lock: 'N',
+    bed_status_type_id: 1,
+    room_name: 'Labor Room 1',
+    room_display_number: 1,
+  },
+  {
+    bedno: '01',
+    roomno: 'LR1',
+    bed_order: 1,
+    bed_lock: 'N',
+    bed_status_type_id: 1,
+    room_name: 'Labor Room 1',
+    room_display_number: 1,
+  },
+  {
+    bedno: '05',
+    roomno: 'LR2',
+    bed_order: 1,
+    bed_lock: 'N',
+    bed_status_type_id: 1,
+    room_name: 'Labor Room 2',
+    room_display_number: 2,
+  },
 ];
 const occupancy: BedOccupancy[] = [
   {
-    an: 'AN1', hn: 'HN1', regdate: '2026-04-19', regtime: '10:00:00',
-    ward: '03', bedno: '01', roomno: 'LR1', bedtype: null, roomname: 'LR1',
-    pname: 'นาง', fname: 'ทดสอบ', lname: 'ระบบ', birthday: '1996-04-19',
-    gravida: 2, ga: 38, incharge_doctor_name: 'ดร.X',
-    last_observation_at: null, last_cervix_cm: 4,
+    an: 'AN1',
+    hn: 'HN1',
+    regdate: '2026-04-19',
+    regtime: '10:00:00',
+    ward: '03',
+    bedno: '01',
+    roomno: 'LR1',
+    bedtype: null,
+    roomname: 'LR1',
+    pname: 'นาง',
+    fname: 'ทดสอบ',
+    lname: 'ระบบ',
+    birthday: '1996-04-19',
+    gravida: 2,
+    ga: 38,
+    incharge_doctor_name: 'ดร.X',
+    last_observation_at: null,
+    last_cervix_cm: 4,
   },
 ];
 
@@ -48,8 +85,8 @@ describe('WardLayoutView', () => {
 
   it('marries occupancy to the right bed by bedno', () => {
     render(<WardLayoutView beds={beds} occupancy={occupancy} />);
-    // Occupant on bed 01 → name visible
-    expect(screen.getByText(/นาง ทดสอบ ระบบ|ทดสอบ ระบบ/)).toBeInTheDocument();
+    // Occupant on bed 01 → name visible (masked for PDPA → "นาง ทดสอบ ร.")
+    expect(screen.getByText(/นาง ทดสอบ ร\./)).toBeInTheDocument();
     // Bed 02 is empty
     const empties = screen.getAllByText('ว่าง');
     expect(empties.length).toBeGreaterThan(0);
@@ -57,7 +94,15 @@ describe('WardLayoutView', () => {
 
   it('falls back to "ห้อง {roomno}" when room_name is null', () => {
     const noName: BedSlot[] = [
-      { bedno: '01', roomno: 'X1', bed_order: 1, bed_lock: 'N', bed_status_type_id: null, room_name: null, room_display_number: 1 },
+      {
+        bedno: '01',
+        roomno: 'X1',
+        bed_order: 1,
+        bed_lock: 'N',
+        bed_status_type_id: null,
+        room_name: null,
+        room_display_number: 1,
+      },
     ];
     render(<WardLayoutView beds={noName} occupancy={[]} />);
     expect(screen.getByText('ห้อง X1')).toBeInTheDocument();

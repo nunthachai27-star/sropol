@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { logger } from '@/lib/logger';
 import { HospitalLevel, HospitalServiceType } from '@/types/domain';
 
@@ -17,6 +18,9 @@ function hasActiveBmsSession(sessionJwt: string | null, sessionExpiresAt: string
 
 export async function GET() {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const db = await getDatabase();
 
@@ -118,6 +122,9 @@ const VALID_SERVICE_TYPES = new Set<string>(Object.values(HospitalServiceType));
 
 export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const body = (await request.json()) as CreateHospitalBody;
 
@@ -125,10 +132,7 @@ export async function POST(request: NextRequest) {
     const name = body.name?.trim();
     const level = body.level?.trim();
     if (!hcode || !/^\d{5}$/.test(hcode)) {
-      return NextResponse.json(
-        { error: 'hcode must be a 5-digit MOPH code' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'hcode must be a 5-digit MOPH code' }, { status: 400 });
     }
     if (!name) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
@@ -147,10 +151,9 @@ export async function POST(request: NextRequest) {
     }
 
     const db = await getDatabase();
-    const existing = await db.query<{ id: string }>(
-      'SELECT id FROM hospitals WHERE hcode = ?',
-      [hcode],
-    );
+    const existing = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [
+      hcode,
+    ]);
     if (existing.length > 0) {
       return NextResponse.json({ error: 'hospital already registered' }, { status: 409 });
     }

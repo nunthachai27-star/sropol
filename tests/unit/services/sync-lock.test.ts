@@ -2,9 +2,8 @@
 // stuck-lock auto-release. These cover the SYNC_COOLDOWN_MS and
 // SYNC_TIMEOUT_MS behavior in src/services/sync/polling.ts.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import type { SseManager } from '@/lib/sse';
 import {
@@ -16,13 +15,12 @@ import {
 const HOSPITAL_ID = '00000000-0000-0000-0000-000000000001';
 
 describe('Sync Lock Manager', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let sseManager: SseManager;
 
   beforeEach(async () => {
     _resetSyncStatesForTesting();
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
     sseManager = { broadcast: vi.fn() } as unknown as SseManager;
 
@@ -32,7 +30,16 @@ describe('Sync Lock Manager', () => {
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [HOSPITAL_ID, '99999', 'Test Hospital', 'F1', 1, 'UNKNOWN', new Date().toISOString(), new Date().toISOString()],
+      [
+        HOSPITAL_ID,
+        '99999',
+        'Test Hospital',
+        'F1',
+        true,
+        'UNKNOWN',
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ],
     );
   });
 

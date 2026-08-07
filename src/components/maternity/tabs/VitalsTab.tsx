@@ -9,20 +9,11 @@
 import { useState } from 'react';
 import useSWR from 'swr';
 import { useBmsSession } from '@/hooks/useBmsSession';
-import {
-  deleteNurseNote,
-  getPatientNurseNotes,
-  upsertNurseNote,
-} from '@/services/maternity-ward';
+import { deleteNurseNote, getPatientNurseNotes, upsertNurseNote } from '@/services/maternity-ward';
 import type { NurseNoteRow } from '@/types/maternity-ward';
 import { VitalSignChart } from '@/components/maternity/vitals/VitalSignChart';
 import { VitalSignEntryDialog } from '@/components/maternity/VitalSignEntryDialog';
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 type DialogState =
   | { open: false }
@@ -30,7 +21,7 @@ type DialogState =
   | { open: true; mode: 'edit'; row: NurseNoteRow };
 
 export function VitalsTab({ an }: { an: string }) {
-  const { config, userInfo } = useBmsSession();
+  const { config, userInfo, marketplaceToken } = useBmsSession();
   const { data, error, isLoading, mutate } = useSWR<NurseNoteRow[]>(
     config ? ['nurse-notes', config.apiUrl, an] : null,
     () => getPatientNurseNotes(config!, an),
@@ -106,7 +97,7 @@ export function VitalsTab({ an }: { an: string }) {
 
         <TabsContent value="chart">
           <div className="overflow-auto">
-            <VitalSignChart observations={rows} />
+            <VitalSignChart an={an} config={config} marketplaceToken={marketplaceToken} />
           </div>
         </TabsContent>
 

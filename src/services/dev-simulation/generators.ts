@@ -61,11 +61,8 @@ import {
   findNarrativeInconsistencies,
   type EvaluationResult,
 } from './evaluator';
-import {
-  consumeNextPlannedEvent,
-  profileForPlannedEvent,
-  type PlannedEvent,
-} from './planner';
+import { consumeNextPlannedEvent, profileForPlannedEvent, type PlannedEvent } from './planner';
+import { nextMaternalScreenSimProfile } from './maternal-screening-profiles';
 import type { SimEventType } from './types';
 
 export interface HospitalContext {
@@ -117,7 +114,34 @@ function recordEvaluation(res: EvaluationResult): void {
 
 // ─── Deterministic helpers ─────────────────────────────────────────────
 
-const AMPHUR_CODES = ['01','02','03','04','05','06','07','08','09','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26'];
+const AMPHUR_CODES = [
+  '01',
+  '02',
+  '03',
+  '04',
+  '05',
+  '06',
+  '07',
+  '08',
+  '09',
+  '10',
+  '11',
+  '12',
+  '13',
+  '14',
+  '15',
+  '16',
+  '17',
+  '18',
+  '19',
+  '20',
+  '21',
+  '22',
+  '23',
+  '24',
+  '25',
+  '26',
+];
 
 function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -303,15 +327,36 @@ export interface GeneratedLaborEvent {
 function laborJsonSchema(p: ClinicalProfile) {
   return {
     type: 'object',
-    required: ['name', 'note', 'heightCm', 'prePregnancyWeightKg', 'weightKgNow',
-               'weightGainKg', 'fundalHeightCm', 'ultrasoundWeightG', 'hematocritPct'],
+    required: [
+      'name',
+      'note',
+      'heightCm',
+      'prePregnancyWeightKg',
+      'weightKgNow',
+      'weightGainKg',
+      'fundalHeightCm',
+      'ultrasoundWeightG',
+      'hematocritPct',
+    ],
     properties: {
       name: { type: 'string', maxLength: 60 },
       note: { type: 'string', maxLength: 140 },
       heightCm: { type: 'integer', minimum: p.heightCm.min, maximum: p.heightCm.max },
-      prePregnancyWeightKg: { type: 'integer', minimum: p.prePregWeightKg.min, maximum: p.prePregWeightKg.max },
-      weightKgNow: { type: 'integer', minimum: p.prePregWeightKg.min, maximum: Math.min(160, p.prePregWeightKg.max + p.totalWeightGainKg.max) },
-      weightGainKg: { type: 'integer', minimum: p.totalWeightGainKg.min, maximum: p.totalWeightGainKg.max },
+      prePregnancyWeightKg: {
+        type: 'integer',
+        minimum: p.prePregWeightKg.min,
+        maximum: p.prePregWeightKg.max,
+      },
+      weightKgNow: {
+        type: 'integer',
+        minimum: p.prePregWeightKg.min,
+        maximum: Math.min(160, p.prePregWeightKg.max + p.totalWeightGainKg.max),
+      },
+      weightGainKg: {
+        type: 'integer',
+        minimum: p.totalWeightGainKg.min,
+        maximum: p.totalWeightGainKg.max,
+      },
       fundalHeightCm: { type: 'number', minimum: 16, maximum: 42 },
       ultrasoundWeightG: { type: 'integer', minimum: 1500, maximum: 4800 },
       hematocritPct: { type: 'integer', minimum: p.hctPct.min, maximum: p.hctPct.max },
@@ -359,11 +404,7 @@ function deepFind(obj: unknown, key: string): unknown {
 /** Throws if any of the listed fields is missing from the parsed LLM response.
  *  Generators catch this and fall back to applyProfile() so we never persist
  *  a half-filled clinical record. */
-function requireFields(
-  parsed: Record<string, unknown>,
-  fields: string[],
-  label: string,
-): void {
+function requireFields(parsed: Record<string, unknown>, fields: string[], label: string): void {
   const missing = fields.filter((f) => deepFind(parsed, f) === undefined);
   if (missing.length > 0) {
     throw new Error(`LLM ${label} output missing required fields: ${missing.join(', ')}`);
@@ -388,7 +429,7 @@ export async function generateLaborEvent(
   //      synthesize a backdated ANC payload (≥ 2 visits) so every admission
   //      has a journey to link to via cid_hash.
   const arrived = consumeArrivedReferralForAdmission(hosp.hcode);
-  const ancPatient = arrived ? null : (Math.random() < 0.4 ? findAncPatient(hosp.hcode, 0.25) : null);
+  const ancPatient = arrived ? null : Math.random() < 0.4 ? findAncPatient(hosp.hcode, 0.25) : null;
   const existing: PooledPatient | null = ancPatient;
   const seed = Date.now() + Math.floor(Math.random() * 1e6);
   const cid = arrived?.cid ?? existing?.cid ?? synthCid(seed);
@@ -427,7 +468,9 @@ export async function generateLaborEvent(
             scenario ? `Scenario: ${scenario}` : '',
             'Output JSON: { "name": "นาง... ...", "note": "Thai, < 120 chars" }',
             resolved.plannedName ? `Use the name "${resolved.plannedName}" exactly.` : '',
-          ].filter(Boolean).join('\n'),
+          ]
+            .filter(Boolean)
+            .join('\n'),
         },
       ],
       jsonSchema: NARRATIVE_SCHEMA,
@@ -480,7 +523,9 @@ export async function generateLaborEvent(
   const laborInput: DeterministicLaborInput = {
     profile,
     name: patientName,
-    hn, an, cid,
+    hn,
+    an,
+    cid,
     gaWeeks,
     gravida,
     ancCount,
@@ -492,6 +537,32 @@ export async function generateLaborEvent(
   const evalRes = evaluateLaborEvent(profile, event);
   recordEvaluation(evalRes);
   void llmNote;
+
+  // OPTIONAL maternal labor-triage screening (Task H3, shadow-validation
+  // only — this whole module is only reachable while isSimulationEnabled()
+  // is true; see orchestrator.start()). Rotates deterministically through
+  // MATERNAL_SCREEN_SIM_PROFILES (all copied from the approved clinical
+  // oracle, tests/fixtures/maternal-screen-clinical-cases.json) so a
+  // simulation run produces real ingest→persist→summary traffic covering
+  // every local tier / emergency acuity / hemorrhage pattern for the
+  // shadow-validation cohort. Admission-context fields the profile defines
+  // are applied onto `event` via Object.assign below: `ga_weeks` OVERRIDES
+  // the value applyProfileToLabor already set (same field, profile wins);
+  // `bp_systolic_admit` / `bp_diastolic_admit` aren't set by
+  // applyProfileToLabor at all, so those are newly added, not overridden.
+  // Either way the transported payload ends up matching the exact oracle
+  // expectation end-to-end — see
+  // tests/unit/services/dev-simulation-maternal-screening.test.ts.
+  const msProfile = nextMaternalScreenSimProfile();
+  Object.assign(event, msProfile.admissionContext);
+  event.maternal_screening = {
+    ...msProfile.screening,
+    // Idempotency is scoped to (hospitalCode, source_pk) WITHIN one
+    // admission (spec §9.1) — the profile's source_pk is only a stable
+    // prefix; append this admission's AN so two different simulated
+    // admissions reusing the same profile never collide/reject.
+    source_pk: `${msProfile.screening.source_pk}:${an}`,
+  };
 
   // Mark the patient as LABOR-stage at THIS hospital (cross-hospital move
   // reflected by the currentHcode update). For CIDs with no prior pool entry
@@ -532,9 +603,20 @@ export async function generateLaborEvent(
 function ancJsonSchema(p: ClinicalProfile) {
   return {
     type: 'object',
-    required: ['name', 'note', 'bloodGroup', 'rhFactor', 'hbsagResult', 'vdrlResult',
-               'hivResult', 'ogttResult', 'termBirths', 'pretermBirths', 'abortions',
-               'livingChildren'],
+    required: [
+      'name',
+      'note',
+      'bloodGroup',
+      'rhFactor',
+      'hbsagResult',
+      'vdrlResult',
+      'hivResult',
+      'ogttResult',
+      'termBirths',
+      'pretermBirths',
+      'abortions',
+      'livingChildren',
+    ],
     properties: {
       name: { type: 'string', maxLength: 60 },
       note: { type: 'string', maxLength: 140 },
@@ -588,9 +670,10 @@ export async function generateAncEvent(
   // pregNo / lmp / edc / birthday so the webhook's "isNewPregnancy" check
   // doesn't misfire and create a second journey for the same person.
   const initialGa = existing ? existing.ga : rnd(8, 40);
-  const lmpIsoStable = existing?.lmp && existing.lmp.length > 0
-    ? existing.lmp
-    : new Date(today.getTime() - initialGa * 7 * 86400_000).toISOString();
+  const lmpIsoStable =
+    existing?.lmp && existing.lmp.length > 0
+      ? existing.lmp
+      : new Date(today.getTime() - initialGa * 7 * 86400_000).toISOString();
   // Current GA derived from the stable LMP so visits always land on a real
   // date ≤ today. Earlier code let weeksAgo drift (existing.ga + rnd) while
   // LMP stayed fixed, which made visit_date = LMP + visitGa*7 resolve into
@@ -600,15 +683,18 @@ export async function generateAncEvent(
     8,
     Math.min(42, Math.floor((today.getTime() - lmpMs) / (7 * 86400_000))),
   );
-  const edcIsoStable = existing?.edc && existing.edc.length > 0
-    ? existing.edc
-    : new Date(new Date(lmpIsoStable).getTime() + 280 * 86400_000).toISOString();
-  const birthdayStable = existing?.birthday && existing.birthday.length > 0
-    ? existing.birthday
-    : (() => {
-        const birthdayYear = today.getFullYear() - rnd(profile.ageYears.min, profile.ageYears.max);
-        return `${birthdayYear}-${String(rnd(1, 12)).padStart(2, '0')}-${String(rnd(1, 28)).padStart(2, '0')}`;
-      })();
+  const edcIsoStable =
+    existing?.edc && existing.edc.length > 0
+      ? existing.edc
+      : new Date(new Date(lmpIsoStable).getTime() + 280 * 86400_000).toISOString();
+  const birthdayStable =
+    existing?.birthday && existing.birthday.length > 0
+      ? existing.birthday
+      : (() => {
+          const birthdayYear =
+            today.getFullYear() - rnd(profile.ageYears.min, profile.ageYears.max);
+          return `${birthdayYear}-${String(rnd(1, 12)).padStart(2, '0')}-${String(rnd(1, 28)).padStart(2, '0')}`;
+        })();
 
   // Build per-visit records on the Thai MOH / WHO 2016 ANC contact schedule.
   // Previously visits were packed into consecutive weeks (e.g. GA 16, 17, 18,
@@ -659,7 +745,9 @@ export async function generateAncEvent(
             scenario ? `Scenario: ${scenario}` : '',
             'Output JSON: { "name": "นาง... ...", "note": "Thai, < 120 chars" }',
             resolved.plannedName ? `Use the name "${resolved.plannedName}".` : '',
-          ].filter(Boolean).join('\n'),
+          ]
+            .filter(Boolean)
+            .join('\n'),
         },
       ],
       jsonSchema: NARRATIVE_SCHEMA,
@@ -679,7 +767,8 @@ export async function generateAncEvent(
   const ancInput: DeterministicAncInput = {
     profile,
     name: existing?.name ?? resolved.plannedName ?? llmName ?? 'นาง ทดลอง ระบบ',
-    hn, cid,
+    hn,
+    cid,
     birthday: birthdayStable,
     gravida,
     lmpIso: lmpIsoStable,
@@ -754,7 +843,9 @@ export async function generateReferralEvent(
           ' "urgency": "ROUTINE | URGENT | EMERGENCY"',
           '}',
           resolved.plannedName ? `Use the name "${resolved.plannedName}".` : '',
-        ].filter(Boolean).join('\n'),
+        ]
+          .filter(Boolean)
+          .join('\n'),
       },
     ],
     jsonSchema: {
@@ -777,15 +868,20 @@ export async function generateReferralEvent(
     });
     return {
       name: resolved.plannedName || 'นาง ทดลอง ระบบ',
-      reason: profile.id === 'preeclampsia_severe' ? 'ครรภ์เป็นพิษรุนแรง'
-        : profile.id === 'iugr' ? 'ทารกเจริญช้าในครรภ์'
-        : 'เกินศักยภาพ',
-      diagnosisCode: profile.id === 'preeclampsia_severe' ? 'O14.1'
-        : profile.id === 'gdm' ? 'O24.4'
-        : 'O14.0',
-      urgency: profile.riskLevel === 'HR3' ? 'EMERGENCY'
-        : profile.riskLevel === 'HR2' ? 'URGENT'
-        : 'ROUTINE',
+      reason:
+        profile.id === 'preeclampsia_severe'
+          ? 'ครรภ์เป็นพิษรุนแรง'
+          : profile.id === 'iugr'
+            ? 'ทารกเจริญช้าในครรภ์'
+            : 'เกินศักยภาพ',
+      diagnosisCode:
+        profile.id === 'preeclampsia_severe' ? 'O14.1' : profile.id === 'gdm' ? 'O24.4' : 'O14.0',
+      urgency:
+        profile.riskLevel === 'HR3'
+          ? 'EMERGENCY'
+          : profile.riskLevel === 'HR2'
+            ? 'URGENT'
+            : 'ROUTINE',
     } as ReferralNarrative;
   });
 
@@ -928,8 +1024,9 @@ export async function generatePartographEvent(
     });
     const cleaned = (raw ?? '').trim().slice(0, 100);
     if (cleaned && observations.length > 0) {
-      const last = observations[observations.length - 1] as
-        WebhookPartographObservation & { note?: string };
+      const last = observations[observations.length - 1] as WebhookPartographObservation & {
+        note?: string;
+      };
       last.note = cleaned;
     }
   } catch {

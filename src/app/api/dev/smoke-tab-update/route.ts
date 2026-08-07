@@ -19,7 +19,8 @@
 // Each probe runs its own try/catch — a failure in one tab doesn't abort
 // the others, so the response surfaces the FULL set of pass/fail results.
 //
-// Gated on DEV_AUTH_BYPASS=true so this route is unreachable in production.
+// Hard-gated on NODE_ENV so this route is unreachable in production builds
+// regardless of env flags (DEV_AUTH_BYPASS is likewise inert in production).
 import { NextRequest, NextResponse } from 'next/server';
 import { validateBmsSession } from '@/lib/auth-utils';
 import { executeSql, restUpdate } from '@/lib/bms-browser-client';
@@ -188,7 +189,7 @@ async function probeOne(
 }
 
 export async function POST(request: NextRequest) {
-  if (process.env.DEV_AUTH_BYPASS !== 'true' && process.env.NODE_ENV === 'production') {
+  if (process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'disabled in production' }, { status: 403 });
   }
   let body: { sessionId?: string; an?: string };
@@ -205,10 +206,7 @@ export async function POST(request: NextRequest) {
   const tunnelUrl = process.env.DEV_HOSPITAL_TUNNEL_URL ?? '';
   const identity = await validateBmsSession(sessionId, tunnelUrl);
   if (!identity || !identity.tunnelUrl || !identity.jwt) {
-    return NextResponse.json(
-      { error: 'session validation failed', sessionId },
-      { status: 401 },
-    );
+    return NextResponse.json({ error: 'session validation failed', sessionId }, { status: 401 });
   }
 
   // BMS tunnel auth split (matches extractConnectionConfig in bms-browser-client):
@@ -218,7 +216,7 @@ export async function POST(request: NextRequest) {
   const config: ConnectionConfig = {
     apiUrl: identity.tunnelUrl,
     bearerToken: sessionId,
-    appIdentifier: 'KK-LRMS.SmokeTest',
+    appIdentifier: 'SR-LRMS.SmokeTest',
   };
 
   // Set the marketplace-token in the module singleton so service helpers
@@ -230,7 +228,6 @@ export async function POST(request: NextRequest) {
   const restResults: ProbeResult[] = [];
   for (const spec of PROBES) {
     // sequential — keeps log output ordered + avoids hammering the tunnel
-    // eslint-disable-next-line no-await-in-loop
     restResults.push(await probeOne(spec, config, identity.jwt, body.an));
   }
 

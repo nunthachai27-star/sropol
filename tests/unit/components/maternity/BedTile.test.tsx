@@ -40,7 +40,9 @@ describe('BedTile', () => {
 
   it('renders occupant details', () => {
     render(<BedTile bedno="01" bedLock="N" occupant={occupant} />);
-    expect(screen.getByText(/นาง ทดสอบ ระบบ|ทดสอบ ระบบ/)).toBeInTheDocument();
+    // Name is masked for PDPA display: lname collapses to first char + "."
+    // (maskName) → "นาง ทดสอบ ร.".
+    expect(screen.getByText(/นาง ทดสอบ ร\./)).toBeInTheDocument();
     expect(screen.getByText(/30/)).toBeInTheDocument(); // age
     expect(screen.getByText(/G2/)).toBeInTheDocument();
     expect(screen.getByText(/GA38/)).toBeInTheDocument();

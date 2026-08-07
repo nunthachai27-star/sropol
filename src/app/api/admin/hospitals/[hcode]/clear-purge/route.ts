@@ -12,13 +12,14 @@
 // hospital, so the standard onboarding endpoint would 400. This flag-
 // only clear lets the admin unblock from anywhere; the real sync
 // happens server-side on the next cycle once a user from the affected
-// hospital opens KK-LRMS.
+// hospital opens SR-LRMS.
 //
-// Admin-gated by middleware (/api/admin/* requires role=ADMIN +
-// ADMIN_ALLOWED_CIDS).
+// Admin-gated by both the Edge middleware AND the handler-level requireAdmin()
+// guard below (/api/admin/* requires role=ADMIN + ADMIN_ALLOWED_CIDS).
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { logger } from '@/lib/logger';
 
 export async function POST(
@@ -26,6 +27,9 @@ export async function POST(
   { params }: { params: Promise<{ hcode: string }> },
 ) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const { hcode } = await params;
     const db = await getDatabase();

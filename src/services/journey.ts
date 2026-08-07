@@ -29,7 +29,28 @@ export async function createJourney(
   await db.execute(
     `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, person_anc_id, name, cid, cid_hash, age, gravida, para, lmp, edc, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
-    [id, input.hospitalId, input.hospitalId, input.hn, input.personAncId, input.name, input.cid, input.cidHash, input.age, input.gravida, input.para, input.lmp, input.edc, CareStage.PREGNANCY, input.ancRiskLevel, now, now, now, now, now],
+    [
+      id,
+      input.hospitalId,
+      input.hospitalId,
+      input.hn,
+      input.personAncId,
+      input.name,
+      input.cid,
+      input.cidHash,
+      input.age,
+      input.gravida,
+      input.para,
+      input.lmp,
+      input.edc,
+      CareStage.PREGNANCY,
+      input.ancRiskLevel,
+      now,
+      now,
+      now,
+      now,
+      now,
+    ],
   );
 
   return {
@@ -95,17 +116,26 @@ export async function getJourneyByHn(
 
 export async function transitionToLabor(db: DatabaseAdapter, journeyId: string): Promise<void> {
   const now = new Date().toISOString();
+  // Idempotent: linkJourneyToLabor runs on every sync cycle (~30 s); avoid
+  // re-stamping stage_changed_at on a journey already in LABOR (same
+  // dashboard-KPI rationale as transitionToDelivered below).
   await db.execute(
-    `UPDATE maternal_journeys SET care_stage = ?, stage_changed_at = ?, updated_at = ? WHERE id = ?`,
-    [CareStage.LABOR, now, now, journeyId],
+    `UPDATE maternal_journeys SET care_stage = ?, stage_changed_at = ?, updated_at = ?
+      WHERE id = ? AND care_stage <> ?`,
+    [CareStage.LABOR, now, now, journeyId, CareStage.LABOR],
   );
 }
 
 export async function transitionToDelivered(db: DatabaseAdapter, journeyId: string): Promise<void> {
   const now = new Date().toISOString();
+  // Idempotent: the newborn sync calls this on every birth attach (including
+  // backfilled historical births). Re-stamping stage_changed_at on an
+  // already-DELIVERED journey pushed months-old deliveries into the
+  // "delivered this month" dashboard KPI.
   await db.execute(
-    `UPDATE maternal_journeys SET care_stage = ?, stage_changed_at = ?, updated_at = ? WHERE id = ?`,
-    [CareStage.DELIVERED, now, now, journeyId],
+    `UPDATE maternal_journeys SET care_stage = ?, stage_changed_at = ?, updated_at = ?
+      WHERE id = ? AND care_stage <> ?`,
+    [CareStage.DELIVERED, now, now, journeyId, CareStage.DELIVERED],
   );
 }
 

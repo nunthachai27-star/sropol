@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { HospitalLevel, HospitalServiceType } from '@/types/domain';
+import { guessHospitalLevel } from '@/config/hospitals';
 import {
   HospitalEditDialog,
   type AdminHospital,
@@ -57,14 +58,6 @@ interface DataCountsResponse {
 
 const LEVEL_OPTIONS = Object.values(HospitalLevel);
 
-// hospital_type_id → default HospitalLevel guess (admin can override).
-function guessLevel(typeId: number | null): HospitalLevel {
-  if (typeId === 5) return HospitalLevel.A_S;
-  if (typeId === 6) return HospitalLevel.M1;
-  if (typeId === 7) return HospitalLevel.F2;
-  return HospitalLevel.F3;
-}
-
 interface HospitalsTabProps {
   /** When set, auto-opens the edit dialog for this hcode once the hospital
    *  list has loaded. Used by the admin page to bridge map-pin clicks into
@@ -74,9 +67,12 @@ interface HospitalsTabProps {
 }
 
 export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTabProps = {}) {
-  const { data: hospitalsData, isLoading, error, mutate } = useSWR<{ hospitals: AdminHospital[] }>(
-    '/api/admin/hospitals',
-  );
+  const {
+    data: hospitalsData,
+    isLoading,
+    error,
+    mutate,
+  } = useSWR<{ hospitals: AdminHospital[] }>('/api/admin/hospitals');
   const { data: configData } = useSWR<ConfigResponse>('/api/admin/config');
   const { data: provincesData } = useSWR<ProvincesResponse>('/api/admin/provinces');
   const { data: dataCountsData } = useSWR<DataCountsResponse>(
@@ -129,10 +125,7 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
     // mismatch) so the admin can tell the difference between "no hospitals
     // registered yet" and "server failed to answer".
     return (
-      <div
-        className="border-2 bg-white px-4 py-3"
-        style={{ borderColor: 'var(--risk-high)' }}
-      >
+      <div className="border-2 bg-white px-4 py-3" style={{ borderColor: 'var(--risk-high)' }}>
         <div
           className="mb-1 font-mono text-[11px] font-semibold uppercase tracking-[0.08em]"
           style={{ color: 'var(--risk-high)' }}
@@ -143,8 +136,8 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
           {(error as Error).message}
         </div>
         <div className="mt-2 font-mono text-[10px] text-[var(--ink-navy-muted)]">
-          มักเกิดเมื่อ schema DB ไม่ sync กับโค้ดล่าสุด — ลองรีสตาร์ท dev server เพื่อให้ schema-sync
-          ALTER column ที่ขาด
+          มักเกิดเมื่อ schema DB ไม่ sync กับโค้ดล่าสุด — ลองรีสตาร์ท dev server เพื่อให้
+          schema-sync ALTER column ที่ขาด
         </div>
       </div>
     );
@@ -301,7 +294,7 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
                 <span className="truncate">{h.name}</span>
                 {!h.isActive && (
                   <span
-                    title="โรงพยาบาลถูกปิดการใช้งาน — กดปุ่ม &quot;แก้&quot; เพื่อเปิดใช้งานอีกครั้งหรือลบข้อมูล"
+                    title='โรงพยาบาลถูกปิดการใช้งาน — กดปุ่ม "แก้" เพื่อเปิดใช้งานอีกครั้งหรือลบข้อมูล'
                     className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
                     style={{
                       borderColor: 'var(--rule-strong)',
@@ -348,7 +341,9 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
                 {SERVICE_TYPE_LABEL[h.serviceType ?? ''] ?? '—'}
               </span>
               <span className="font-mono text-[11px] text-[var(--ink-navy-dim)]">
-                {h.provinceCode ? `${provinceByCode.get(h.provinceCode) ?? '-'} · ${h.provinceCode}` : '—'}
+                {h.provinceCode
+                  ? `${provinceByCode.get(h.provinceCode) ?? '-'} · ${h.provinceCode}`
+                  : '—'}
               </span>
               <span
                 className="font-mono text-[11px]"
@@ -423,15 +418,15 @@ export function HospitalsTab({ autoEditHcode, onAutoEditConsumed }: HospitalsTab
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-[12px] text-[var(--ink-navy-dim)]">
-              ค้นหาในจังหวัดปัจจุบัน ({provinceByCode.get(activeProvince) ?? activeProvince}) —
-              มี {availableMoph.length} รายการที่ยังไม่ถูกเพิ่ม
+              ค้นหาในจังหวัดปัจจุบัน ({provinceByCode.get(activeProvince) ?? activeProvince}) — มี{' '}
+              {availableMoph.length} รายการที่ยังไม่ถูกเพิ่ม
             </p>
             <select
               value={pickedHcode}
               onChange={(e) => {
                 setPickedHcode(e.target.value);
                 const moph = availableMoph.find((m) => m.hcode === e.target.value);
-                if (moph) setPickedLevel(guessLevel(moph.hospitalTypeId));
+                if (moph) setPickedLevel(guessHospitalLevel(moph.hospitalTypeId));
               }}
               className="h-9 w-full border bg-white px-2 font-mono text-sm"
               style={{ borderColor: 'var(--rule-strong)' }}

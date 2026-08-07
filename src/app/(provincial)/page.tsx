@@ -4,10 +4,11 @@
 // institutional-navy accent, shared IA across normal + kiosk modes.
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { debounceLeadingTrailing, SSE_REFRESH_DEBOUNCE_MS } from '@/lib/debounce';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useHighRiskPatients } from '@/hooks/useHighRiskPatients';
-import { useSSE } from '@/hooks/useSSE';
+import { useSSE, type SseConnectionState } from '@/hooks/useSSE';
 import { useKioskMode } from '@/hooks/useKioskMode';
 import { useOnboardHosxpWebhook } from '@/hooks/useOnboardHosxpWebhook';
 import { useOnboardHosxpSync, type OnboardHosxpSyncState } from '@/hooks/useOnboardHosxpSync';
@@ -28,7 +29,9 @@ import { OnlineUsersBadge } from '@/components/dashboard/OnlineUsersBadge';
 // gated by the server-side simulationGuard.
 import { HospitalDetailDialog } from '@/components/dashboard/HospitalDetailDialog';
 import { LoadingState } from '@/components/shared/LoadingState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { ConnectionStatus as ConnectionStatusEnum } from '@/types/domain';
+import { classifySyncHealth } from '@/config/hospital-network';
 import { Copy, Info, Monitor, RefreshCw, Maximize2, Expand } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -38,6 +41,24 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
+
+// Truthful SSE health indicator — `chip` feeds the control strip, `stream`
+// feeds the kiosk strip and footer. Driven by useSSE().connectionState so a
+// dropped EventSource no longer displays as "OK" on the war-room screens.
+const SSE_STATUS_META: Record<SseConnectionState, { chip: string; stream: string; color: string }> =
+  {
+    connected: { chip: 'LIVE · SSE OK', stream: 'SSE · STREAM OK', color: 'var(--risk-low)' },
+    connecting: {
+      chip: 'SSE · CONNECTING',
+      stream: 'SSE · CONNECTING',
+      color: 'var(--ink-navy-muted)',
+    },
+    reconnecting: {
+      chip: 'SSE · RECONNECTING',
+      stream: 'SSE · RECONNECTING',
+      color: 'var(--risk-medium)',
+    },
+  };
 
 function formatSyncTime(value?: string | null): string {
   if (!value) return 'none yet';
@@ -125,7 +146,7 @@ function buildHosxpSyncReport(
 export default function DashboardPage() {
   useSetBreadcrumbs([{ label: 'แดชบอร์ด' }]);
   // Auto-provisions the HOSxP `webhook_setting` row for module_id=3 /
-  // setting_code='KK-LRMS' on first onboarding. No-op when the row already
+  // setting_code='SR-LRMS' on first onboarding. No-op when the row already
   // exists or when the BMS session / marketplace_token isn't present.
   const { state: onboardingState } = useOnboardHosxpWebhook();
   const { state: hosxpSyncState } = useOnboardHosxpSync();
@@ -139,10 +160,23 @@ export default function DashboardPage() {
   const [onboardingErrorDismissed, setOnboardingErrorDismissed] = useState(false);
   const [hosxpSyncDialogOpen, setHosxpSyncDialogOpen] = useState(false);
   const [hosxpReportCopied, setHosxpReportCopied] = useState(false);
-  const { hospitals, summary, stageKPIs, alerts, trends, updatedAt, isLoading, mutate } =
-    useDashboard();
-  const { patients: highRiskPatients, isLoading: hrLoading, mutate: hrMutate } =
-    useHighRiskPatients();
+  const {
+    hospitals,
+    summary,
+    stageKPIs,
+    alerts,
+    trends,
+    continuum,
+    updatedAt,
+    isLoading,
+    error,
+    mutate,
+  } = useDashboard();
+  const {
+    patients: highRiskPatients,
+    isLoading: hrLoading,
+    mutate: hrMutate,
+  } = useHighRiskPatients();
   const { isKiosk, toggleKiosk, exitKiosk } = useKioskMode();
   const [overviewMode, setOverviewMode] = useState<'map' | 'list'>('map');
   const [overviewOpen, setOverviewOpen] = useState(false);
@@ -168,19 +202,54 @@ export default function DashboardPage() {
   };
   const syncing = browserPollState.isRunning;
 
-  useSSE({
-    onPatientUpdate: refreshAll,
+  // SSE reaction is debounced (leading+trailing): sync cycles from ~24
+  // hospitals arrive continuously, and an undebounced refetch-per-event was
+  // the 2026-07-17 79-req/s incident. Built over the stable SWR mutates so
+  // the debouncer's timer state survives re-renders.
+  const debouncedSseRefresh = useMemo(
+    () =>
+      debounceLeadingTrailing(() => {
+        mutate();
+        hrMutate();
+      }, SSE_REFRESH_DEBOUNCE_MS),
+    [mutate, hrMutate],
+  );
+  const { connectionState: sseState } = useSSE({
+    onPatientUpdate: debouncedSseRefresh,
     onConnectionStatus: () => mutate(),
-    onSyncComplete: refreshAll,
+    onSyncComplete: debouncedSseRefresh,
   });
+  const sseMeta = SSE_STATUS_META[sseState];
 
   if (isLoading) {
     return <LoadingState message="กำลังโหลด Dashboard..." />;
   }
 
+  // Fetch failed with nothing cached — an all-zero dashboard is
+  // indistinguishable from an empty province, so show the failure instead.
+  if (error && !updatedAt) {
+    return (
+      <ErrorState
+        message="ไม่สามารถโหลดข้อมูล Dashboard ได้"
+        detail={error instanceof Error ? error.message : String(error)}
+        onRetry={refreshAll}
+      />
+    );
+  }
+  // Fetch failed but SWR still holds the last good payload — keep rendering
+  // it and flag the staleness (Constitution VI: offline shows cached data
+  // with its timestamp).
+  const dataStale = Boolean(error && updatedAt);
+
   const onlineCount = hospitals.filter(
     (h) => h.connectionStatus === ConnectionStatusEnum.ONLINE,
   ).length;
+  // Data freshness beats transport status: a hospital can be ONLINE with a
+  // two-week-old sync. Same classifier as the /hospitals board.
+  const freshCount = hospitals.filter(
+    (h) => classifySyncHealth(h.syncStatus, h.lastSyncAt) === 'ok',
+  ).length;
+  const ancFallback = continuum ? { hr3: continuum.anc.hr3, dueSoon: continuum.anc.dueSoon } : null;
 
   // ═══════════════════════════════════════════════════════════════
   // KIOSK MODE — 1920×1080 wall display, dark phosphor-glow palette
@@ -198,9 +267,18 @@ export default function DashboardPage() {
         <KioskHeader
           updatedAt={updatedAt}
           onExit={exitKiosk}
-          onlineCount={onlineCount}
+          onlineCount={freshCount}
           totalCount={hospitals.length}
         />
+
+        {dataStale && (
+          <ErrorState
+            variant="banner"
+            message="การเชื่อมต่อล้มเหลว — แสดงข้อมูลเดิมจากแคช"
+            lastUpdatedAt={updatedAt}
+            onRetry={refreshAll}
+          />
+        )}
 
         <div className="px-7 pt-4 pb-4 space-y-4">
           {/* 01 — Alerts ribbon (kiosk variant) */}
@@ -216,7 +294,7 @@ export default function DashboardPage() {
             className="border"
             style={{ borderColor: 'var(--kiosk-rule)', background: 'var(--kiosk-panel)' }}
           >
-            <ProvinceVitalsStrip summary={summary} trends={trends} />
+            <ProvinceVitalsStrip summary={summary} trends={trends} continuum={continuum} />
           </div>
 
           {/* 03+04 — HIGH-risk + Province map (side-by-side, kiosk privacy on list) */}
@@ -230,6 +308,9 @@ export default function DashboardPage() {
                 isLoading={hrLoading}
                 variant="kiosk"
                 maxRows={8}
+                ancFallback={ancFallback}
+                totalActive={summary?.totalActive}
+                totalHigh={summary?.totalHigh}
               />
             </div>
             <div
@@ -252,7 +333,7 @@ export default function DashboardPage() {
                 />
               </div>
               <div
-                className="flex justify-between font-mono text-[11px] tracking-[0.12em]"
+                className="flex justify-between font-mono text-[13px] tracking-[0.12em]"
                 style={{ color: 'var(--kiosk-dim)' }}
               >
                 <span>
@@ -277,16 +358,18 @@ export default function DashboardPage() {
 
         {/* Bottom status strip */}
         <div
-          className="flex gap-5 border-t px-7 py-2 font-mono text-[11px] tracking-[0.14em]"
+          className="flex gap-5 border-t px-7 py-2 font-mono text-[13px] tracking-[0.14em]"
           style={{ borderColor: 'var(--kiosk-rule)', color: 'var(--kiosk-dim)' }}
         >
           <span>SR-LRMS</span>
           <span>PPHO WAR-ROOM</span>
           <span>MCH PROVINCIAL NETWORK</span>
           <span className="flex-1" />
-          <span>SSE · STREAM OK</span>
+          <span style={{ color: sseState === 'connected' ? undefined : 'var(--kiosk-med)' }}>
+            {sseMeta.stream}
+          </span>
           <span>
-            {onlineCount}/{hospitals.length} ONLINE
+            {freshCount}/{hospitals.length} DATA FRESH
           </span>
           <span style={{ color: 'var(--kiosk-ink)' }}>ESC TO EXIT</span>
         </div>
@@ -306,44 +389,42 @@ export default function DashboardPage() {
   // than the viewport, the map stays pinned in place — which is the point:
   // provincial situational-awareness at a glance while you scroll detail.
   //
-  // Height math: the zoom: 1.15 scales CSS pixels visually but not viewport
-  // units — so we compensate inside the calc() so the sticky panel lines up
-  // under the navbar instead of overflowing. ~60px covers the single-row
-  // navbar plus its 3px accent strip. Keep it in sync if the navbar ever
-  // gains a second row again.
-  const showOnboardingError =
-    !!onboardingState?.error && !onboardingErrorDismissed;
-  const hosxpSyncStatus = hosxpSyncState?.error || hosxpSyncState?.lastError || hosxpSyncState?.phase === 'failed'
-    ? 'ERROR'
-    : hosxpSyncState?.phase === 'querying_hosxp'
-      ? 'QUERYING'
-    : hosxpSyncState?.started
-      ? 'RUNNING'
-    : hosxpSyncState?.alreadyRunning
-      ? 'RUNNING'
-        : hosxpSyncState?.ran === false
-          ? 'SKIPPED'
-          : 'STARTING';
+  // Height math: ~60px covers the single-row navbar plus its 3px accent
+  // strip. Keep it in sync if the navbar ever gains a second row again.
+  const showOnboardingError = !!onboardingState?.error && !onboardingErrorDismissed;
+  const hosxpSyncStatus =
+    hosxpSyncState?.error || hosxpSyncState?.lastError || hosxpSyncState?.phase === 'failed'
+      ? 'ERROR'
+      : hosxpSyncState?.phase === 'querying_hosxp'
+        ? 'QUERYING'
+        : hosxpSyncState?.started
+          ? 'RUNNING'
+          : hosxpSyncState?.alreadyRunning
+            ? 'RUNNING'
+            : hosxpSyncState?.ran === false
+              ? 'SKIPPED'
+              : 'STARTING';
   const hosxpSyncDetail = hosxpSyncState?.error
     ? hosxpSyncState.error
     : hosxpSyncState?.lastError
       ? hosxpSyncState.lastError
-    : hosxpSyncStatus === 'RUNNING' || hosxpSyncStatus === 'QUERYING'
-      ? `${hosxpSyncState?.phase ?? 'scheduled'} · ${hosxpSyncState?.successCount ?? 0}/${hosxpSyncState?.cycleCount ?? 0} cycles`
-      : hosxpSyncStatus === 'SKIPPED'
-        ? 'NO BMS SESSION'
-        : 'CONNECTING';
-  const hosxpSyncHelp = hosxpSyncState?.error === 'hospital_not_registered'
-    ? 'โรงพยาบาลนี้ยังไม่ได้เปิดใช้งานในทะเบียน SR-LRMS'
-    : hosxpSyncState?.error === 'missing_bms_session'
-      ? 'ยังไม่ได้รับ BMS session จาก HOSxP launcher'
-      : hosxpSyncState?.error === 'invalid_bms_url'
-        ? 'BMS URL จาก session ไม่ถูกต้อง'
-        : hosxpSyncState?.error
-          ? 'ตรวจสอบรายละเอียดจาก server log หากข้อความด้านล่างยังไม่พอ'
-          : hosxpSyncStatus === 'RUNNING' || hosxpSyncStatus === 'QUERYING'
-            ? 'ระบบกำลังดึงข้อมูลจาก HOSxP เป็นรอบอัตโนมัติ'
-            : 'ระบบกำลังเริ่มการเชื่อมต่อ HOSxP';
+      : hosxpSyncStatus === 'RUNNING' || hosxpSyncStatus === 'QUERYING'
+        ? `${hosxpSyncState?.phase ?? 'scheduled'} · ${hosxpSyncState?.successCount ?? 0}/${hosxpSyncState?.cycleCount ?? 0} cycles`
+        : hosxpSyncStatus === 'SKIPPED'
+          ? 'NO BMS SESSION'
+          : 'CONNECTING';
+  const hosxpSyncHelp =
+    hosxpSyncState?.error === 'hospital_not_registered'
+      ? 'โรงพยาบาลนี้ยังไม่ได้เปิดใช้งานในทะเบียน SR-LRMS'
+      : hosxpSyncState?.error === 'missing_bms_session'
+        ? 'ยังไม่ได้รับ BMS session จาก HOSxP launcher'
+        : hosxpSyncState?.error === 'invalid_bms_url'
+          ? 'BMS URL จาก session ไม่ถูกต้อง'
+          : hosxpSyncState?.error
+            ? 'ตรวจสอบรายละเอียดจาก server log หากข้อความด้านล่างยังไม่พอ'
+            : hosxpSyncStatus === 'RUNNING' || hosxpSyncStatus === 'QUERYING'
+              ? 'ระบบกำลังดึงข้อมูลจาก HOSxP เป็นรอบอัตโนมัติ'
+              : 'ระบบกำลังเริ่มการเชื่อมต่อ HOSxP';
   const copyHosxpSyncReport = async () => {
     const report = buildHosxpSyncReport(hosxpSyncState, hosxpSyncStatus, hosxpSyncHelp);
     try {
@@ -356,16 +437,19 @@ export default function DashboardPage() {
   };
 
   return (
-    <div
-      style={{
-        background: 'var(--surface-cool)',
-        zoom: 1.15,
-      }}
-    >
+    <div style={{ background: 'var(--surface-cool)' }}>
+      {dataStale && (
+        <ErrorState
+          variant="banner"
+          message="การเชื่อมต่อล้มเหลว — แสดงข้อมูลเดิมจากแคช"
+          lastUpdatedAt={updatedAt}
+          onRetry={refreshAll}
+        />
+      )}
       {showOnboardingError && (
         <div
           role="alert"
-          className="flex items-start gap-3 border-b px-5 py-3 font-mono text-[12px] leading-snug"
+          className="flex items-start gap-3 border-b px-5 py-3 font-mono text-[14px] leading-snug"
           style={{
             background: 'color-mix(in srgb, var(--risk-high) 10%, white)',
             borderColor: 'var(--risk-high)',
@@ -408,28 +492,26 @@ export default function DashboardPage() {
         style={{ alignItems: 'start' }}
       >
         {/* ═══════════════════ LEFT COLUMN ═══════════════════ */}
-        <div
-          className="min-w-0 border-r border-[var(--rule-strong)]"
-        >
+        <div className="min-w-0 border-r border-[var(--rule-strong)]">
           {/* 00 — Dashboard-specific control strip */}
           <div
-            className="flex flex-wrap items-center gap-3 bg-white px-5 py-2 font-mono text-[11px]"
+            className="flex flex-wrap items-center gap-3 bg-white px-5 py-2 font-mono text-[13px]"
             style={{ borderBottom: '1px solid var(--rule-strong)', color: 'var(--ink-navy-dim)' }}
           >
             <span className="inline-flex items-center gap-1.5">
               <span
                 className="h-2 w-2 rounded-full"
                 style={{
-                  background: 'var(--risk-low)',
-                  boxShadow: '0 0 0 3px rgba(34,197,94,0.22)',
+                  background: sseMeta.color,
+                  boxShadow: `0 0 0 3px color-mix(in srgb, ${sseMeta.color} 25%, transparent)`,
                 }}
                 aria-hidden="true"
               />
-              <span className="font-semibold text-[var(--ink-navy)]">LIVE · SSE OK</span>
+              <span className="font-semibold text-[var(--ink-navy)]">{sseMeta.chip}</span>
             </span>
             <span className="tabular-nums">
-              <span className="font-semibold text-[var(--ink-navy)]">{onlineCount}</span>
-              <span className="text-[var(--ink-navy-muted)]">/{hospitals.length}</span> ONLINE
+              <span className="font-semibold text-[var(--ink-navy)]">{freshCount}</span>
+              <span className="text-[var(--ink-navy-muted)]">/{hospitals.length}</span> ข้อมูลสด
             </span>
             <OnlineUsersBadge />
             {updatedAt && (
@@ -463,10 +545,7 @@ export default function DashboardPage() {
                     : hosxpSyncStatus === 'RUNNING' || hosxpSyncStatus === 'QUERYING'
                       ? 'color-mix(in srgb, var(--risk-low) 8%, white)'
                       : 'white',
-                color:
-                  hosxpSyncStatus === 'ERROR'
-                    ? 'var(--risk-high)'
-                    : 'var(--ink-navy-dim)',
+                color: hosxpSyncStatus === 'ERROR' ? 'var(--risk-high)' : 'var(--ink-navy-dim)',
               }}
               title={hosxpSyncDetail}
             >
@@ -491,7 +570,7 @@ export default function DashboardPage() {
               <button
                 onClick={() => triggerSync()}
                 disabled={syncing}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border bg-white px-2.5 py-1.5 font-mono text-[11px] font-medium tracking-[0.06em] transition-colors hover:bg-[var(--accent-navy-soft)] disabled:opacity-50"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border bg-white px-2.5 py-1.5 font-mono text-[13px] font-medium tracking-[0.06em] transition-colors hover:bg-[var(--accent-navy-soft)] disabled:opacity-50"
                 style={{ borderColor: 'var(--rule-strong)', color: 'var(--ink-navy-dim)' }}
                 title="ดึงข้อมูลทันที"
               >
@@ -500,7 +579,7 @@ export default function DashboardPage() {
               </button>
               <button
                 onClick={toggleKiosk}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2.5 py-1.5 font-mono text-[11px] font-semibold tracking-[0.06em] text-white transition-colors"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2.5 py-1.5 font-mono text-[13px] font-semibold tracking-[0.06em] text-white transition-colors"
                 style={{ background: 'var(--accent-navy)' }}
                 title="เปิดโหมดจอภาพ (Kiosk Mode)"
               >
@@ -514,11 +593,17 @@ export default function DashboardPage() {
           <AlertBar alerts={alerts} />
 
           {/* 02 — Province vitals strip */}
-          <ProvinceVitalsStrip summary={summary} trends={trends} />
+          <ProvinceVitalsStrip summary={summary} trends={trends} continuum={continuum} />
 
           {/* 03 — HIGH-risk & active labor */}
           <div className="bg-white p-5">
-            <HighRiskPatientList patients={highRiskPatients} isLoading={hrLoading} />
+            <HighRiskPatientList
+              patients={highRiskPatients}
+              isLoading={hrLoading}
+              ancFallback={ancFallback}
+              totalActive={summary?.totalActive}
+              totalHigh={summary?.totalHigh}
+            />
 
             {/* 05 — Stage KPIs */}
             <div className="mt-6">
@@ -542,100 +627,107 @@ export default function DashboardPage() {
             never dead whitespace beside the left content; the inner wrapper is
             `position: sticky` so the map stays pinned under the navbar while
             the left column scrolls. Height of the sticky block =
-            (viewport − navbar) / zoom — dividing by 1.15 compensates for the
-            zoom scaling on the parent so the pinned block lines up exactly
-            under the navbar instead of overflowing the viewport. */}
-        <aside
-          className="hidden bg-white lg:block"
-          style={{ alignSelf: 'stretch' }}
-        >
+            viewport − navbar. */}
+        <aside className="hidden bg-white lg:block" style={{ alignSelf: 'stretch' }}>
           <div
             className="flex flex-col"
             style={{
               position: 'sticky',
               top: 0,
-              height: 'calc((100vh - 60px) / 1.15)',
+              height: 'calc(100vh - 60px)',
             }}
           >
-          <div className="flex items-center justify-between border-b border-[var(--rule-strong)] px-4 py-2.5">
-            <div className="flex items-baseline gap-2.5">
-              <span className="font-mono text-[10px] font-bold tracking-[0.18em] text-[var(--accent-navy)]">
-                03
-              </span>
-              <span className="font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-[var(--ink-navy)]">
-                Province overview
-              </span>
-              <span className="font-mono text-[10px] text-[var(--ink-navy-muted)]">
-                {onlineCount}/{hospitals.length} ONLINE
-              </span>
+            <div className="flex items-center justify-between border-b border-[var(--rule-strong)] px-4 py-2.5">
+              <div className="flex items-baseline gap-2.5">
+                <span className="font-mono text-[12px] font-bold tracking-[0.18em] text-[var(--accent-navy)]">
+                  03
+                </span>
+                <span className="font-mono text-[14px] font-semibold uppercase tracking-[0.1em] text-[var(--ink-navy)]">
+                  Province overview
+                </span>
+                <span className="font-mono text-[12px] text-[var(--ink-navy-muted)]">
+                  {onlineCount}/{hospitals.length} ONLINE
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setOverviewMode('map')}
+                  className={cn(
+                    'cursor-pointer border-b-[1.5px] bg-transparent px-2 py-0.5 font-mono text-[12px] tracking-[0.1em]',
+                    overviewMode === 'map' ? 'font-semibold' : 'font-normal',
+                  )}
+                  style={{
+                    color: overviewMode === 'map' ? 'var(--accent-navy)' : 'var(--ink-navy-muted)',
+                    borderColor: overviewMode === 'map' ? 'var(--accent-navy)' : 'transparent',
+                  }}
+                >
+                  MAP
+                </button>
+                <button
+                  onClick={() => setOverviewMode('list')}
+                  className={cn(
+                    'cursor-pointer border-b-[1.5px] bg-transparent px-2 py-0.5 font-mono text-[12px] tracking-[0.1em]',
+                    overviewMode === 'list' ? 'font-semibold' : 'font-normal',
+                  )}
+                  style={{
+                    color: overviewMode === 'list' ? 'var(--accent-navy)' : 'var(--ink-navy-muted)',
+                    borderColor: overviewMode === 'list' ? 'var(--accent-navy)' : 'transparent',
+                  }}
+                >
+                  LIST
+                </button>
+                <button
+                  onClick={() => setOverviewOpen(true)}
+                  className="ml-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-transparent px-1.5 py-0.5 font-mono text-[12px] tracking-[0.1em] transition-colors hover:bg-[var(--accent-navy-soft)]"
+                  style={{ color: 'var(--ink-navy-muted)' }}
+                  aria-label="ขยายแผนที่เต็มจอ"
+                  title="ขยายเต็มจอ"
+                >
+                  <Expand className="h-3 w-3" />
+                  EXPAND
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setOverviewMode('map')}
-                className={cn(
-                  'cursor-pointer border-b-[1.5px] bg-transparent px-2 py-0.5 font-mono text-[10px] tracking-[0.1em]',
-                  overviewMode === 'map' ? 'font-semibold' : 'font-normal',
-                )}
-                style={{
-                  color: overviewMode === 'map' ? 'var(--accent-navy)' : 'var(--ink-navy-muted)',
-                  borderColor:
-                    overviewMode === 'map' ? 'var(--accent-navy)' : 'transparent',
-                }}
-              >
-                MAP
-              </button>
-              <button
-                onClick={() => setOverviewMode('list')}
-                className={cn(
-                  'cursor-pointer border-b-[1.5px] bg-transparent px-2 py-0.5 font-mono text-[10px] tracking-[0.1em]',
-                  overviewMode === 'list' ? 'font-semibold' : 'font-normal',
-                )}
-                style={{
-                  color: overviewMode === 'list' ? 'var(--accent-navy)' : 'var(--ink-navy-muted)',
-                  borderColor:
-                    overviewMode === 'list' ? 'var(--accent-navy)' : 'transparent',
-                }}
-              >
-                LIST
-              </button>
-              <button
-                onClick={() => setOverviewOpen(true)}
-                className="ml-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-transparent px-1.5 py-0.5 font-mono text-[10px] tracking-[0.1em] transition-colors hover:bg-[var(--accent-navy-soft)]"
-                style={{ color: 'var(--ink-navy-muted)' }}
-                aria-label="ขยายแผนที่เต็มจอ"
-                title="ขยายเต็มจอ"
-              >
-                <Expand className="h-3 w-3" />
-                EXPAND
-              </button>
-            </div>
-          </div>
 
-          {/* Content: map OR list fills the rest of the height */}
-          <div className="flex min-h-0 flex-1 flex-col">
-            {overviewMode === 'map' ? (
-              <>
-                <div className="min-h-0 flex-1">
-                  <ProvinceMap
-                    hospitals={hospitals}
-                    selected={selectedHospital}
-                    onSelect={openHospitalDetail}
-                    size="full"
-                  />
-                </div>
-                {/* Compact hospital list under the map for at-a-glance.
+            {/* Content: map OR list fills the rest of the height */}
+            <div className="flex min-h-0 flex-1 flex-col">
+              {overviewMode === 'map' ? (
+                <>
+                  <div className="min-h-0 flex-1">
+                    <ProvinceMap
+                      hospitals={hospitals}
+                      selected={selectedHospital}
+                      onSelect={openHospitalDetail}
+                      size="full"
+                    />
+                  </div>
+                  {/* Compact hospital list under the map for at-a-glance.
                     Clicking a row navigates to /hospitals/<hcode>; the
                     onSelect callback still fires so the map marker briefly
                     highlights during the route transition. Mirrors the
                     mobile-fallback HospitalTable below — sidebar lists are
                     primary navigation, the overview-dialog list stays modal. */}
-                <div
-                  className="max-h-[36%] min-h-0 overflow-auto border-t border-[var(--rule-strong)]"
-                  style={{ flexShrink: 0 }}
-                >
-                  <div className="sticky top-0 z-10 flex justify-between border-b border-[var(--rule-hair)] bg-white px-3 py-1 font-mono text-[10px] tracking-[0.12em] text-[var(--ink-navy-muted)]">
+                  <div
+                    className="max-h-[36%] min-h-0 overflow-auto border-t border-[var(--rule-strong)]"
+                    style={{ flexShrink: 0 }}
+                  >
+                    <div className="sticky top-0 z-10 flex justify-between border-b border-[var(--rule-hair)] bg-white px-3 py-1 font-mono text-[12px] tracking-[0.12em] text-[var(--ink-navy-muted)]">
+                      <span>HOSPITAL · SORTED BY SEVERITY</span>
+                      <span>{hospitals.length}</span>
+                    </div>
+                    <HospitalTable
+                      hospitals={hospitals}
+                      selected={selectedHospital}
+                      onSelect={openHospitalDetail}
+                      navigateOnClick
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="min-h-0 flex-1 overflow-auto">
+                  <div className="sticky top-0 z-10 flex justify-between border-b border-[var(--rule-strong)] bg-white px-3 py-1.5 font-mono text-[12px] tracking-[0.12em] text-[var(--ink-navy-muted)]">
                     <span>HOSPITAL · SORTED BY SEVERITY</span>
-                    <span>{hospitals.length}</span>
+                    <span>{hospitals.length} NODES</span>
                   </div>
                   <HospitalTable
                     hospitals={hospitals}
@@ -644,22 +736,8 @@ export default function DashboardPage() {
                     navigateOnClick
                   />
                 </div>
-              </>
-            ) : (
-              <div className="min-h-0 flex-1 overflow-auto">
-                <div className="sticky top-0 z-10 flex justify-between border-b border-[var(--rule-strong)] bg-white px-3 py-1.5 font-mono text-[10px] tracking-[0.12em] text-[var(--ink-navy-muted)]">
-                  <span>HOSPITAL · SORTED BY SEVERITY</span>
-                  <span>{hospitals.length} NODES</span>
-                </div>
-                <HospitalTable
-                  hospitals={hospitals}
-                  selected={selectedHospital}
-                  onSelect={openHospitalDetail}
-                  navigateOnClick
-                />
-              </div>
-            )}
-          </div>
+              )}
+            </div>
           </div>
         </aside>
 
@@ -667,12 +745,12 @@ export default function DashboardPage() {
             Kept simple: single fixed height, no sticky. */}
         <div className="border-t border-[var(--rule-strong)] bg-white lg:hidden">
           <div className="flex items-center justify-between border-b border-[var(--rule-strong)] px-4 py-2">
-            <span className="font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-[var(--ink-navy)]">
+            <span className="font-mono text-[14px] font-semibold uppercase tracking-[0.1em] text-[var(--ink-navy)]">
               Province overview
             </span>
             <button
               onClick={() => setOverviewOpen(true)}
-              className="inline-flex items-center gap-1 rounded-sm border border-[var(--rule-strong)] px-2 py-0.5 font-mono text-[10px] tracking-[0.1em] text-[var(--ink-navy-dim)]"
+              className="inline-flex items-center gap-1 rounded-sm border border-[var(--rule-strong)] px-2 py-0.5 font-mono text-[12px] tracking-[0.1em] text-[var(--ink-navy-dim)]"
             >
               <Expand className="h-3 w-3" />
               EXPAND
@@ -702,16 +780,19 @@ export default function DashboardPage() {
 
       {/* Footer */}
       <div
-        className="flex justify-between border-t border-[var(--rule-strong)] px-5 py-2.5 font-mono text-[10px] tracking-[0.1em] text-[var(--ink-navy-muted)]"
+        className="flex justify-between border-t border-[var(--rule-strong)] px-5 py-2.5 font-mono text-[12px] tracking-[0.1em] text-[var(--ink-navy-muted)]"
         style={{ background: 'var(--surface-cool)' }}
       >
         <span>SR-LRMS · PPHO WAR-ROOM · MCH PROVINCIAL NETWORK</span>
         <span className="flex items-center gap-3">
-          <span className="inline-flex items-center gap-1">
-            SSE STREAM OK
+          <span
+            className="inline-flex items-center gap-1"
+            style={{ color: sseState === 'connected' ? undefined : 'var(--risk-medium)' }}
+          >
+            {sseMeta.stream}
           </span>
           <span>
-            {onlineCount}/{hospitals.length} NODES LIVE
+            {freshCount}/{hospitals.length} DATA FRESH
           </span>
           <OnlineUsersBadge />
           <button
@@ -740,16 +821,18 @@ export default function DashboardPage() {
           className="!max-w-[96vw] h-[92vh] w-[96vw] gap-0 overflow-hidden p-0 sm:max-w-[96vw]"
           style={{ background: 'var(--surface-cool)' }}
         >
-          <DialogHeader className="flex flex-row items-center justify-between gap-4 border-b px-5 py-3"
-                        style={{ borderColor: 'var(--rule-strong)', background: 'var(--accent-navy)' }}>
+          <DialogHeader
+            className="flex flex-row items-center justify-between gap-4 border-b px-5 py-3"
+            style={{ borderColor: 'var(--rule-strong)', background: 'var(--accent-navy)' }}
+          >
             <div className="flex items-baseline gap-3">
-              <span className="font-mono text-[10px] font-bold tracking-[0.18em] text-[#ffe89a]">
+              <span className="font-mono text-[12px] font-bold tracking-[0.18em] text-[#ffe89a]">
                 03
               </span>
               <DialogTitle className="text-[18px] font-semibold uppercase tracking-[0.08em] text-white">
                 Province overview
               </DialogTitle>
-              <DialogDescription className="font-mono text-[11px] tracking-[0.12em] text-white/70">
+              <DialogDescription className="font-mono text-[13px] tracking-[0.12em] text-white/70">
                 {onlineCount}/{hospitals.length} ONLINE · ESC TO CLOSE
               </DialogDescription>
             </div>
@@ -757,8 +840,10 @@ export default function DashboardPage() {
               <button
                 onClick={() => setOverviewMode('map')}
                 className={cn(
-                  'cursor-pointer rounded-sm px-3 py-1.5 font-mono text-[11px] tracking-[0.1em] transition-colors',
-                  overviewMode === 'map' ? 'bg-white font-semibold' : 'bg-white/10 text-white hover:bg-white/20',
+                  'cursor-pointer rounded-sm px-3 py-1.5 font-mono text-[13px] tracking-[0.1em] transition-colors',
+                  overviewMode === 'map'
+                    ? 'bg-white font-semibold'
+                    : 'bg-white/10 text-white hover:bg-white/20',
                 )}
                 style={{ color: overviewMode === 'map' ? 'var(--accent-navy-strong)' : undefined }}
               >
@@ -767,8 +852,10 @@ export default function DashboardPage() {
               <button
                 onClick={() => setOverviewMode('list')}
                 className={cn(
-                  'cursor-pointer rounded-sm px-3 py-1.5 font-mono text-[11px] tracking-[0.1em] transition-colors',
-                  overviewMode === 'list' ? 'bg-white font-semibold' : 'bg-white/10 text-white hover:bg-white/20',
+                  'cursor-pointer rounded-sm px-3 py-1.5 font-mono text-[13px] tracking-[0.1em] transition-colors',
+                  overviewMode === 'list'
+                    ? 'bg-white font-semibold'
+                    : 'bg-white/10 text-white hover:bg-white/20',
                 )}
                 style={{ color: overviewMode === 'list' ? 'var(--accent-navy-strong)' : undefined }}
               >
@@ -787,7 +874,10 @@ export default function DashboardPage() {
             }}
           >
             {overviewMode === 'map' && (
-              <div className="min-h-0 border-r bg-white" style={{ borderColor: 'var(--rule-strong)' }}>
+              <div
+                className="min-h-0 border-r bg-white"
+                style={{ borderColor: 'var(--rule-strong)' }}
+              >
                 <ProvinceMap
                   hospitals={hospitals}
                   selected={selectedHospital}
@@ -797,7 +887,7 @@ export default function DashboardPage() {
               </div>
             )}
             <div className="flex min-h-0 flex-col overflow-hidden bg-white p-4">
-              <div className="mb-2 flex justify-between px-1 font-mono text-[10px] tracking-[0.12em] text-[var(--ink-navy-muted)]">
+              <div className="mb-2 flex justify-between px-1 font-mono text-[12px] tracking-[0.12em] text-[var(--ink-navy-muted)]">
                 <span>HOSPITAL · SORTED BY SEVERITY</span>
                 <span>{hospitals.length} NODES</span>
               </div>
@@ -820,25 +910,25 @@ export default function DashboardPage() {
             style={{ borderColor: 'var(--rule-strong)', background: 'white' }}
           >
             <div className="flex items-start justify-between gap-3">
-              <DialogTitle className="font-mono text-[15px] uppercase tracking-[0.08em] text-[var(--ink-navy)]">
+              <DialogTitle className="font-mono text-[17px] uppercase tracking-[0.08em] text-[var(--ink-navy)]">
                 HOSxP sync status
               </DialogTitle>
               <button
                 type="button"
                 onClick={copyHosxpSyncReport}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] uppercase tracking-[0.08em] text-[var(--ink-navy-dim)] hover:bg-[var(--surface-cool)]"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[13px] uppercase tracking-[0.08em] text-[var(--ink-navy-dim)] hover:bg-[var(--surface-cool)]"
                 style={{ borderColor: 'var(--rule-strong)' }}
               >
                 <Copy className="h-3.5 w-3.5" />
                 {hosxpReportCopied ? 'Copied' : 'Copy report'}
               </button>
             </div>
-            <DialogDescription className="text-[13px] text-[var(--ink-navy-dim)]">
+            <DialogDescription className="text-[15px] text-[var(--ink-navy-dim)]">
               {hosxpSyncHelp}
             </DialogDescription>
           </DialogHeader>
-          <div className="max-h-[calc(92vh-96px)] space-y-3 overflow-y-auto bg-white p-5 text-[13px] text-[var(--ink-navy-dim)]">
-            <div className="grid grid-cols-[150px_1fr] gap-x-4 gap-y-2 font-mono text-[12px]">
+          <div className="max-h-[calc(92vh-96px)] space-y-3 overflow-y-auto bg-white p-5 text-[15px] text-[var(--ink-navy-dim)]">
+            <div className="grid grid-cols-[150px_1fr] gap-x-4 gap-y-2 font-mono text-[14px]">
               <span className="text-[var(--ink-navy-muted)]">STATUS</span>
               <span className="font-semibold text-[var(--ink-navy)]">{hosxpSyncStatus}</span>
               <span className="text-[var(--ink-navy-muted)]">PHASE</span>
@@ -865,7 +955,8 @@ export default function DashboardPage() {
               <span>{formatSyncTime(hosxpSyncState?.hospitalLastSyncAt)}</span>
               <span className="text-[var(--ink-navy-muted)]">PATIENTS</span>
               <span>
-                IPT {hosxpSyncState?.activePatients ?? 0} active · {hosxpSyncState?.cachedPatients ?? 0} cached
+                IPT {hosxpSyncState?.activePatients ?? 0} active ·{' '}
+                {hosxpSyncState?.cachedPatients ?? 0} cached
               </span>
               <span className="text-[var(--ink-navy-muted)]">ACTIVE ANC</span>
               <span>
@@ -901,7 +992,8 @@ export default function DashboardPage() {
               </span>
               <span className="text-[var(--ink-navy-muted)]">CYCLES</span>
               <span>
-                {hosxpSyncState?.successCount ?? 0} successful / {hosxpSyncState?.cycleCount ?? 0} attempted
+                {hosxpSyncState?.successCount ?? 0} successful / {hosxpSyncState?.cycleCount ?? 0}{' '}
+                attempted
               </span>
               {hosxpSyncState?.statusCode && (
                 <>
@@ -919,7 +1011,7 @@ export default function DashboardPage() {
 
             {(hosxpSyncState?.error || hosxpSyncState?.lastError) && (
               <div
-                className="border px-3 py-2 font-mono text-[12px] leading-relaxed"
+                className="border px-3 py-2 font-mono text-[14px] leading-relaxed"
                 style={{
                   borderColor: 'var(--risk-high)',
                   background: 'color-mix(in srgb, var(--risk-high) 7%, white)',
@@ -936,7 +1028,7 @@ export default function DashboardPage() {
 
             {!hosxpSyncState?.error && !hosxpSyncState?.lastError && (
               <div
-                className="border px-3 py-2 font-mono text-[12px] leading-relaxed"
+                className="border px-3 py-2 font-mono text-[14px] leading-relaxed"
                 style={{
                   borderColor: 'var(--rule-strong)',
                   background: 'var(--surface-cool)',
@@ -956,7 +1048,7 @@ export default function DashboardPage() {
             )}
 
             <div
-              className="border font-mono text-[12px]"
+              className="border font-mono text-[14px]"
               style={{ borderColor: 'var(--rule-strong)' }}
             >
               <div
@@ -970,7 +1062,10 @@ export default function DashboardPage() {
                   latest cycle · {hosxpSyncState?.lastSteps?.length ?? 0} entries
                 </span>
               </div>
-              <div className="max-h-[260px] overflow-auto divide-y" style={{ borderColor: 'var(--rule-hair)' }}>
+              <div
+                className="max-h-[260px] overflow-auto divide-y"
+                style={{ borderColor: 'var(--rule-hair)' }}
+              >
                 {(hosxpSyncState?.lastSteps?.length ?? 0) === 0 ? (
                   <div className="px-3 py-3 text-[var(--ink-navy-muted)]">
                     No step log recorded yet. Wait for the next sync cycle or reload the dashboard.
@@ -986,7 +1081,10 @@ export default function DashboardPage() {
                             ? 'var(--risk-low)'
                             : 'var(--ink-navy-muted)';
                     return (
-                      <div key={`${step.cycle}-${step.name}-${index}`} className="grid grid-cols-[92px_1fr] gap-3 px-3 py-2">
+                      <div
+                        key={`${step.cycle}-${step.name}-${index}`}
+                        className="grid grid-cols-[92px_1fr] gap-3 px-3 py-2"
+                      >
                         <div className="text-[var(--ink-navy-muted)]">
                           <div>{formatSyncTime(step.at)}</div>
                           <div className="mt-0.5 uppercase" style={{ color: tone }}>
@@ -1015,13 +1113,13 @@ export default function DashboardPage() {
             </div>
 
             <div className="border-t pt-3" style={{ borderColor: 'var(--rule-hair)' }}>
-              <div className="font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--ink-navy-muted)]">
+              <div className="font-mono text-[13px] uppercase tracking-[0.1em] text-[var(--ink-navy-muted)]">
                 Checks
               </div>
               <div className="mt-1 leading-relaxed">
-                The sync starts only when the user opens this page from a valid HOSxP/BMS
-                session and the hospital code is active in SR-LRMS. If status is ERROR,
-                fix the item above and reload this page.
+                The sync starts only when the user opens this page from a valid HOSxP/BMS session
+                and the hospital code is active in SR-LRMS. If status is ERROR, fix the item above
+                and reload this page.
               </div>
             </div>
           </div>

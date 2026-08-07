@@ -66,19 +66,27 @@ export function KioskHeader({
         style={{ borderColor: 'var(--kiosk-rule)' }}
       >
         {/* Left — LR monogram + title */}
-        <div className="flex h-[42px] w-[42px] items-center justify-center border font-mono text-sm font-bold"
-             style={{ borderColor: 'var(--kiosk-ink)', color: 'var(--kiosk-ink)' }}>
+        <div
+          className="flex h-[42px] w-[42px] items-center justify-center border font-mono text-sm font-bold"
+          style={{ borderColor: 'var(--kiosk-ink)', color: 'var(--kiosk-ink)' }}
+        >
           LR
         </div>
         <div>
-          <div className="text-[22px] font-semibold leading-tight" style={{ color: 'var(--kiosk-ink)', letterSpacing: '-0.01em' }}>
+          <div
+            className="text-[26px] font-semibold leading-tight"
+            style={{ color: 'var(--kiosk-ink)', letterSpacing: '-0.01em' }}
+          >
             SR-LRMS ·{' '}
             <span style={{ color: 'var(--kiosk-dim)', fontWeight: 500 }}>
               OneLR ห้องคลอดหนึ่งเดียว
             </span>
           </div>
-          <div className="mt-0.5 font-mono text-[11px] tracking-[0.18em]" style={{ color: 'var(--kiosk-dim)' }}>
-            PROVINCIAL LABOR-ROOM NETWORK · SURIN · WAR-ROOM DISPLAY
+          <div
+            className="mt-0.5 font-mono text-[13px] tracking-[0.18em]"
+            style={{ color: 'var(--kiosk-dim)' }}
+          >
+            PROVINCIAL LABOR-ROOM NETWORK · KHON KAEN · WAR-ROOM DISPLAY
           </div>
         </div>
 
@@ -86,7 +94,7 @@ export function KioskHeader({
 
         {/* Center — date + clock */}
         <div className="text-center">
-          <div className="font-mono text-xs tracking-[0.2em]" style={{ color: 'var(--kiosk-dim)' }}>
+          <div className="font-mono text-sm tracking-[0.2em]" style={{ color: 'var(--kiosk-dim)' }}>
             {dateStr}
           </div>
           <div
@@ -100,7 +108,10 @@ export function KioskHeader({
         <div className="flex-1" />
 
         {/* Right — status */}
-        <div className="text-right font-mono text-xs tracking-[0.1em]" style={{ color: 'var(--kiosk-dim)' }}>
+        <div
+          className="text-right font-mono text-sm tracking-[0.1em]"
+          style={{ color: 'var(--kiosk-dim)' }}
+        >
           <div className="flex items-center justify-end gap-2">
             <span
               className="h-2.5 w-2.5 rounded-full"
@@ -126,7 +137,7 @@ export function KioskHeader({
             </div>
           )}
           <div className="mt-0.5">
-            {onlineCount}/{totalCount} NODES ONLINE
+            {onlineCount}/{totalCount} NODES · DATA FRESH
           </div>
         </div>
 

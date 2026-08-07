@@ -49,7 +49,6 @@ next-env.d.ts
 dev.sqlite
 dev.sqlite-shm
 dev.sqlite-wal
-*.sqlite
 *.sqlite-shm
 *.sqlite-wal
 
@@ -93,6 +92,6 @@ GEMINI.md
 # Deck snapshot ZIPs (regeneratable from public/deck/)
 public/*-deck-*.zip
 
-# Playwright MCP snapshot dumps
-.playwright-mcp/
-surin-synclog.md
+# Production DB dumps (PHI) — never commit
+backups/
+logs/

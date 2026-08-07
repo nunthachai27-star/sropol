@@ -2,18 +2,16 @@
 import { NextResponse } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
-import { auth } from '@/lib/auth';
+import { requireAdmin } from '@/lib/admin-guard';
 import { logger } from '@/lib/logger';
 import { cacheDelPattern } from '@/lib/cache';
 
 export async function POST() {
   try {
-    await ensureInit();
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
 
-    const session = await auth();
-    if (session?.user?.role !== 'ADMIN') {
-      return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
-    }
+    await ensureInit();
 
     const db = await getDatabase();
 
@@ -21,10 +19,14 @@ export async function POST() {
     const cpdDeleted = await db.query<{ cnt: number }>('SELECT COUNT(*) as cnt FROM cpd_scores');
     await db.execute('DELETE FROM cpd_scores');
 
-    const vitalsDeleted = await db.query<{ cnt: number }>('SELECT COUNT(*) as cnt FROM cached_vital_signs');
+    const vitalsDeleted = await db.query<{ cnt: number }>(
+      'SELECT COUNT(*) as cnt FROM cached_vital_signs',
+    );
     await db.execute('DELETE FROM cached_vital_signs');
 
-    const patientsDeleted = await db.query<{ cnt: number }>('SELECT COUNT(*) as cnt FROM cached_patients');
+    const patientsDeleted = await db.query<{ cnt: number }>(
+      'SELECT COUNT(*) as cnt FROM cached_patients',
+    );
     await db.execute('DELETE FROM cached_patients');
 
     // Reset hospital connection statuses to UNKNOWN

@@ -80,4 +80,55 @@ describe('logger', () => {
     expect(logSpy).toHaveBeenCalledOnce();
     delete process.env.LOG_LEVEL;
   });
+
+  // WHO containment T6 — HN and patient-name keys were not in SENSITIVE_KEYS,
+  // so any log call carrying them (e.g. the pre-existing `hn: patient.hn`
+  // sites in services/webhook.ts and services/sync/anc.ts) leaked PHI into
+  // docker/journald logs. §5 P2 / §10.1 require these redacted before any
+  // new telemetry (the T4/T5 counters) is allowed to log context.
+  describe('PHI-safe key redaction (WHO containment T6)', () => {
+    it('redacts hn, patient_name, patientName, firstname, lastname (case-insensitive)', () => {
+      logger.warn('anc_ingest_anomalies', {
+        hn: '12345',
+        patient_name: 'x',
+        patientName: 'x',
+        firstname: 'x',
+        lastname: 'x',
+        hospitalId: 'visible-hosp-id',
+      });
+      const line = JSON.parse(warnSpy.mock.calls[0][0] as string);
+      expect(line.hn).toBe('[REDACTED]');
+      expect(line.patient_name).toBe('[REDACTED]');
+      expect(line.patientName).toBe('[REDACTED]');
+      expect(line.firstname).toBe('[REDACTED]');
+      expect(line.lastname).toBe('[REDACTED]');
+      expect(line.hospitalId).toBe('visible-hosp-id');
+    });
+
+    it('substring-matches hn (e.g. hnList) — accepted over-redaction, not a false negative', () => {
+      logger.info('ok_event', { hnList: ['a', 'b'] });
+      const line = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(line.hnList).toBe('[REDACTED]');
+    });
+
+    it('does NOT redact eventName or hostname — no bare "name" substring in SENSITIVE_KEYS', () => {
+      logger.info('ok_event', { eventName: 'ok', hostname: 'h' });
+      const line = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(line.eventName).toBe('ok');
+      expect(line.hostname).toBe('h');
+    });
+
+    it('the new ANC ingestion-anomaly event context carries no PHI keys', () => {
+      logger.warn('anc_ingest_anomalies', {
+        hospitalId: 'h1',
+        downgradesBlocked: 2,
+        visitConflicts: 1,
+      });
+      const line = JSON.parse(warnSpy.mock.calls[0][0] as string);
+      expect(line).not.toHaveProperty('hn');
+      expect(line).not.toHaveProperty('cid');
+      expect(line.downgradesBlocked).toBe(2);
+      expect(line.visitConflicts).toBe(1);
+    });
+  });
 });

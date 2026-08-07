@@ -13,17 +13,18 @@ describe('PARTOGRAPH_OBSERVATIONS', () => {
     expect(PARTOGRAPH_OBSERVATIONS.mysql).toMatch(/labour_amniotic_type/);
   });
 
-  it('filters to currently-admitted patients', () => {
-    // The query gates on i.confirm_discharge = 'N' (the assertion previously
-    // looked for a `dchdate IS NULL` form the query no longer uses).
-    expect(getQuery(PARTOGRAPH_OBSERVATIONS, 'postgresql'))
-      .toMatch(/confirm_discharge = 'N'/);
-    expect(getQuery(PARTOGRAPH_OBSERVATIONS, 'mysql'))
-      .toMatch(/confirm_discharge = 'N'/);
+  it('filters to currently-admitted labour patients', () => {
+    // House convention across every maternity query (see hosxp-queries.ts):
+    // still-admitted = confirm_discharge = 'N', and labour = ipt_admit_type_id = 3.
+    // (Previously gated on dchdate IS NULL, before the convention was unified.)
+    for (const dialect of ['postgresql', 'mysql'] as const) {
+      const sql = getQuery(PARTOGRAPH_OBSERVATIONS, dialect);
+      expect(sql).toMatch(/confirm_discharge = 'N'/);
+      expect(sql).toMatch(/ipt_admit_type_id = 3/);
+    }
   });
 
   it('orders by AN then observe_datetime', () => {
-    expect(PARTOGRAPH_OBSERVATIONS.postgresql)
-      .toMatch(/ORDER BY lp\.an, lp\.observe_datetime/);
+    expect(PARTOGRAPH_OBSERVATIONS.postgresql).toMatch(/ORDER BY lp\.an, lp\.observe_datetime/);
   });
 });

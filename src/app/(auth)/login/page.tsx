@@ -7,7 +7,6 @@ import { signIn } from 'next-auth/react';
 import { Building2, Activity, BarChart3, Shield, Clock, AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { withBasePath } from '@/lib/base-path';
 import {
   Dialog,
   DialogContent,
@@ -17,12 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { MIN_BMS_API_VERSION } from '@/lib/bms-version';
-import { APP_VERSION_LABEL } from '@/lib/app-version';
-import {
-  getSessionCookie,
-  setSessionCookie,
-  setMarketplaceToken,
-} from '@/utils/bms-session-storage';
+import { setSessionCookie, setMarketplaceToken } from '@/utils/bms-session-storage';
 
 interface AccessDeniedInfo {
   reason: 'not_registered' | 'deactivated';
@@ -39,6 +33,28 @@ interface VersionRejection {
   message: string;
 }
 
+// The `providerError` query param carries whatever text the ProviderID OAuth
+// callback/pending flow put on the redirect (see
+// src/app/api/auth/provider/callback/route.ts and provider/complete/page.tsx).
+// Some of it is IdP-controlled, so it must never be rendered verbatim as the
+// headline. Known codes map to friendly Thai; unknown ones fall back to a safe
+// headline with the raw code shown only as small diagnostic detail.
+const PROVIDER_ERROR_MESSAGES: Record<string, string> = {
+  missing_provider_token: 'ไม่พบข้อมูลการเข้าสู่ระบบ ProviderID กรุณาเริ่มเข้าสู่ระบบใหม่อีกครั้ง',
+  'ProviderID login state is invalid or expired':
+    'เซสชันการเข้าสู่ระบบ ProviderID หมดอายุหรือไม่ถูกต้อง กรุณาลองเข้าสู่ระบบใหม่อีกครั้ง',
+  'ProviderID login failed': 'เข้าสู่ระบบด้วย ProviderID ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
+  access_denied: 'ท่านไม่ได้อนุญาตให้ระบบเข้าถึงข้อมูล ProviderID กรุณาลองใหม่แล้วกด "อนุญาต"',
+};
+
+const PROVIDER_ERROR_FALLBACK = 'เข้าสู่ระบบด้วย ProviderID ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
+
+function mapProviderError(code: string): { message: string; detail?: string } {
+  const known = PROVIDER_ERROR_MESSAGES[code];
+  if (known) return { message: known };
+  return { message: PROVIDER_ERROR_FALLBACK, detail: code };
+}
+
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -52,26 +68,16 @@ function LoginForm() {
   const callbackUrl = searchParams.get('callbackUrl') || '/';
   const bmsSessionId = searchParams.get('bms-session-id');
   const providerError = searchParams.get('providerError');
+  const mappedProviderError = providerError ? mapProviderError(providerError) : null;
   const marketplaceToken =
     searchParams.get('marketplace_token') ?? searchParams.get('marketplace-token');
 
-  // Auto-login from the URL param when present, otherwise fall back to the
-  // persisted bms-session-id cookie (7-day expiry, written on the last
-  // successful login). The NextAuth app session lasts only 8h
-  // (auth.config.ts), so a returning user whose app session has lapsed lands
-  // here WITHOUT the URL param — but their BMS session cookie is usually still
-  // valid. Reusing it re-logs them in silently instead of forcing a re-type.
-  // If the cookied session has expired on HOSxP, preflight fails and the
-  // manual form is shown (no regression), so the fallback is always safe.
-  // Logout clears this cookie (TopNavBar.handleLogout), so it can't defeat
-  // an intentional sign-out.
+  // Auto-login when bms-session-id is in the URL
   useEffect(() => {
-    if (autoLoginAttempted.current) return;
-    const candidate = bmsSessionId ?? getSessionCookie();
-    if (candidate) {
+    if (bmsSessionId && !autoLoginAttempted.current) {
       autoLoginAttempted.current = true;
-      setSessionId(candidate);
-      doLogin(candidate);
+      setSessionId(bmsSessionId);
+      doLogin(bmsSessionId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bmsSessionId]);
@@ -88,27 +94,25 @@ function LoginForm() {
       // Preflight: differentiate "bad session" from "hospital not registered"
       // BEFORE NextAuth swallows the rejection reason into a generic
       // CredentialsSignin error. The endpoint is public (no auth needed).
-      const preflightRes = await fetch(withBasePath('/api/auth/hospital-preflight'), {
+      const preflightRes = await fetch('/api/auth/hospital-preflight', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: trimmed }),
       });
-      const preflight = (await preflightRes.json().catch(() => null)) as
-        | {
-            ok: boolean;
-            reason?:
-              | 'invalid_session'
-              | 'not_registered'
-              | 'deactivated'
-              | 'invalid_request'
-              | 'hosxp_too_old';
-            hospitalCode?: string;
-            hospitalName?: string;
-            currentVersion?: string;
-            minVersion?: string;
-            message?: string;
-          }
-        | null;
+      const preflight = (await preflightRes.json().catch(() => null)) as {
+        ok: boolean;
+        reason?:
+          | 'invalid_session'
+          | 'not_registered'
+          | 'deactivated'
+          | 'invalid_request'
+          | 'hosxp_too_old';
+        hospitalCode?: string;
+        hospitalName?: string;
+        currentVersion?: string;
+        minVersion?: string;
+        message?: string;
+      } | null;
 
       if (!preflight) {
         setError('ไม่สามารถตรวจสอบ session ได้ — กรุณาลองใหม่');
@@ -165,8 +169,12 @@ function LoginForm() {
         window.localStorage.setItem('kk-lrms:auth-provider', 'bms');
         router.push(callbackUrl);
       }
-    } catch {
-      setError('เกิดข้อผิดพลาดในการเชื่อมต่อ กรุณาลองใหม่');
+    } catch (err) {
+      // Preserve the real cause: without this the failure is invisible and
+      // support cannot tell a network drop from a JSON/parse error.
+      console.error('[login] sign-in failed', err);
+      const detail = err instanceof Error ? err.message : '';
+      setError(`เกิดข้อผิดพลาดในการเชื่อมต่อ กรุณาลองใหม่${detail ? ` (${detail})` : ''}`);
     } finally {
       setLoading(false);
     }
@@ -182,9 +190,7 @@ function LoginForm() {
   };
 
   const handleProviderLogin = () => {
-    window.location.href = withBasePath(
-      `/api/auth/provider/start?callbackUrl=${encodeURIComponent(callbackUrl)}`,
-    );
+    window.location.href = `/api/auth/provider/start?callbackUrl=${encodeURIComponent(callbackUrl)}`;
   };
 
   return (
@@ -195,8 +201,7 @@ function LoginForm() {
         <div
           className="absolute inset-0 opacity-5"
           style={{
-            backgroundImage:
-              'radial-gradient(circle, rgba(255,255,255,0.8) 1px, transparent 1px)',
+            backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.8) 1px, transparent 1px)',
             backgroundSize: '24px 24px',
           }}
         />
@@ -244,7 +249,7 @@ function LoginForm() {
         </div>
 
         <p className="relative z-10 text-xs text-slate-500">
-          {APP_VERSION_LABEL} — สำนักงานสาธารณสุขจังหวัดสุรินทร์
+          v1.0.0 — สำนักงานสาธารณสุขจังหวัดสุรินทร์
         </p>
       </div>
 
@@ -267,9 +272,7 @@ function LoginForm() {
           {/* Desktop header — hidden on mobile */}
           <div className="hidden md:block">
             <h2 className="text-3xl font-bold text-slate-900">เข้าสู่ระบบ</h2>
-            <p className="mt-2 text-sm text-slate-400">
-              ลงชื่อเข้าใช้ด้วย BMS Session ID
-            </p>
+            <p className="mt-2 text-sm text-slate-400">ลงชื่อเข้าใช้ด้วย BMS Session ID</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
@@ -304,10 +307,14 @@ function LoginForm() {
                 </div>
                 <div className="text-red-700 text-xs mb-2">
                   <div>
-                    โรงพยาบาล: <span className="font-semibold">{accessDenied.hospitalName || '—'}</span>
+                    โรงพยาบาล:{' '}
+                    <span className="font-semibold">{accessDenied.hospitalName || '—'}</span>
                   </div>
                   <div>
-                    รหัสโรงพยาบาล: <span className="font-mono font-semibold">{accessDenied.hospitalCode || '—'}</span>
+                    รหัสโรงพยาบาล:{' '}
+                    <span className="font-mono font-semibold">
+                      {accessDenied.hospitalCode || '—'}
+                    </span>
                   </div>
                 </div>
                 <div className="text-red-700 text-xs leading-relaxed border-t border-red-200 pt-2">
@@ -318,9 +325,20 @@ function LoginForm() {
               </div>
             )}
 
-            {(error || providerError) && !accessDenied && (
+            {!accessDenied && (error || mappedProviderError) && (
               <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-600">
-                {error ?? providerError}
+                {error ? (
+                  error
+                ) : mappedProviderError ? (
+                  <>
+                    <div>{mappedProviderError.message}</div>
+                    {mappedProviderError.detail && (
+                      <div className="mt-1 text-xs break-words text-red-500">
+                        {mappedProviderError.detail}
+                      </div>
+                    )}
+                  </>
+                ) : null}
               </div>
             )}
 
@@ -461,10 +479,8 @@ function LoginForm() {
               </div>
 
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">
-                กรุณาติดต่อผู้ดูแลระบบ HOSxP ของโรงพยาบาลเพื่ออัปเดต HOSxP เป็นเวอร์ชัน
-                {' '}
-                <span className="font-mono font-semibold">{versionRejection.minVersion}</span>
-                {' '}
+                กรุณาติดต่อผู้ดูแลระบบ HOSxP ของโรงพยาบาลเพื่ออัปเดต HOSxP เป็นเวอร์ชัน{' '}
+                <span className="font-mono font-semibold">{versionRejection.minVersion}</span>{' '}
                 ขึ้นไป จากนั้นจึงเข้าใช้งาน SR-LRMS อีกครั้ง
               </div>
             </div>

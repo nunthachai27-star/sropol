@@ -1,29 +1,58 @@
 // T071: Patient detail API tests — TDD: write tests FIRST
 import { describe, it, expect, beforeEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { v4 as uuidv4 } from 'uuid';
 
 describe('Patient Detail API Logic', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter();
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
 
     // Seed a hospital
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['hosp-1', '10670', 'รพ.ขอนแก่น', 'A_S', 1, 'ONLINE', new Date().toISOString(), new Date().toISOString()],
+      [
+        'hosp-1',
+        '10670',
+        'รพ.ขอนแก่น',
+        'A_S',
+        true,
+        'ONLINE',
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ],
     );
 
     // Seed a patient
     await db.execute(
       `INSERT INTO cached_patients (id, hospital_id, hn, an, name, cid, age, gravida, ga_weeks, anc_count, admit_date, height_cm, weight_kg, weight_diff_kg, fundal_height_cm, us_weight_g, hematocrit_pct, labor_status, synced_at, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['pat-1', 'hosp-1', 'HN001', 'AN001', 'encrypted-name', 'encrypted-cid', 28, 1, 38, 5, '2024-01-15T08:00:00Z', 155, 65, 12, 32, 3000, 35, 'ACTIVE', new Date().toISOString(), new Date().toISOString(), new Date().toISOString()],
+      [
+        'pat-1',
+        'hosp-1',
+        'HN001',
+        'AN001',
+        'encrypted-name',
+        'encrypted-cid',
+        28,
+        1,
+        38,
+        5,
+        '2024-01-15T08:00:00Z',
+        155,
+        65,
+        12,
+        32,
+        3000,
+        35,
+        'ACTIVE',
+        new Date().toISOString(),
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ],
     );
   });
 
@@ -51,10 +80,9 @@ describe('Patient Detail API Logic', () => {
   });
 
   it('returns empty result for unknown AN', async () => {
-    const patients = await db.query<{ id: string }>(
-      'SELECT id FROM cached_patients WHERE an = ?',
-      ['UNKNOWN-AN'],
-    );
+    const patients = await db.query<{ id: string }>('SELECT id FROM cached_patients WHERE an = ?', [
+      'UNKNOWN-AN',
+    ]);
     expect(patients.length).toBe(0);
   });
 
@@ -83,7 +111,24 @@ describe('Patient Detail API Logic', () => {
     await db.execute(
       `INSERT INTO cpd_scores (id, patient_id, score, risk_level, recommendation, factor_gravida, factor_anc_count, factor_ga_weeks, factor_height_cm, factor_weight_diff, factor_fundal_ht, factor_us_weight, factor_hematocrit, missing_factors, calculated_at, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [scoreId, 'pat-1', 6, 'MEDIUM', 'เฝ้าระวังใกล้ชิด, เตรียมพร้อมส่งต่อ', 2, 0, 0, 1, 0, 0, 1, 0, '[]', new Date().toISOString(), new Date().toISOString()],
+      [
+        scoreId,
+        'pat-1',
+        6,
+        'MEDIUM',
+        'เฝ้าระวังใกล้ชิด, เตรียมพร้อมส่งต่อ',
+        2,
+        0,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        '[]',
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ],
     );
 
     const scores = await db.query<{ score: number; risk_level: string }>(

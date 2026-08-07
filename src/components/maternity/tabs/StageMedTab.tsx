@@ -29,14 +29,8 @@ import {
 import type { StageMedRow } from '@/types/maternity-ward';
 import type { ConnectionConfig } from '@/types/bms-browser';
 import { cn } from '@/lib/utils';
-import {
-  BeDateInput,
-  BeTimeInput,
-} from '@/components/maternity/shared/BeDateTimeInputs';
-import {
-  ChipRow as DraggableChipRow,
-  type ChipOption,
-} from '../shared/DraggableChips';
+import { BeDateInput, BeTimeInput } from '@/components/maternity/shared/BeDateTimeInputs';
+import { ChipRow as DraggableChipRow, type ChipOption } from '../shared/DraggableChips';
 import { AnchoredDropdown } from '../shared/AnchoredDropdown';
 
 // ─── Types & helpers ──────────────────────────────────────────────────────
@@ -101,20 +95,24 @@ interface LookupPickerProps {
   onPick: (item: LookupItem) => void;
 }
 
+// TODO(constitution-III): consolidate onto shared/LookupAutocomplete — see
+// docs/superpowers/plans/2026-07-13-robustness-c-concurrency-ops-quality.md C7
 function LookupPicker({ ariaLabel, placeholder, initialQuery, fetch, onPick }: LookupPickerProps) {
   const [query, setQuery] = useState(initialQuery);
   const [items, setItems] = useState<LookupItem[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const lastPickedRef = useRef<string>(initialQuery);
+  const [lastPicked, setLastPicked] = useState(initialQuery);
+
+  // Derived visible list — search is "active" only when there's a trimmed
+  // query that doesn't equal the last picked value; no effect-driven clear.
+  const trimmed = query.trim();
+  const searchActive = trimmed.length > 0 && trimmed !== lastPicked;
+  const visibleItems = searchActive ? items : [];
 
   useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length === 0 || trimmed === lastPickedRef.current) {
-      setItems([]);
-      return;
-    }
+    if (!searchActive) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       setLoading(true);
@@ -133,7 +131,7 @@ function LookupPicker({ ariaLabel, placeholder, initialQuery, fetch, onPick }: L
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, fetch]);
+  }, [trimmed, searchActive, fetch]);
 
   return (
     <>
@@ -151,20 +149,20 @@ function LookupPicker({ ariaLabel, placeholder, initialQuery, fetch, onPick }: L
         className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-[14px] text-slate-900 shadow-sm transition-colors hover:border-slate-300 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
       />
       <AnchoredDropdown
-        open={open && (items.length > 0 || loading)}
+        open={open && (visibleItems.length > 0 || loading)}
         anchorRef={inputRef}
         onDismiss={() => setOpen(false)}
       >
-        {loading && items.length === 0 && (
+        {loading && visibleItems.length === 0 && (
           <div className="px-3 py-2 text-[12px] text-slate-500">กำลังค้นหา…</div>
         )}
-        {items.map((it, idx) => (
+        {visibleItems.map((it, idx) => (
           <button
             key={`${it.payload}-${idx}`}
             type="button"
             onClick={() => {
               onPick(it);
-              lastPickedRef.current = it.primary;
+              setLastPicked(it.primary);
               setQuery(it.primary);
               setOpen(false);
               setItems([]);
@@ -198,12 +196,7 @@ function InlineInput({ ariaLabel, value, onChange, placeholder, type = 'text' }:
     'h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-[14px] text-slate-900 shadow-sm transition-colors hover:border-slate-300 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20';
   if (type === 'date') {
     return (
-      <BeDateInput
-        aria-label={ariaLabel}
-        value={value}
-        onChange={onChange}
-        className={baseCls}
-      />
+      <BeDateInput aria-label={ariaLabel} value={value} onChange={onChange} className={baseCls} />
     );
   }
   if (type === 'time') {
@@ -224,10 +217,7 @@ function InlineInput({ ariaLabel, value, onChange, placeholder, type = 'text' }:
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       aria-label={ariaLabel}
-      className={cn(
-        baseCls,
-        type === 'number' && 'font-semibold tabular-nums',
-      )}
+      className={cn(baseCls, type === 'number' && 'font-semibold tabular-nums')}
     />
   );
 }
@@ -245,7 +235,13 @@ interface EditRowProps {
 }
 
 function EditRow({
-  config, draft, setDraft, initialDrugLabel, saving, onCancel, onSave,
+  config,
+  draft,
+  setDraft,
+  initialDrugLabel,
+  saving,
+  onCancel,
+  onSave,
 }: EditRowProps) {
   return (
     <tr className="bg-cyan-50/40">
@@ -277,18 +273,14 @@ function EditRow({
                 </div>
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[12px] font-semibold text-slate-700">
-                  รหัสยา · icode
-                </label>
+                <label className="text-[12px] font-semibold text-slate-700">รหัสยา · icode</label>
                 <InlineInput
                   ariaLabel="icode"
                   value={draft.icode}
                   onChange={(v) => setDraft((d) => ({ ...d, icode: v }))}
                   placeholder="ระบบเติมเอง"
                 />
-                <div className="text-[11px] text-slate-500">
-                  เลือกจากผลค้นหา หรือพิมพ์เอง
-                </div>
+                <div className="text-[11px] text-slate-500">เลือกจากผลค้นหา หรือพิมพ์เอง</div>
               </div>
             </div>
           </div>
@@ -576,11 +568,17 @@ export function StageMedTab({ an }: { an: string }) {
                       <div className="flex flex-col gap-0.5">
                         {row.medication_name ? (
                           <>
-                            <span className="font-semibold text-slate-900">{row.medication_name}</span>
-                            <span className="font-mono text-[11px] text-slate-500">{row.icode}</span>
+                            <span className="font-semibold text-slate-900">
+                              {row.medication_name}
+                            </span>
+                            <span className="font-mono text-[11px] text-slate-500">
+                              {row.icode}
+                            </span>
                           </>
                         ) : (
-                          <span className="font-mono font-semibold text-slate-900">{row.icode}</span>
+                          <span className="font-mono font-semibold text-slate-900">
+                            {row.icode}
+                          </span>
                         )}
                       </div>
                     </td>

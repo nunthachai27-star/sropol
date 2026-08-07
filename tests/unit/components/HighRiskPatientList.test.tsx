@@ -132,7 +132,13 @@ describe('HighRiskPatientList', () => {
 
   it('shows empty state when no patients', () => {
     render(<HighRiskPatientList patients={[]} />);
-    expect(screen.getByText(/ไม่มีผู้ป่วยที่ต้องเฝ้าระวัง/)).toBeTruthy();
+    expect(screen.getByText(/ไม่มีผู้คลอดเสี่ยงสูงในห้องคลอดขณะนี้/)).toBeTruthy();
+  });
+
+  it('empty state surfaces upstream ANC pressure with board links', () => {
+    render(<HighRiskPatientList patients={[]} ancFallback={{ hr3: 106, dueSoon: 172 }} />);
+    expect(screen.getByText(/HR3 106 ราย/)).toBeTruthy();
+    expect(screen.getByText(/≤14 วัน 172 ราย/)).toBeTruthy();
   });
 
   it('shows loading skeletons when isLoading is true', () => {
@@ -143,7 +149,7 @@ describe('HighRiskPatientList', () => {
 
   it('does not show empty state when loading', () => {
     render(<HighRiskPatientList patients={[]} isLoading={true} />);
-    expect(screen.queryByText(/ไม่มีผู้ป่วยที่ต้องเฝ้าระวัง/)).toBeNull();
+    expect(screen.queryByText(/ไม่มีผู้คลอดเสี่ยงสูงในห้องคลอดขณะนี้/)).toBeNull();
   });
 
   it('renders GA weeks in HIGH tab', () => {
@@ -165,5 +171,38 @@ describe('HighRiskPatientList', () => {
     fireEvent.click(screen.getByText(/ALL ACTIVE/));
     const medChips = container.querySelectorAll('[data-risk="MEDIUM"]');
     expect(medChips.length).toBe(1);
+  });
+
+  // Phase 5 W2 — maternal-screen chips beside PartographCell (GC-W2: separate
+  // slot, own data-*). See src/components/dashboard/MaternalScreenCell.tsx.
+  describe('maternal-screen cell (W2)', () => {
+    it('shows the maternal-screen cell in the row for a LOCAL_SEVERE/EMERGENCY patient', () => {
+      const severePatient: HighRiskPatient = {
+        ...samplePatients[0],
+        an: 'AN901',
+        maternalScreenLocalTier: 'LOCAL_SEVERE',
+        maternalScreenEmergencyAcuity: 'EMERGENCY',
+        maternalScreenIsComplete: true,
+        maternalScreenAssessedAt: minutesAgo(10),
+      };
+      const { container } = render(<HighRiskPatientList patients={[severePatient]} />);
+      const cell = container.querySelector('[data-testid="maternal-screen-cell"]');
+      expect(cell).toBeTruthy();
+      expect(container.querySelector('[data-tier="LOCAL_SEVERE"]')).toBeTruthy();
+      expect(container.querySelector('[data-acuity="EMERGENCY"]')).toBeTruthy();
+    });
+
+    it('shows no maternal-screen cell for a patient with all-null screening fields', () => {
+      const nullScreenPatient: HighRiskPatient = {
+        ...samplePatients[0],
+        an: 'AN902',
+        maternalScreenLocalTier: null,
+        maternalScreenEmergencyAcuity: null,
+        maternalScreenIsComplete: null,
+        maternalScreenAssessedAt: null,
+      };
+      const { container } = render(<HighRiskPatientList patients={[nullScreenPatient]} />);
+      expect(container.querySelector('[data-testid="maternal-screen-cell"]')).toBeNull();
+    });
   });
 });

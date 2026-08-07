@@ -1,25 +1,22 @@
 // T17: Partograph upsert + per-patient severity roll-up
 //
 // Single entry point for the polling and webhook ingestion paths. Inserts /
-// updates rows in cached_partograph_observations using a SELECT-then-
-// INSERT/UPDATE pattern (avoids dialect-specific ON CONFLICT syntax so the
-// same code path runs on SQLite, Postgres and pglite). After all rows are
-// applied, recomputes CDSS severity for each touched patient via the shared
-// analyzePartograph() service and writes the roll-up onto cached_patients.
+// updates rows in cached_partograph_observations using INSERT ... ON
+// CONFLICT (hospital_id, source_system, source_pk) DO UPDATE against the
+// uniq_cpo_source unique index — atomic per row, so a concurrent delivery of
+// the same observation can never throw an unhandled unique-violation. The
+// whole batch (every row + the per-patient severity roll-up) runs inside one
+// db.transaction() so a mid-batch failure rolls back cleanly instead of
+// stranding partial rows with a skipped severity roll-up / SSE / ONLINE
+// update.
 //
 // DRY note: callers (polling.ts, webhook.ts) MUST call this function instead
 // of poking cached_partograph_observations directly so the severity roll-up
 // stays correct.
 import { v4 as uuidv4 } from 'uuid';
 import type { DatabaseAdapter } from '@/db/adapter';
-import type {
-  CdssSeverity,
-  PartographObservationDto,
-} from '@/types/api';
-import {
-  analyzePartograph,
-  highestSeverity,
-} from '@/services/partogram';
+import type { CdssSeverity, PartographObservationDto } from '@/types/api';
+import { analyzePartograph, highestSeverity } from '@/services/partogram';
 
 export interface PartographRow {
   hospitalId: string;
@@ -139,6 +136,17 @@ export async function upsertPartographObservations(
   hospitalId: string,
   rows: PartographRow[],
 ): Promise<UpsertPartographResult> {
+  // One transaction per batch: observations + severity roll-up commit or
+  // roll back together. Callers must NOT already hold a transaction (no
+  // nesting — db.transaction() throws if called from inside another).
+  return db.transaction((tx) => upsertPartographObservationsTx(tx, hospitalId, rows));
+}
+
+async function upsertPartographObservationsTx(
+  db: DatabaseAdapter,
+  hospitalId: string,
+  rows: PartographRow[],
+): Promise<UpsertPartographResult> {
   let upserted = 0;
   let deleted = 0;
   const touchedPatients = new Map<string, true>();
@@ -153,95 +161,100 @@ export async function upsertPartographObservations(
         [hospitalId, row.sourceSystem, row.sourcePk],
       );
       if (existing.length > 0) {
-        await db.execute(
-          `DELETE FROM cached_partograph_observations WHERE id = ?`,
-          [existing[0].id],
-        );
+        await db.execute(`DELETE FROM cached_partograph_observations WHERE id = ?`, [
+          existing[0].id,
+        ]);
         deleted += 1;
         touchedPatients.set(row.patientId, true);
       }
       continue;
     }
 
-    // Two-phase UPSERT: SELECT by unique key, then UPDATE-or-INSERT.
-    // Mirrors the pattern in src/services/sync/patient.ts so the same
-    // code runs across SQLite/Postgres/pglite without ON CONFLICT.
-    const existing = await db.query<{ id: string }>(
-      `SELECT id FROM cached_partograph_observations
-       WHERE hospital_id = ? AND source_system = ? AND source_pk = ?`,
-      [hospitalId, row.sourceSystem, row.sourcePk],
+    // Atomic UPSERT on the uniq_cpo_source unique index (hospital_id,
+    // source_system, source_pk). A concurrent delivery of the same
+    // observation now resolves via ON CONFLICT instead of racing a
+    // SELECT-then-INSERT/UPDATE pair into an unhandled unique-violation.
+    await db.execute(
+      `INSERT INTO cached_partograph_observations (
+         id, patient_id, hospital_id, source_system, source_pk,
+         observe_datetime, hour_no,
+         fetal_heart_rate, amniotic_fluid, amniotic_type_id,
+         amniotic_type_name, moulding, cervical_dilation_cm,
+         descent_of_head, contraction_per_10min,
+         contraction_duration_sec, contraction_strength,
+         oxytocin_uml, oxytocin_drops_min, drugs_iv_fluids,
+         pulse, bp_systolic, bp_diastolic, temperature,
+         urine_volume_ml, urine_protein, urine_glucose,
+         urine_acetone, note, entry_staff, entry_datetime,
+         synced_at, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (hospital_id, source_system, source_pk) DO UPDATE SET
+         patient_id = EXCLUDED.patient_id,
+         observe_datetime = EXCLUDED.observe_datetime,
+         hour_no = EXCLUDED.hour_no,
+         fetal_heart_rate = EXCLUDED.fetal_heart_rate,
+         amniotic_fluid = EXCLUDED.amniotic_fluid,
+         amniotic_type_id = EXCLUDED.amniotic_type_id,
+         amniotic_type_name = EXCLUDED.amniotic_type_name,
+         moulding = EXCLUDED.moulding,
+         cervical_dilation_cm = EXCLUDED.cervical_dilation_cm,
+         descent_of_head = EXCLUDED.descent_of_head,
+         contraction_per_10min = EXCLUDED.contraction_per_10min,
+         contraction_duration_sec = EXCLUDED.contraction_duration_sec,
+         contraction_strength = EXCLUDED.contraction_strength,
+         oxytocin_uml = EXCLUDED.oxytocin_uml,
+         oxytocin_drops_min = EXCLUDED.oxytocin_drops_min,
+         drugs_iv_fluids = EXCLUDED.drugs_iv_fluids,
+         pulse = EXCLUDED.pulse,
+         bp_systolic = EXCLUDED.bp_systolic,
+         bp_diastolic = EXCLUDED.bp_diastolic,
+         temperature = EXCLUDED.temperature,
+         urine_volume_ml = EXCLUDED.urine_volume_ml,
+         urine_protein = EXCLUDED.urine_protein,
+         urine_glucose = EXCLUDED.urine_glucose,
+         urine_acetone = EXCLUDED.urine_acetone,
+         note = EXCLUDED.note,
+         entry_staff = EXCLUDED.entry_staff,
+         entry_datetime = EXCLUDED.entry_datetime,
+         synced_at = EXCLUDED.synced_at,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        uuidv4(),
+        row.patientId,
+        hospitalId,
+        row.sourceSystem,
+        row.sourcePk,
+        row.observeDatetime,
+        row.hourNo,
+        row.fetalHeartRate,
+        row.amnioticFluid,
+        row.amnioticTypeId,
+        row.amnioticTypeName,
+        row.moulding,
+        row.cervicalDilationCm,
+        row.descentOfHead,
+        row.contractionPer10Min,
+        row.contractionDurationSec,
+        row.contractionStrength,
+        row.oxytocinUml,
+        row.oxytocinDropsMin,
+        row.drugsIvFluids,
+        row.pulse,
+        row.bpSystolic,
+        row.bpDiastolic,
+        row.temperature,
+        row.urineVolumeMl,
+        row.urineProtein,
+        row.urineGlucose,
+        row.urineAcetone,
+        row.note,
+        row.entryStaff,
+        row.entryDatetime,
+        now,
+        now,
+        now,
+      ],
     );
-
-    if (existing.length > 0) {
-      await db.execute(
-        `UPDATE cached_partograph_observations SET
-          patient_id = ?, observe_datetime = ?, hour_no = ?,
-          fetal_heart_rate = ?, amniotic_fluid = ?, amniotic_type_id = ?,
-          amniotic_type_name = ?, moulding = ?, cervical_dilation_cm = ?,
-          descent_of_head = ?, contraction_per_10min = ?,
-          contraction_duration_sec = ?, contraction_strength = ?,
-          oxytocin_uml = ?, oxytocin_drops_min = ?, drugs_iv_fluids = ?,
-          pulse = ?, bp_systolic = ?, bp_diastolic = ?, temperature = ?,
-          urine_volume_ml = ?, urine_protein = ?, urine_glucose = ?,
-          urine_acetone = ?, note = ?, entry_staff = ?, entry_datetime = ?,
-          synced_at = ?, updated_at = ?
-         WHERE id = ?`,
-        [
-          row.patientId, row.observeDatetime, row.hourNo,
-          row.fetalHeartRate, row.amnioticFluid, row.amnioticTypeId,
-          row.amnioticTypeName, row.moulding, row.cervicalDilationCm,
-          row.descentOfHead, row.contractionPer10Min,
-          row.contractionDurationSec, row.contractionStrength,
-          row.oxytocinUml, row.oxytocinDropsMin, row.drugsIvFluids,
-          row.pulse, row.bpSystolic, row.bpDiastolic, row.temperature,
-          row.urineVolumeMl, row.urineProtein, row.urineGlucose,
-          row.urineAcetone, row.note, row.entryStaff, row.entryDatetime,
-          now, now,
-          existing[0].id,
-        ],
-      );
-    } else {
-      await db.execute(
-        `INSERT INTO cached_partograph_observations (
-          id, patient_id, hospital_id, source_system, source_pk,
-          observe_datetime, hour_no,
-          fetal_heart_rate, amniotic_fluid, amniotic_type_id,
-          amniotic_type_name, moulding, cervical_dilation_cm,
-          descent_of_head, contraction_per_10min,
-          contraction_duration_sec, contraction_strength,
-          oxytocin_uml, oxytocin_drops_min, drugs_iv_fluids,
-          pulse, bp_systolic, bp_diastolic, temperature,
-          urine_volume_ml, urine_protein, urine_glucose,
-          urine_acetone, note, entry_staff, entry_datetime,
-          synced_at, created_at, updated_at
-        ) VALUES (
-          ?, ?, ?, ?, ?,
-          ?, ?,
-          ?, ?, ?,
-          ?, ?, ?,
-          ?, ?,
-          ?, ?,
-          ?, ?, ?,
-          ?, ?, ?, ?,
-          ?, ?, ?,
-          ?, ?, ?, ?,
-          ?, ?, ?
-        )`,
-        [
-          uuidv4(), row.patientId, hospitalId, row.sourceSystem, row.sourcePk,
-          row.observeDatetime, row.hourNo,
-          row.fetalHeartRate, row.amnioticFluid, row.amnioticTypeId,
-          row.amnioticTypeName, row.moulding, row.cervicalDilationCm,
-          row.descentOfHead, row.contractionPer10Min,
-          row.contractionDurationSec, row.contractionStrength,
-          row.oxytocinUml, row.oxytocinDropsMin, row.drugsIvFluids,
-          row.pulse, row.bpSystolic, row.bpDiastolic, row.temperature,
-          row.urineVolumeMl, row.urineProtein, row.urineGlucose,
-          row.urineAcetone, row.note, row.entryStaff, row.entryDatetime,
-          now, now, now,
-        ],
-      );
-    }
 
     upserted += 1;
     touchedPatients.set(row.patientId, true);
@@ -261,8 +274,7 @@ export async function upsertPartographObservations(
     );
     if (patientRows.length === 0) continue;
     const an = patientRows[0].an;
-    const prevSeverity =
-      (patientRows[0].partograph_severity as CdssSeverity | null) ?? null;
+    const prevSeverity = (patientRows[0].partograph_severity as CdssSeverity | null) ?? null;
 
     const obsRows = await db.query<StoredObservationRow>(
       `SELECT id, observe_datetime, hour_no,

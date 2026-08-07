@@ -1,17 +1,16 @@
 // T23: Extended partogram response — observations, alerts, severity, source.
 // Exercises the GET /api/patients/[an]/partogram handler end-to-end against
-// an in-memory SqliteAdapter (same harness as tests/unit/api/partogram.test.ts).
+// the shared in-memory pglite harness (same as tests/unit/api/partogram.test.ts).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { v4 as uuidv4 } from 'uuid';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import type { PartogramResponse } from '@/types/api';
 
 // Mock the database connection and ensureInit so the route handler picks up
-// our in-memory SqliteAdapter rather than the real Postgres pool.
-let testDb: SqliteAdapter;
+// our in-memory pglite test db rather than the real Postgres pool.
+let testDb: DatabaseAdapter;
 
 vi.mock('@/db/connection', () => ({
   getDatabase: async () => testDb,
@@ -32,12 +31,12 @@ describe('GET /api/patients/[an]/partogram — extended response', () => {
   const admitDate = '2026-04-19T06:00:00Z';
 
   beforeEach(async () => {
-    testDb = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(testDb, ALL_TABLES, 'sqlite');
+    testDb = await createTestDb();
     await new SeedOrchestrator().run(testDb);
 
     const hospitals = await testDb.query<{ id: string }>(
-      'SELECT id FROM hospitals WHERE hcode = ? LIMIT 1', [hcode],
+      'SELECT id FROM hospitals WHERE hcode = ? LIMIT 1',
+      [hcode],
     );
     hospitalId = hospitals[0].id;
 
@@ -71,18 +70,26 @@ describe('GET /api/patients/[an]/partogram — extended response', () => {
          synced_at, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        id, patientId, hospitalId, opts.sourceSystem, id, opts.observeDatetime,
+        id,
+        patientId,
+        hospitalId,
+        opts.sourceSystem,
+        id,
+        opts.observeDatetime,
         opts.moulding ?? null,
         opts.cervicalDilationCm ?? null,
         opts.fetalHeartRate ?? null,
-        now, now, now,
+        now,
+        now,
+        now,
       ],
     );
     return id;
   }
 
   async function callRoute(targetAn: string): Promise<{
-    status: number; body: PartogramResponse | { error: string; code: string };
+    status: number;
+    body: PartogramResponse | { error: string; code: string };
   }> {
     const res = await GET(
       // request not used by the handler
@@ -100,12 +107,15 @@ describe('GET /api/patients/[an]/partogram — extended response', () => {
     expect(r.partogram.alerts).toEqual([]);
     expect(r.partogram.severity.highest).toBeNull();
     expect(r.partogram.severity.counts).toEqual({
-      critical: 0, alert: 0, warn: 0, info: 0,
+      critical: 0,
+      alert: 0,
+      warn: 0,
+      info: 0,
     });
     expect(r.partogram.source).toBe('none');
     expect(r.partogram.lastObservedAt).toBeNull();
     expect(r.partogram.entries).toEqual([]);
-    expect(r.partogram.startTime).toBe(admitDate);
+    expect(r.partogram.startTime).toBe('2026-04-19T06:00:00.000Z');
   });
 
   it('flags ALERT moulding (++) and counts severity', async () => {
@@ -121,16 +131,14 @@ describe('GET /api/patients/[an]/partogram — extended response', () => {
     expect(r.partogram.observations).toHaveLength(1);
     expect(r.partogram.observations[0].moulding).toBe('++');
 
-    const mouldingAlerts = r.partogram.alerts.filter(
-      (a) => a.section === 'MOULDING',
-    );
+    const mouldingAlerts = r.partogram.alerts.filter((a) => a.section === 'MOULDING');
     expect(mouldingAlerts).toHaveLength(1);
     expect(mouldingAlerts[0].severity).toBe('ALERT');
 
     expect(r.partogram.severity.highest).toBe('ALERT');
     expect(r.partogram.severity.counts.alert).toBe(1);
     expect(r.partogram.source).toBe('hosxp');
-    expect(r.partogram.lastObservedAt).toBe('2026-04-19T07:00:00Z');
+    expect(r.partogram.lastObservedAt).toBe('2026-04-19T07:00:00.000Z');
   });
 
   it('reports source=mixed when HOSxP and webhook rows coexist', async () => {
@@ -166,7 +174,7 @@ describe('GET /api/patients/[an]/partogram — extended response', () => {
     const r = body as PartogramResponse;
     expect(r.partogram.entries).toHaveLength(1);
     expect(r.partogram.entries[0].dilationCm).toBe(5);
-    expect(r.partogram.entries[0].measuredAt).toBe('2026-04-19T07:00:00Z');
+    expect(r.partogram.entries[0].measuredAt).toBe('2026-04-19T07:00:00.000Z');
   });
 
   it('returns 404 for unknown patient AN', async () => {

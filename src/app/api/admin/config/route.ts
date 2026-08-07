@@ -4,6 +4,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { logger } from '@/lib/logger';
 import { DEFAULT_PROVINCE_CODE } from '@/config/province';
 
@@ -24,6 +25,9 @@ async function readConfig(): Promise<Record<string, string | null>> {
 
 export async function GET() {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const config = await readConfig();
     return NextResponse.json({ config });
@@ -39,6 +43,9 @@ interface UpdateConfigBody {
 
 export async function PUT(request: NextRequest) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const body = (await request.json()) as UpdateConfigBody;
 
@@ -65,15 +72,17 @@ export async function PUT(request: NextRequest) {
         [key],
       );
       if (existing.length === 0) {
-        await db.execute(
-          'INSERT INTO system_config (key, value, updated_at) VALUES (?, ?, ?)',
-          [key, value, now],
-        );
+        await db.execute('INSERT INTO system_config (key, value, updated_at) VALUES (?, ?, ?)', [
+          key,
+          value,
+          now,
+        ]);
       } else {
-        await db.execute(
-          'UPDATE system_config SET value = ?, updated_at = ? WHERE key = ?',
-          [value, now, key],
-        );
+        await db.execute('UPDATE system_config SET value = ?, updated_at = ? WHERE key = ?', [
+          value,
+          now,
+          key,
+        ]);
       }
     }
 

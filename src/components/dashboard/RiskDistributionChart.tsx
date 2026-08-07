@@ -57,7 +57,7 @@ export function RiskDistributionChart({ summary }: RiskDistributionChartProps) {
 
   return (
     <div className="rounded-2xl bg-white p-6 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_12px_rgba(0,0,0,0.03)]">
-      <h3 className="text-xs uppercase tracking-wider font-semibold text-slate-400">
+      <h3 className="text-sm uppercase tracking-wider font-semibold text-slate-400">
         การกระจายระดับความเสี่ยง
       </h3>
 
@@ -100,7 +100,7 @@ export function RiskDistributionChart({ summary }: RiskDistributionChartProps) {
               <span className="font-mono text-3xl font-bold text-slate-900">
                 {totalActive}
               </span>
-              <span className="text-xs text-slate-400">ผู้คลอด</span>
+              <span className="text-sm text-slate-400">ผู้คลอด</span>
             </div>
           </div>
 
@@ -120,7 +120,7 @@ export function RiskDistributionChart({ summary }: RiskDistributionChartProps) {
                   <span className="font-mono font-semibold text-slate-800">
                     {seg.value}
                   </span>
-                  <span className="text-xs text-slate-400">
+                  <span className="text-sm text-slate-400">
                     {formatPercentage(seg.value, totalActive)}
                   </span>
                 </div>

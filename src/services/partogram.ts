@@ -16,10 +16,7 @@ interface AlertLinePoint {
  * Calculate alert line starting at given dilation (default 4cm)
  * progressing at 1cm/hour up to 10cm.
  */
-export function calculateAlertLine(
-  startTime: Date,
-  startDilation: number = 4,
-): AlertLinePoint[] {
+export function calculateAlertLine(startTime: Date, startDilation: number = 4): AlertLinePoint[] {
   const points: AlertLinePoint[] = [];
   for (let cm = startDilation; cm <= 10; cm++) {
     const hoursFromStart = cm - startDilation;
@@ -52,9 +49,7 @@ interface VitalSignInput {
  * Generate partogram entries from vital signs data.
  * Alert/action lines start computing once dilation reaches 4cm.
  */
-export function generatePartogramEntries(
-  vitalSigns: VitalSignInput[],
-): PartogramEntry[] {
+export function generatePartogramEntries(vitalSigns: VitalSignInput[]): PartogramEntry[] {
   if (vitalSigns.length === 0) return [];
 
   // Find when active phase starts (first measurement at >= 4cm)
@@ -94,10 +89,7 @@ export function generatePartogramEntries(
  * Interpolate dilation value on a reference line at a given time.
  * Uses linear interpolation between the two nearest points.
  */
-function interpolateLineValue(
-  line: AlertLinePoint[],
-  targetTime: number,
-): number | null {
+function interpolateLineValue(line: AlertLinePoint[], targetTime: number): number | null {
   if (line.length === 0) return null;
 
   const firstTime = new Date(line[0].measuredAt).getTime();
@@ -126,7 +118,10 @@ function interpolateLineValue(
 // ============================================================================
 
 const SEVERITY_RANK: Record<CdssSeverity, number> = {
-  INFO: 0, WARN: 1, ALERT: 2, CRITICAL: 3,
+  INFO: 0,
+  WARN: 1,
+  ALERT: 2,
+  CRITICAL: 3,
 };
 
 export interface PartographHeader {
@@ -167,30 +162,40 @@ function analyzeFhr(obs: PartographObservationDto[]): CdssAlertDto[] {
     // Rule 1: critical out-of-range.
     if (fhr < 100 || fhr > 180) {
       out.push({
-        severity: 'CRITICAL', section: 'FHR', obsIndex: i,
+        severity: 'CRITICAL',
+        section: 'FHR',
+        obsIndex: i,
         message: `FHR ${fhr} ครั้ง/นาที (ผิดปกติรุนแรง)`,
       });
     } else if (fhr < 110 || fhr > 160) {
       // Rule 2: alert outside reassuring band.
       out.push({
-        severity: 'ALERT', section: 'FHR', obsIndex: i,
+        severity: 'ALERT',
+        section: 'FHR',
+        obsIndex: i,
         message: `FHR ${fhr} ครั้ง/นาที (นอกช่วง 110-160)`,
       });
     }
 
     // Rules 3 & 4: consecutive low/high tracking. Pascal increments BEFORE
     // checking, so the first qualifying reading sets the counter to 1.
-    if (fhr < 110) consecLow += 1; else consecLow = 0;
-    if (fhr > 160) consecHigh += 1; else consecHigh = 0;
+    if (fhr < 110) consecLow += 1;
+    else consecLow = 0;
+    if (fhr > 160) consecHigh += 1;
+    else consecHigh = 0;
     if (consecLow === 2) {
       out.push({
-        severity: 'CRITICAL', section: 'FHR', obsIndex: i,
+        severity: 'CRITICAL',
+        section: 'FHR',
+        obsIndex: i,
         message: 'หัวใจทารกเต้นช้าต่อเนื่อง 2 ครั้ง',
       });
     }
     if (consecHigh === 2) {
       out.push({
-        severity: 'CRITICAL', section: 'FHR', obsIndex: i,
+        severity: 'CRITICAL',
+        section: 'FHR',
+        obsIndex: i,
         message: 'หัวใจทารกเต้นเร็วต่อเนื่อง 2 ครั้ง',
       });
     }
@@ -206,19 +211,23 @@ function analyzeLiquorMoulding(obs: PartographObservationDto[]): CdssAlertDto[] 
     const fluid = (obs[i].amnioticFluid ?? '').toLowerCase();
     if (fluid.includes('thick')) {
       out.push({
-        severity: 'CRITICAL', section: 'LIQUOR', obsIndex: i,
+        severity: 'CRITICAL',
+        section: 'LIQUOR',
+        obsIndex: i,
         message: 'น้ำคร่ำขี้เทาข้น',
       });
-    } else if (
-      fluid.includes('mec') || fluid.includes('moder') || fluid.includes('mild')
-    ) {
+    } else if (fluid.includes('mec') || fluid.includes('moder') || fluid.includes('mild')) {
       out.push({
-        severity: 'ALERT', section: 'LIQUOR', obsIndex: i,
+        severity: 'ALERT',
+        section: 'LIQUOR',
+        obsIndex: i,
         message: 'น้ำคร่ำมีขี้เทา',
       });
     } else if (fluid.includes('blood')) {
       out.push({
-        severity: 'ALERT', section: 'LIQUOR', obsIndex: i,
+        severity: 'ALERT',
+        section: 'LIQUOR',
+        obsIndex: i,
         message: 'น้ำคร่ำปนเลือด',
       });
     }
@@ -227,12 +236,16 @@ function analyzeLiquorMoulding(obs: PartographObservationDto[]): CdssAlertDto[] 
     const moulding = obs[i].moulding ?? '';
     if (moulding.includes('+++')) {
       out.push({
-        severity: 'CRITICAL', section: 'MOULDING', obsIndex: i,
+        severity: 'CRITICAL',
+        section: 'MOULDING',
+        obsIndex: i,
         message: 'กะโหลกเกยกันรุนแรง (+++)',
       });
     } else if (moulding.includes('++')) {
       out.push({
-        severity: 'ALERT', section: 'MOULDING', obsIndex: i,
+        severity: 'ALERT',
+        section: 'MOULDING',
+        obsIndex: i,
         message: 'กะโหลกเกยกัน (++)',
       });
     }
@@ -247,19 +260,23 @@ function hoursBetween(later: string, earlier: string): number {
 // LCG hours-at-cm threshold table. Pascal: PartographCDSSUnit.pas:159–173.
 function lcgTimeThreshold(cm: number): number {
   switch (Math.round(cm)) {
-    case 5: return 6.0;
-    case 6: return 5.0;
-    case 7: return 3.0;
-    case 8: return 2.5;
-    case 9: return 2.0;
-    default: return 0;
+    case 5:
+      return 6.0;
+    case 6:
+      return 5.0;
+    case 7:
+      return 3.0;
+    case 8:
+      return 2.5;
+    case 9:
+      return 2.0;
+    default:
+      return 0;
   }
 }
 
 // Earliest index whose dilation >= cm. Pascal FirstIndexAtDilation.
-function firstIndexAtDilation(
-  obsList: PartographObservationDto[], cm: number,
-): number {
+function firstIndexAtDilation(obsList: PartographObservationDto[], cm: number): number {
   for (let i = 0; i < obsList.length; i++) {
     const d = obsList[i].cervicalDilationCm;
     if (d !== null && d >= cm) return i;
@@ -286,15 +303,21 @@ function analyzeCervix(obs: PartographObservationDto[]): CdssAlertDto[] {
     for (let i = firstActiveIdx + 1; i < obs.length; i++) {
       const d = obs[i].cervicalDilationCm;
       if (d === null || d <= 0) continue;
-      const expected = anchorDil + hoursBetween(obs[i].observeDatetime, anchorDt);
+      // Full dilation is 10 cm — the expectation can never exceed it, so a
+      // fully dilated patient is never "behind" an impossible target.
+      const expected = Math.min(10, anchorDil + hoursBetween(obs[i].observeDatetime, anchorDt));
       if (d < expected - 4) {
         out.push({
-          severity: 'CRITICAL', section: 'CERVIX', obsIndex: i,
+          severity: 'CRITICAL',
+          section: 'CERVIX',
+          obsIndex: i,
           message: `ปากมดลูก ${fmt1(d)} ซม. เลย Action line (คาด ${fmt1(expected)}+)`,
         });
       } else if (d < expected) {
         out.push({
-          severity: 'ALERT', section: 'CERVIX', obsIndex: i,
+          severity: 'ALERT',
+          section: 'CERVIX',
+          obsIndex: i,
           message: `ปากมดลูก ${fmt1(d)} ซม. เลย Alert line (คาด ${fmt1(expected)})`,
         });
       }
@@ -323,7 +346,9 @@ function analyzeCervix(obs: PartographObservationDto[]): CdssAlertDto[] {
     const latentH = hoursBetween(lastDt, latentStart);
     if (latentH > 8) {
       out.push({
-        severity: 'ALERT', section: 'CERVIX', obsIndex: obs.length - 1,
+        severity: 'ALERT',
+        section: 'CERVIX',
+        obsIndex: obs.length - 1,
         message: `Latent phase ยาวนาน (${Math.round(latentH)} ชม.)`,
       });
     }
@@ -346,12 +371,12 @@ function analyzeCervix(obs: PartographObservationDto[]): CdssAlertDto[] {
     for (let k = obs.length - 1; k >= firstAtIdx; k--) {
       const d = obs[k].cervicalDilationCm;
       if (d !== null && d >= curCm && d < curCm + 1) {
-        const hoursAtLevel = hoursBetween(
-          obs[k].observeDatetime, obs[firstAtIdx].observeDatetime,
-        );
+        const hoursAtLevel = hoursBetween(obs[k].observeDatetime, obs[firstAtIdx].observeDatetime);
         if (hoursAtLevel > thresholdH) {
           out.push({
-            severity: 'ALERT', section: 'CERVIX', obsIndex: k,
+            severity: 'ALERT',
+            section: 'CERVIX',
+            obsIndex: k,
             message: `หยุดที่ ${curCm} ซม. นาน ${fmt1(hoursAtLevel)} ชม. (เกณฑ์ LCG ${fmt1(thresholdH)} ชม.)`,
           });
         }
@@ -365,14 +390,13 @@ function analyzeCervix(obs: PartographObservationDto[]): CdssAlertDto[] {
     const i = obs.length - 1;
     const cur = obs[i].cervicalDilationCm;
     const prev = obs[i - 1].cervicalDilationCm;
-    if (cur !== null && prev !== null && cur >= 5 && prev >= 5 &&
-        Math.abs(cur - prev) < 0.5) {
-      const spanH = hoursBetween(
-        obs[i].observeDatetime, obs[i - 1].observeDatetime,
-      );
+    if (cur !== null && prev !== null && cur >= 5 && prev >= 5 && Math.abs(cur - prev) < 0.5) {
+      const spanH = hoursBetween(obs[i].observeDatetime, obs[i - 1].observeDatetime);
       if (spanH > 2) {
         out.push({
-          severity: 'CRITICAL', section: 'CERVIX', obsIndex: i,
+          severity: 'CRITICAL',
+          section: 'CERVIX',
+          obsIndex: i,
           message: `Labour arrest: ไม่มีความก้าวหน้า ${fmt1(spanH)} ชม. ในระยะ active`,
         });
       }
@@ -393,13 +417,17 @@ function analyzeContractions(obs: PartographObservationDto[]): CdssAlertDto[] {
       // Rule 15: tachysystole this row.
       if (n > 5) {
         out.push({
-          severity: 'ALERT', section: 'CONTRACTIONS', obsIndex: i,
+          severity: 'ALERT',
+          section: 'CONTRACTIONS',
+          obsIndex: i,
           message: `มดลูกหดตัวถี่: ${n} ครั้ง/10 นาที`,
         });
       } else if (n <= 2) {
         // Rule 16: hypotonus.
         out.push({
-          severity: 'ALERT', section: 'CONTRACTIONS', obsIndex: i,
+          severity: 'ALERT',
+          section: 'CONTRACTIONS',
+          obsIndex: i,
           message: `มดลูกหดตัวน้อย: ${n} ครั้ง/10 นาที`,
         });
       }
@@ -416,11 +444,13 @@ function analyzeContractions(obs: PartographObservationDto[]): CdssAlertDto[] {
       // Rule 17: sustained tachysystole over >= 30 minutes is CRITICAL.
       if (firstTachy >= 0 && tachyCount >= 2) {
         const gapMin =
-          (Date.parse(obs[i].observeDatetime)
-            - Date.parse(obs[firstTachy].observeDatetime)) / 60000;
+          (Date.parse(obs[i].observeDatetime) - Date.parse(obs[firstTachy].observeDatetime)) /
+          60000;
         if (gapMin >= 30) {
           out.push({
-            severity: 'CRITICAL', section: 'CONTRACTIONS', obsIndex: i,
+            severity: 'CRITICAL',
+            section: 'CONTRACTIONS',
+            obsIndex: i,
             message: 'มดลูกหดตัวถี่ต่อเนื่อง > 30 นาที',
           });
         }
@@ -432,12 +462,16 @@ function analyzeContractions(obs: PartographObservationDto[]): CdssAlertDto[] {
     if (s !== null && s > 0) {
       if (s > 60) {
         out.push({
-          severity: 'ALERT', section: 'CONTRACTIONS', obsIndex: i,
+          severity: 'ALERT',
+          section: 'CONTRACTIONS',
+          obsIndex: i,
           message: `ระยะเวลาหดรัดตัว ${s} วินาที > 60 วินาที`,
         });
       } else if (s < 20) {
         out.push({
-          severity: 'ALERT', section: 'CONTRACTIONS', obsIndex: i,
+          severity: 'ALERT',
+          section: 'CONTRACTIONS',
+          obsIndex: i,
           message: `ระยะเวลาหดรัดตัว ${s} วินาที < 20 วินาที`,
         });
       }
@@ -455,12 +489,16 @@ function analyzeMaternal(obs: PartographObservationDto[]): CdssAlertDto[] {
     if (p !== null && p > 0) {
       if (p > 140) {
         out.push({
-          severity: 'CRITICAL', section: 'PULSE', obsIndex: i,
+          severity: 'CRITICAL',
+          section: 'PULSE',
+          obsIndex: i,
           message: `ชีพจร ${p} ครั้ง/นาที (เร็วผิดปกติรุนแรง)`,
         });
       } else if (p < 60 || p >= 120) {
         out.push({
-          severity: 'ALERT', section: 'PULSE', obsIndex: i,
+          severity: 'ALERT',
+          section: 'PULSE',
+          obsIndex: i,
           message: `ชีพจร ${p} ครั้ง/นาที (นอกช่วง 60-120)`,
         });
       }
@@ -471,17 +509,23 @@ function analyzeMaternal(obs: PartographObservationDto[]): CdssAlertDto[] {
     if (sbp !== null && sbp > 0) {
       if (sbp >= 160) {
         out.push({
-          severity: 'CRITICAL', section: 'BP', obsIndex: i,
+          severity: 'CRITICAL',
+          section: 'BP',
+          obsIndex: i,
           message: `ความดันตัวบนสูงรุนแรง ${sbp}`,
         });
       } else if (sbp >= 140) {
         out.push({
-          severity: 'ALERT', section: 'BP', obsIndex: i,
+          severity: 'ALERT',
+          section: 'BP',
+          obsIndex: i,
           message: `ความดันตัวบนสูง ${sbp}`,
         });
       } else if (sbp < 80) {
         out.push({
-          severity: 'ALERT', section: 'BP', obsIndex: i,
+          severity: 'ALERT',
+          section: 'BP',
+          obsIndex: i,
           message: `ความดันตัวบนต่ำ ${sbp}`,
         });
       }
@@ -492,12 +536,16 @@ function analyzeMaternal(obs: PartographObservationDto[]): CdssAlertDto[] {
     if (dbp !== null && dbp > 0) {
       if (dbp >= 110) {
         out.push({
-          severity: 'CRITICAL', section: 'BP', obsIndex: i,
+          severity: 'CRITICAL',
+          section: 'BP',
+          obsIndex: i,
           message: `ความดันตัวล่างสูงรุนแรง ${dbp}`,
         });
       } else if (dbp >= 90) {
         out.push({
-          severity: 'ALERT', section: 'BP', obsIndex: i,
+          severity: 'ALERT',
+          section: 'BP',
+          obsIndex: i,
           message: `ความดันตัวล่างสูง ${dbp}`,
         });
       }
@@ -508,12 +556,16 @@ function analyzeMaternal(obs: PartographObservationDto[]): CdssAlertDto[] {
     if (t !== null && t > 0) {
       if (t >= 38.5) {
         out.push({
-          severity: 'CRITICAL', section: 'TEMP', obsIndex: i,
+          severity: 'CRITICAL',
+          section: 'TEMP',
+          obsIndex: i,
           message: `ไข้สูง ${fmt1(t)} °C`,
         });
       } else if (t >= 37.5 || t < 35) {
         out.push({
-          severity: 'ALERT', section: 'TEMP', obsIndex: i,
+          severity: 'ALERT',
+          section: 'TEMP',
+          obsIndex: i,
           message: `อุณหภูมิ ${fmt1(t)} °C ผิดปกติ`,
         });
       }
@@ -532,19 +584,25 @@ function analyzeUrine(obs: PartographObservationDto[]): CdssAlertDto[] {
     const glucose = obs[i].urineGlucose ?? '';
     if (protein.includes('++')) {
       out.push({
-        severity: 'ALERT', section: 'URINE', obsIndex: i,
+        severity: 'ALERT',
+        section: 'URINE',
+        obsIndex: i,
         message: 'โปรตีนในปัสสาวะสูง - ระวัง pre-eclampsia',
       });
     }
     if (acetone.includes('++')) {
       out.push({
-        severity: 'ALERT', section: 'URINE', obsIndex: i,
+        severity: 'ALERT',
+        section: 'URINE',
+        obsIndex: i,
         message: 'คีโตนในปัสสาวะ - อาจมีภาวะขาดน้ำ',
       });
     }
     if (glucose.includes('++')) {
       out.push({
-        severity: 'ALERT', section: 'URINE', obsIndex: i,
+        severity: 'ALERT',
+        section: 'URINE',
+        obsIndex: i,
         message: 'กลูโคสในปัสสาวะ - ควรตรวจเบาหวาน',
       });
     }
@@ -560,7 +618,9 @@ function analyzeTimeGaps(obs: PartographObservationDto[]): CdssAlertDto[] {
     const d = obs[i].cervicalDilationCm;
     if (gapH > 4 && d !== null && d >= 4) {
       out.push({
-        severity: 'WARN', section: 'TIME', obsIndex: i,
+        severity: 'WARN',
+        section: 'TIME',
+        obsIndex: i,
         message: `เว้นการสังเกต ${fmt1(gapH)} ชม. (ระยะ active)`,
       });
     }

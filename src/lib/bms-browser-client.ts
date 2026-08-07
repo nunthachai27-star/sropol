@@ -12,6 +12,13 @@ export const PASTE_JSON_URL = 'https://hosxp.net/phapi/PasteJSON';
 export const APP_IDENTIFIER = 'KK-LRMS.Web';
 export const SESSION_TIMEOUT_MS = 30_000;
 export const QUERY_TIMEOUT_MS = 60_000;
+/**
+ * GetIPDVitalSignChart renders behind a global server-side lock — one shared
+ * cached UI frame, rendered one request at a time. The first render after an
+ * idle period can take several seconds, so this call gets a more generous
+ * budget than the ordinary SQL/function timeout.
+ */
+export const CHART_TIMEOUT_MS = 90_000;
 
 /**
  * Local HOSxP API gateway URL. The HOSxP marketplace gateway commonly runs
@@ -79,7 +86,8 @@ class BmsClientError extends Error {
     | 'rate_limited'
     | 'body_error'
     | 'rest_failed'
-    | 'rest_timed_out';
+    | 'rest_timed_out'
+    | 'chart_timed_out';
 
   constructor(kind: BmsClientError['kind'], message: string, options?: ErrorOptions) {
     super(message, options);
@@ -153,8 +161,7 @@ export function extractConnectionConfig(r: BmsSessionResponse): ConnectionConfig
   if (!apiUrl) {
     throw new Error('BMS session response missing bms_url');
   }
-  const bearerToken =
-    userInfo?.bms_session_code ?? result.key_value ?? (r as { jwt?: string }).jwt;
+  const bearerToken = userInfo?.bms_session_code ?? result.key_value ?? (r as { jwt?: string }).jwt;
   if (!bearerToken) {
     throw new Error('BMS session response missing bearer token (bms_session_code/key_value)');
   }
@@ -338,18 +345,15 @@ export async function callFunction<T = BmsFunctionResponse>(
   const timeoutId = setTimeout(() => controller.abort(), QUERY_TIMEOUT_MS);
 
   try {
-    const response = await fetch(
-      `${config.apiUrl}/api/function?name=${encodeURIComponent(name)}`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${config.bearerToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
+    const response = await fetch(`${config.apiUrl}/api/function?name=${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.bearerToken}`,
+        'Content-Type': 'application/json',
       },
-    );
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
 
     if (response.status === 429) {
       let retryInfo = '';
@@ -398,9 +402,13 @@ export async function callFunction<T = BmsFunctionResponse>(
     return result as T;
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new BmsClientError('function_call_timed_out', 'Function call timed out after 60 seconds.', {
-        cause: error,
-      });
+      throw new BmsClientError(
+        'function_call_timed_out',
+        'Function call timed out after 60 seconds.',
+        {
+          cause: error,
+        },
+      );
     }
 
     if (error instanceof BmsClientError) throw error;
@@ -408,6 +416,209 @@ export async function callFunction<T = BmsFunctionResponse>(
     throw new Error('Unable to connect to the BMS API. Please check your connection.', {
       cause: error,
     });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Result of {@link getIpdVitalSignChart}. Success carries the raw PNG blob;
+ * an app-level failure carries the server's MessageCode plus an actionable
+ * Thai message. Deterministic app-level errors (missing AN, no vital data,
+ * unsupported build) are returned rather than thrown — retrying the exact
+ * same (an, chart_type_id) against the serialized render endpoint won't help,
+ * so we don't want SWR to retry. Transport-level failures (network, timeout,
+ * HTTP 429) still throw so callers can retry those.
+ */
+export type IpdVitalSignChartResponse =
+  { ok: true; blob: Blob } | { ok: false; messageCode: number | null; message: string };
+
+/**
+ * Map a GetIPDVitalSignChart app-level MessageCode to actionable Thai copy.
+ * Known codes (per the API spec §5): 400 empty an · 401 auth · 404 wrong
+ * method/empty name · 500 missing key / render error (AN not found, no vital
+ * data) · 501 lite build (unsupported). Unknown codes fall back to the raw
+ * server Message, then a generic message.
+ */
+function describeVitalSignChartError(messageCode: number | null, rawMessage: string): string {
+  switch (messageCode) {
+    case 400:
+      return 'ไม่พบเลขที่รับผู้ป่วยใน (AN) — ไม่สามารถสร้างกราฟได้';
+    case 401:
+      return 'เซสชันหมดอายุ กรุณาเชื่อมต่อระบบใหม่อีกครั้ง';
+    case 404:
+      return 'เรียกใช้บริการสร้างกราฟไม่ถูกต้อง กรุณาติดต่อผู้ดูแลระบบ';
+    case 500:
+      return 'ยังไม่มีข้อมูลสัญญาณชีพสำหรับผู้ป่วยรายนี้ หรือไม่พบข้อมูลการรับผู้ป่วย (AN)';
+    case 501:
+      return 'เซิร์ฟเวอร์ HOSxP รุ่นนี้ไม่รองรับการสร้างกราฟสัญญาณชีพ';
+    default:
+      return rawMessage || 'สร้างกราฟสัญญาณชีพไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
+  }
+}
+
+/**
+ * Fetch a ready-to-use IPD vital-sign chart PNG from HOSxP's
+ * GetIPDVitalSignChart function endpoint.
+ *
+ * The server renders the classic HOSxP paper chart (temperature/pulse dual
+ * axis + respiration + blood pressure) and returns it as a PNG image, so the
+ * browser no longer has to reconstruct the chart from raw nurse-note rows.
+ *
+ * Per the spec, the response is discriminated by Content-Type: `image/png`
+ * bytes on success, otherwise a JSON error envelope carrying MessageCode +
+ * Message. The render endpoint is serialized behind a global lock and caches
+ * one frame per (an, begin_date), so requesting several chart_type_id pages
+ * for the same AN is cheap.
+ *
+ * @param chartTypeId Chart page: 1 = header/summary, 2–7 = chart pages 1–6.
+ */
+export async function getIpdVitalSignChart(
+  config: ConnectionConfig,
+  an: string,
+  chartTypeId: number,
+  marketplaceToken?: string | null,
+): Promise<IpdVitalSignChartResponse> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CHART_TIMEOUT_MS);
+  try {
+    const body: { an: string; chart_type_id: number; 'marketplace-token'?: string } = {
+      an,
+      chart_type_id: chartTypeId,
+    };
+    const mkt = resolveMarketplaceToken(marketplaceToken);
+    if (mkt) {
+      body['marketplace-token'] = mkt;
+    }
+
+    const response = await fetch(`${config.apiUrl}/api/function?name=GetIPDVitalSignChart`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.bearerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    // Rate limiting is transient — throw so callers can retry after a wait.
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      const suffix = retryAfter ? ` กรุณารอ ${retryAfter} วินาทีแล้วลองใหม่` : '';
+      throw new BmsClientError(
+        'rate_limited',
+        `มีการร้องขอบ่อยเกินไป (HTTP 429).${suffix} กรุณารอสักครู่แล้วลองใหม่อีกครั้ง`,
+      );
+    }
+
+    // Success vs. error is decided by Content-Type (spec §6), NOT HTTP status —
+    // the app-level MessageCode may not equal the HTTP status.
+    const contentType = (response.headers.get('Content-Type') ?? '').toLowerCase();
+    if (contentType.startsWith('image/png')) {
+      return { ok: true, blob: await response.blob() };
+    }
+
+    // Error envelope — JSON per the spec. Parse defensively: a lite build or
+    // gateway may return a non-JSON body, in which case fall back to the HTTP
+    // status so the caller still gets a stable, mapped Thai message.
+    let messageCode: number | null = null;
+    let rawMessage = '';
+    try {
+      const parsed = (await response.json()) as { MessageCode?: unknown; Message?: unknown };
+      if (typeof parsed.MessageCode === 'number') messageCode = parsed.MessageCode;
+      if (typeof parsed.Message === 'string') rawMessage = parsed.Message;
+    } catch {
+      // non-JSON body
+    }
+    if (messageCode === null) messageCode = response.status || null;
+    return {
+      ok: false,
+      messageCode,
+      message: describeVitalSignChartError(messageCode, rawMessage),
+    };
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new BmsClientError(
+        'chart_timed_out',
+        'สร้างกราฟสัญญาณชีพหมดเวลา (ใช้เวลานานเกินไป) กรุณาลองใหม่อีกครั้ง',
+        { cause: error },
+      );
+    }
+    if (error instanceof BmsClientError) throw error;
+    throw new Error('ไม่สามารถเชื่อมต่อบริการสร้างกราฟสัญญาณชีพได้ กรุณาตรวจสอบการเชื่อมต่อ', {
+      cause: error,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Fast-fail timeout for a patient photo. A face thumbnail is a non-critical
+ * decoration, so we don't want a slow/hung blob read to stall the ward view.
+ */
+export const PATIENT_PHOTO_TIMEOUT_MS = 15_000;
+
+/**
+ * Result of {@link getPatientPhoto}. A patient photo is decorative, so every
+ * failure mode (missing row, NULL blob, auth, network) collapses to a single
+ * `{ ok: false, status }` that callers render as a neutral placeholder —
+ * `status` is the HTTP status (or 0 for a network/timeout failure).
+ */
+export type PatientPhotoResponse = { ok: true; blob: Blob } | { ok: false; status: number };
+
+export interface PatientPhotoOptions {
+  /** Requested pixel width. Server only resizes JPEG-encoded blobs (spec §3). */
+  width?: number;
+  /** Requested pixel height. */
+  height?: number;
+  marketplaceToken?: string | null;
+}
+
+/**
+ * Fetch a patient's face photo from HOSxP's REST BLOB endpoint, keyed by HN.
+ *
+ * Hits `GET /api/rest/patient_image/{hn}?field=image&responseType=jpg[&width&height]`
+ * (composite PK `hn,image_name`; discovery keys on `hn` and returns the first
+ * row, so a specific `image_name` can't be selected here — that's the
+ * `patient_photo` route's job). `responseType`/`width`/`height` only apply to
+ * JPEG-encoded blobs; non-JPEG blobs come back at their original size.
+ *
+ * Never throws: a photo is optional, so a missing row (404), a non-BLOB field
+ * (400), an auth failure (401), or a network error all resolve to
+ * `{ ok: false, status }` so the caller shows a placeholder rather than an
+ * error.
+ */
+export async function getPatientPhoto(
+  config: ConnectionConfig,
+  hn: string,
+  options: PatientPhotoOptions = {},
+): Promise<PatientPhotoResponse> {
+  const { width, height, marketplaceToken } = options;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), PATIENT_PHOTO_TIMEOUT_MS);
+  try {
+    const params = new URLSearchParams({ field: 'image', responseType: 'jpg' });
+    if (width && width > 0) params.set('width', String(Math.round(width)));
+    if (height && height > 0) params.set('height', String(Math.round(height)));
+    const mkt = resolveMarketplaceToken(marketplaceToken);
+    // GET has no body, so the token rides the query string (matches restDelete).
+    if (mkt) params.set('marketplace-token', mkt);
+
+    const url = `${config.apiUrl}/api/rest/patient_image/${encodeURIComponent(hn)}?${params.toString()}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${config.bearerToken}` },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return { ok: false, status: response.status };
+    }
+    return { ok: true, blob: await response.blob() };
+  } catch {
+    // Network error or timeout — degrade quietly to the placeholder.
+    return { ok: false, status: 0 };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -472,9 +683,13 @@ export async function restInsert(
     return (await response.json()) as RestApiResponse;
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new BmsClientError('rest_timed_out', `REST insert timed out after ${QUERY_TIMEOUT_MS / 1000}s`, {
-        cause: error,
-      });
+      throw new BmsClientError(
+        'rest_timed_out',
+        `REST insert timed out after ${QUERY_TIMEOUT_MS / 1000}s`,
+        {
+          cause: error,
+        },
+      );
     }
     if (error instanceof BmsClientError) throw error;
     throw new Error('Unable to connect to the BMS REST API.', { cause: error });
@@ -512,9 +727,13 @@ export async function restUpdate(
     return (await response.json()) as RestApiResponse;
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new BmsClientError('rest_timed_out', `REST update timed out after ${QUERY_TIMEOUT_MS / 1000}s`, {
-        cause: error,
-      });
+      throw new BmsClientError(
+        'rest_timed_out',
+        `REST update timed out after ${QUERY_TIMEOUT_MS / 1000}s`,
+        {
+          cause: error,
+        },
+      );
     }
     if (error instanceof BmsClientError) throw error;
     throw new Error('Unable to connect to the BMS REST API.', { cause: error });
@@ -551,9 +770,13 @@ export async function restDelete(
     return (await response.json()) as RestApiResponse;
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new BmsClientError('rest_timed_out', `REST delete timed out after ${QUERY_TIMEOUT_MS / 1000}s`, {
-        cause: error,
-      });
+      throw new BmsClientError(
+        'rest_timed_out',
+        `REST delete timed out after ${QUERY_TIMEOUT_MS / 1000}s`,
+        {
+          cause: error,
+        },
+      );
     }
     if (error instanceof BmsClientError) throw error;
     throw new Error('Unable to connect to the BMS REST API.', { cause: error });
@@ -608,7 +831,6 @@ export async function probeLocalApi(
     if (response.ok) {
       const data = (await response.json()) as SqlApiResponse;
       if (data.MessageCode === 200) {
-        // eslint-disable-next-line no-console
         console.info(
           `[bms-browser-client] Local API detected at ${LOCAL_API_URL} — swapping apiUrl for browser-side calls`,
         );

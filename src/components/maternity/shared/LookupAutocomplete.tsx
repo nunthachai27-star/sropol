@@ -69,40 +69,38 @@ export function LookupAutocomplete({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-
-  // lastPickedRef tracks "what string represents an already-resolved pick".
-  // The search effect skips queries equal to this — so re-rendering with
+  // lastPicked tracks "what string represents an already-resolved pick".
+  // Search stays inactive while query equals this — so re-rendering with
   // the picked text doesn't fire another search. CRITICAL: only updated
-  // on pick or via the parent-value-change effect below (which itself
-  // gates on actual change).
-  const lastPickedRef = useRef<string>(valueLabel || value);
-  // committedRef tracks the parent's committed value the picker has
-  // observed. Lets the parent-value-change effect only re-seed when a
-  // genuinely new value arrives (not when the parent echoes our own
-  // onChange back).
-  const committedRef = useRef<string>(value);
+  // on pick or via the render-phase re-seed below (which itself gates on
+  // actual value change).
+  const [lastPicked, setLastPicked] = useState(valueLabel || value);
+  // committed tracks the parent's committed value the picker has observed.
+  // Lets the render-phase re-seed below fire only when a genuinely new
+  // value arrives (not when the parent echoes our own onChange back).
+  const [committed, setCommitted] = useState(value);
 
-  // Re-seed from parent only when the committed value changes to something
-  // new (e.g., dialog opens with an existing referout row). Plain echo of
-  // the user's typing is filtered out because we update committedRef AFTER
-  // capturing the previous value.
-  useEffect(() => {
-    if (value === committedRef.current) return;
-    committedRef.current = value;
+  // Render-phase adjust (react.dev "you might not need an effect"): re-seed
+  // from parent only when the committed value changes to something new
+  // (e.g., dialog opens with an existing referout row). Plain echo of the
+  // user's typing is filtered out because `committed` is only updated here.
+  if (value !== committed) {
+    setCommitted(value);
     const seed = valueLabel || value;
     setQuery(seed);
-    lastPickedRef.current = seed;
-  }, [value, valueLabel]);
+    setLastPicked(seed);
+  }
 
-  // Debounced search effect. Skips when:
-  //  - the input is empty, or
-  //  - the trimmed text equals the last picked / parent-seeded value.
+  // Derived visible list — search is "active" only when there's a trimmed
+  // query that doesn't equal the last picked / parent-seeded value; when
+  // inactive the dropdown shows nothing, no effect-driven clear needed.
+  const trimmed = query.trim();
+  const searchActive = trimmed.length > 0 && trimmed !== lastPicked;
+  const visibleItems = searchActive ? items : [];
+
+  // Debounced search effect — only runs while search is active.
   useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length === 0 || trimmed === lastPickedRef.current) {
-      setItems([]);
-      return;
-    }
+    if (!searchActive) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       setLoading(true);
@@ -121,7 +119,7 @@ export function LookupAutocomplete({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, fetch]);
+  }, [trimmed, searchActive, fetch]);
 
   return (
     <>
@@ -141,22 +139,22 @@ export function LookupAutocomplete({
         className={className ?? DEFAULT_INPUT_CLS}
       />
       <AnchoredDropdown
-        open={open && (items.length > 0 || loading)}
+        open={open && (visibleItems.length > 0 || loading)}
         anchorRef={inputRef}
         onDismiss={() => setOpen(false)}
       >
-        {loading && items.length === 0 && (
+        {loading && visibleItems.length === 0 && (
           <div className="px-3 py-2 text-[12px] text-slate-500">กำลังค้นหา…</div>
         )}
-        {items.map((it) => (
+        {visibleItems.map((it) => (
           <button
             key={`${it.value}-${it.primary}`}
             type="button"
             onClick={() => {
               onPick(it);
               setQuery(it.primary);
-              lastPickedRef.current = it.primary;
-              committedRef.current = it.value;
+              setLastPicked(it.primary);
+              setCommitted(it.value);
               setOpen(false);
               setItems([]);
             }}

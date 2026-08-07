@@ -30,69 +30,89 @@ const baseSession = {
 };
 
 describe('TopNavBar — provincial variant (default)', () => {
-  it('renders all 6 non-admin nav items for a NURSE', () => {
+  it('renders all 6 non-admin nav items for a NURSE', async () => {
     mockUseSession.mockReturnValue(baseSession);
     render(<TopNavBar />);
-    for (const label of ['แดชบอร์ด', 'ฝากครรภ์', 'โรงพยาบาล', 'ส่งต่อ', 'ผลลัพธ์ทารก', 'ห้องคลอด']) {
-      expect(screen.getByText(label)).toBeInTheDocument();
+    for (const label of [
+      'แดชบอร์ด',
+      'ฝากครรภ์',
+      'โรงพยาบาล',
+      'ส่งต่อ',
+      'ผลลัพธ์ทารก',
+      'ห้องคลอด',
+    ]) {
+      expect(await screen.findByText(label)).toBeInTheDocument();
     }
     expect(screen.queryByText('ตั้งค่า')).not.toBeInTheDocument();
   });
 
-  it('shows ตั้งค่า nav item for ADMIN', () => {
+  it('shows ตั้งค่า nav item for ADMIN', async () => {
     mockUseSession.mockReturnValue({
       data: { ...baseSession.data, user: { ...baseSession.data.user, role: 'ADMIN' } },
     });
     render(<TopNavBar />);
-    expect(screen.getByText('ตั้งค่า')).toBeInTheDocument();
+    expect(await screen.findByText('ตั้งค่า')).toBeInTheDocument();
   });
 
-  it('renders hospital badge with name + hcode', () => {
+  it('renders hospital badge with name + hcode', async () => {
     mockUseSession.mockReturnValue(baseSession);
     render(<TopNavBar />);
-    expect(screen.getByText(/รพ\.ขอนแก่น/)).toBeInTheDocument();
+    expect(await screen.findByText(/รพ\.ขอนแก่น/)).toBeInTheDocument();
     expect(screen.getByText(/10670/)).toBeInTheDocument();
   });
 
-  it('renders user name', () => {
+  it('renders user name', async () => {
     mockUseSession.mockReturnValue(baseSession);
     render(<TopNavBar />);
-    expect(screen.getByText('นางทดสอบ')).toBeInTheDocument();
+    expect(await screen.findByText('นางทดสอบ')).toBeInTheDocument();
   });
 
-  it('logout button calls signOut with /login callbackUrl', () => {
+  it('logout button calls signOut with /login callbackUrl', async () => {
     mockUseSession.mockReturnValue(baseSession);
     render(<TopNavBar />);
-    const logoutBtn = screen.getByLabelText(/ออกจากระบบ/);
+    const logoutBtn = await screen.findByLabelText(/ออกจากระบบ/);
     fireEvent.click(logoutBtn);
     expect(mockSignOut).toHaveBeenCalledWith({ callbackUrl: '/login' });
   });
 });
 
 describe('TopNavBar — hospital variant', () => {
-  it('renders only the ห้องคลอด label, no provincial nav links (design §4.2)', () => {
+  it('renders only the ห้องคลอด label, no provincial nav links (design §4.2)', async () => {
     mockUseSession.mockReturnValue(baseSession);
     render(<TopNavBar variant="hospital" />);
-    expect(screen.getByText('ห้องคลอด')).toBeInTheDocument();
+    expect(await screen.findByText('ห้องคลอด')).toBeInTheDocument();
     for (const label of ['แดชบอร์ด', 'ฝากครรภ์', 'โรงพยาบาล', 'ส่งต่อ', 'ผลลัพธ์ทารก', 'ตั้งค่า']) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
   });
 
-  it('hides the provincial nav even for an ADMIN', () => {
+  it('hides the provincial nav even for an ADMIN', async () => {
     mockUseSession.mockReturnValue({
       data: { ...baseSession.data, user: { ...baseSession.data.user, role: 'ADMIN' } },
     });
     render(<TopNavBar variant="hospital" />);
+    await screen.findByLabelText(/ออกจากระบบ/);
     expect(screen.queryByText('ตั้งค่า')).not.toBeInTheDocument();
   });
 
-  it('still renders hospital badge, user name, and logout button', () => {
+  it('still renders hospital badge, user name, and logout button', async () => {
     mockUseSession.mockReturnValue(baseSession);
     render(<TopNavBar variant="hospital" />);
-    expect(screen.getByText(/รพ\.ขอนแก่น/)).toBeInTheDocument();
+    expect(await screen.findByText(/รพ\.ขอนแก่น/)).toBeInTheDocument();
     expect(screen.getByText(/10670/)).toBeInTheDocument();
     expect(screen.getByText('นางทดสอบ')).toBeInTheDocument();
     expect(screen.getByLabelText(/ออกจากระบบ/)).toBeInTheDocument();
+  });
+
+  it('renders the notification-settings link un-hidden and linked to /profile', async () => {
+    mockUseSession.mockReturnValue(baseSession);
+    render(<TopNavBar variant="hospital" />);
+    const link = await screen.findByRole('link', { name: 'การตั้งค่าการแจ้งเตือน' });
+    expect(link).toBeInTheDocument();
+    // Regression: the link must NOT be visibility-hidden at any breakpoint
+    // (was `hidden ... md:inline-flex` — invisible on mobile). toBeVisible
+    // fails if Tailwind `hidden` is present.
+    expect(link).toBeVisible();
+    expect(link).toHaveAttribute('href', '/profile');
   });
 });

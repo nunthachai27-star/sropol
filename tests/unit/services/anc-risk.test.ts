@@ -4,11 +4,23 @@ import { AncRiskLevel } from '@/types/domain';
 import type { AncRiskInput } from '@/config/anc-risk-rules';
 
 const baseInput: AncRiskInput = {
-  age: 25, heightCm: 160, prePregnancyBmi: 22, gravida: 2,
-  bpSystolic: 120, bpDiastolic: 80, o2Sat: 98, hct: 36, hb: 12,
-  hosxpRiskIds: [], classifyingItems: [],
-  rhNegative: false, hbsAgPositive: false, syphilisPositive: false,
-  hivPositive: false, thalassemiaDisease: false, niptHighRisk: false,
+  age: 25,
+  heightCm: 160,
+  prePregnancyBmi: 22,
+  gravida: 2,
+  bpSystolic: 120,
+  bpDiastolic: 80,
+  o2Sat: 98,
+  hct: 36,
+  hb: 12,
+  hosxpRiskIds: [],
+  classifyingItems: [],
+  rhNegative: false,
+  hbsAgPositive: false,
+  syphilisPositive: false,
+  hivPositive: false,
+  thalassemiaDisease: false,
+  niptHighRisk: false,
 };
 
 describe('ANC Risk Service', () => {
@@ -66,6 +78,20 @@ describe('ANC Risk Service', () => {
     it('recommendation includes Thai provider info', () => {
       const result = evaluateAncRisk({ ...baseInput, prePregnancyBmi: 42 });
       expect(result.recommendation.providerTh).toBe('สูติแพทย์/MFM');
+    });
+
+    // ─── T3: completeness propagation ─────────────────────────────────────────
+    it('marks the assessment complete when all mandatory inputs are present', () => {
+      const result = evaluateAncRisk(baseInput);
+      expect(result.assessmentIncomplete).toBe(false);
+      expect(result.missingRequired).toEqual([]);
+    });
+
+    it('marks the assessment incomplete and lists the missing mandatory inputs', () => {
+      const result = evaluateAncRisk({ ...baseInput, o2Sat: null, hct: null, hb: null });
+      expect(result.assessmentIncomplete).toBe(true);
+      expect(result.missingRequired).toEqual(expect.arrayContaining(['o2Sat', 'hct', 'hb']));
+      expect(result.missingRequired).not.toContain('heightCm');
     });
   });
 });

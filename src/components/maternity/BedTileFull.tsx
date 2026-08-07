@@ -19,7 +19,17 @@
 'use client';
 
 import type { BedOccupancyFull } from '@/types/maternity-ward';
+import type { ConnectionConfig } from '@/types/bms-browser';
+import type { MaternalScreenSummaryItem } from '@/types/api';
 import { maskName } from '@/lib/pii-mask';
+import { PatientPhoto } from '@/components/shared/PatientPhoto';
+import {
+  MATERNAL_SCREEN_TIER_LABEL_TH,
+  MATERNAL_SCREEN_TIER_COLOR,
+  EMERGENCY_ACUITY_LABEL_TH,
+  EMERGENCY_ACUITY_COLOR,
+  MATERNAL_SCREEN_FALLBACK_COLOR,
+} from '@/config/maternal-screen-display';
 
 export interface BedTileFullProps {
   bedno: string;
@@ -31,6 +41,21 @@ export interface BedTileFullProps {
    *  under react-hooks/purity. */
   now: number;
   onClick?: (an: string) => void;
+  /** Active BMS connection — enables the patient face photo (fetched by HN).
+   *  Optional so the tile still renders (with a placeholder) in tests/contexts
+   *  without a live session. */
+  config?: ConnectionConfig | null;
+  marketplaceToken?: string | null;
+  /**
+   * Cross-source maternal-screen summary for THIS occupant (Phase 6 Task H4,
+   * docs/superpowers/plans/2026-07-17-maternal-screening-hosxp.md GC-H3/GC-H4).
+   * Resolved by the caller (WardLayoutViewFull, keyed by `occupant.an`) from
+   * the central-DB `useMaternalScreenSummaries` fetch — this tile never
+   * fetches on its own. `undefined`/`null`, or a summary with both axes
+   * null, renders zero DOM here: a missing/failed central fetch must degrade
+   * to "no chips", never an error tile (GC-H4).
+   */
+  maternalScreenSummary?: MaternalScreenSummaryItem | null;
 }
 
 // Categorical clinical colors — kept as constants so the JSX inline `style`
@@ -52,16 +77,21 @@ const C = {
   warn: '#D97706',
   crit: '#DC2626',
   // Categorical
-  cVitals: '#0891B2',  cVitalsBg: '#ECFEFF',
-  cLabour: '#4338CA',  cLabourBg: '#EEF2FF',
-  cCont:   '#7C3AED',  cContBg:   '#F5F3FF',
-  cFhr:    '#E11D48',  cFhrBg:    '#FFF1F2',
-  cInterv: '#059669',  cIntervBg: '#ECFDF5',
+  cVitals: '#0891B2',
+  cVitalsBg: '#ECFEFF',
+  cLabour: '#4338CA',
+  cLabourBg: '#EEF2FF',
+  cCont: '#7C3AED',
+  cContBg: '#F5F3FF',
+  cFhr: '#E11D48',
+  cFhrBg: '#FFF1F2',
+  cInterv: '#059669',
+  cIntervBg: '#ECFDF5',
   // Status pill fill
   pActive: '#059669',
   pLatent: '#2563EB',
-  pTrans:  '#D97706',
-  pCrit:   '#DC2626',
+  pTrans: '#D97706',
+  pCrit: '#DC2626',
 } as const;
 
 const FONT_SANS = "'Sarabun', system-ui, -apple-system, sans-serif";
@@ -98,6 +128,21 @@ function fmtBodyMetrics(o: BedOccupancyFull): string {
     o.last_bsa !== null && o.last_bsa !== undefined ? `BSA ${fmtDecimal(o.last_bsa, 2)}` : null,
   ].filter(Boolean);
   return items.length > 0 ? items.join(' · ') : '—';
+}
+
+// Short relative age ("5m" / "2h" / "3d") for the maternal-screen pill
+// tooltip, driven by the tile's `now` prop rather than src/lib/relative-time.ts's
+// formatRelativeAge (which calls Date.now() internally) — the tile's
+// render-purity contract (see the `now` prop doc above) forbids that.
+function fmtScreenAge(assessedAt: string | null, now: number): string | null {
+  if (!assessedAt) return null;
+  const ms = Date.parse(assessedAt);
+  if (!Number.isFinite(ms)) return null;
+  const diffMin = Math.floor(Math.max(0, now - ms) / 60_000);
+  if (diffMin < 60) return `${Math.max(1, diffMin)}m`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h`;
+  return `${Math.floor(diffHr / 24)}d`;
 }
 
 // Hours-since-admit, formatted HH:MM. Used both for severity and the tile
@@ -350,6 +395,27 @@ const compactKeyStyle: React.CSSProperties = {
   marginBottom: 1,
 };
 
+// Maternal-screen pill — same outlined-pill recipe as the blood_grp identity
+// pill above (mono, 9px, 700 weight, 0.16em tracking, 2px 6px padding,
+// uppercase, 1px radius, colored text + matching 1px border, no fill), but
+// colored from the maternal-screen-display LIGHT tokens instead of a fixed
+// C.* constant (GC-H3: this file's crit red stays reserved for the tile-level
+// alarm; a pill may reuse that same red value for its own text/border only).
+function screenPillStyle(color: string): React.CSSProperties {
+  return {
+    fontFamily: FONT_MONO,
+    fontSize: 9,
+    fontWeight: 700,
+    letterSpacing: '0.16em',
+    padding: '2px 6px',
+    textTransform: 'uppercase',
+    borderRadius: 1,
+    color,
+    border: `1px solid ${color}`,
+    whiteSpace: 'nowrap',
+  };
+}
+
 const compactValueStyle: React.CSSProperties = {
   fontFamily: FONT_SANS,
   fontSize: 11,
@@ -363,13 +429,32 @@ const compactValueStyle: React.CSSProperties = {
 
 // ─── main component ───────────────────────────────────────────────────────
 
-export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileFullProps) {
+export function BedTileFull({
+  bedno,
+  bedLock,
+  occupant,
+  now,
+  onClick,
+  config,
+  marketplaceToken,
+  maternalScreenSummary,
+}: BedTileFullProps) {
   if (bedLock === 'Y') return <LockedTile bedno={bedno} />;
   if (!occupant) return <EmptyTile bedno={bedno} />;
 
   const stage = classify(occupant, now);
   const isCrit = stage.kind === 'crit';
   const age = calcAge(occupant.birthday, now);
+
+  // Cross-source maternal-screen pills (Task H4) — zero DOM unless at least
+  // one axis is present (GC-H4: absent/both-null summary ⇒ tile renders
+  // exactly as today).
+  const screenTier = maternalScreenSummary?.localTier ?? null;
+  const screenAcuity = maternalScreenSummary?.emergencyAcuity ?? null;
+  const showScreenPills = screenTier !== null || screenAcuity !== null;
+  const screenAgeLabel = showScreenPills
+    ? fmtScreenAge(maternalScreenSummary?.assessedAt ?? null, now)
+    : null;
 
   // Status pill background per stage
   const pillBg = isCrit
@@ -452,11 +537,29 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
         }}
       >
         <div>
-          <span style={{ letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 700, marginRight: 6 }}>AN</span>
+          <span
+            style={{
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              fontWeight: 700,
+              marginRight: 6,
+            }}
+          >
+            AN
+          </span>
           <span style={{ color: C.ink, fontWeight: 700 }}>{occupant.an}</span>
         </div>
         <div>
-          <span style={{ letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 700, marginRight: 6 }}>HN</span>
+          <span
+            style={{
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              fontWeight: 700,
+              marginRight: 6,
+            }}
+          >
+            HN
+          </span>
           <span style={{ color: C.ink, fontWeight: 700 }}>{occupant.hn}</span>
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
@@ -516,19 +619,97 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
               {occupant.blood_grp}
             </span>
           )}
+          {/* Cross-source maternal-screen pills (Task H4, GC-H3/GC-H4) — shadow-mode,
+              provisional/unapproved rule set. Zero DOM when no summary or both axes
+              are null; NEVER alters tile-level border/shadow/background (that stays
+              reserved for the crit bed alarm above). */}
+          {showScreenPills && (
+            <span
+              data-testid="bed-maternal-screen"
+              title="การคัดกรองท้องถิ่น (โหมดเงา — ยังไม่ได้รับการรับรอง)"
+              style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+            >
+              {screenTier && (
+                <span
+                  data-testid="bed-maternal-screen-tier"
+                  style={screenPillStyle(
+                    MATERNAL_SCREEN_TIER_COLOR[screenTier] ?? MATERNAL_SCREEN_FALLBACK_COLOR,
+                  )}
+                >
+                  {MATERNAL_SCREEN_TIER_LABEL_TH[screenTier]}
+                </span>
+              )}
+              {screenAcuity && (
+                <span
+                  data-testid="bed-maternal-screen-acuity"
+                  style={screenPillStyle(
+                    EMERGENCY_ACUITY_COLOR[screenAcuity] ?? MATERNAL_SCREEN_FALLBACK_COLOR,
+                  )}
+                >
+                  {EMERGENCY_ACUITY_LABEL_TH[screenAcuity]}
+                </span>
+              )}
+              {screenAgeLabel && (
+                <span
+                  data-testid="bed-maternal-screen-age"
+                  style={{ fontSize: 8.5, color: C.mute }}
+                >
+                  {screenAgeLabel}
+                </span>
+              )}
+            </span>
+          )}
         </div>
       </div>
 
       {/* Name */}
-      <div style={{ padding: '7px 14px 6px', borderBottom: `1px solid ${C.ruleSoft}` }}>
-        <div style={{ fontSize: 15, fontWeight: 800, lineHeight: 1.2, color: C.ink, marginBottom: 2 }}>
-          {thaiName(occupant)}
-        </div>
-        <div style={{ fontFamily: FONT_MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.04em', color: C.mute }}>
-          {age !== null && <b style={{ color: C.inkSoft, fontWeight: 700 }}>{age}Y</b>}
-          {age !== null && occupant.gravida !== null && <> · </>}
-          {occupant.gravida !== null && <>G{occupant.gravida}</>}
-          {occupant.ga !== null && <> · GA <b style={{ color: C.inkSoft, fontWeight: 700 }}>{occupant.ga}</b></>}
+      <div
+        style={{
+          display: 'flex',
+          gap: 10,
+          alignItems: 'center',
+          padding: '7px 14px 6px',
+          borderBottom: `1px solid ${C.ruleSoft}`,
+        }}
+      >
+        <PatientPhoto
+          hn={occupant.hn}
+          config={config}
+          marketplaceToken={marketplaceToken}
+          name={thaiName(occupant)}
+          size={46}
+        />
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 15,
+              fontWeight: 800,
+              lineHeight: 1.2,
+              color: C.ink,
+              marginBottom: 2,
+            }}
+          >
+            {thaiName(occupant)}
+          </div>
+          <div
+            style={{
+              fontFamily: FONT_MONO,
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: '0.04em',
+              color: C.mute,
+            }}
+          >
+            {age !== null && <b style={{ color: C.inkSoft, fontWeight: 700 }}>{age}Y</b>}
+            {age !== null && occupant.gravida !== null && <> · </>}
+            {occupant.gravida !== null && <>G{occupant.gravida}</>}
+            {occupant.ga !== null && (
+              <>
+                {' '}
+                · GA <b style={{ color: C.inkSoft, fontWeight: 700 }}>{occupant.ga}</b>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -578,7 +759,9 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
       {/* VITALS — from ipd_nurse_note latest */}
       <div style={sectionStyle(C.cVitalsBg, C.cVitals)}>
         <div style={{ ...sectionLabelStyle, color: C.cVitals }}>Vitals</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1.35fr repeat(5, 1fr)', gap: '4px 8px' }}>
+        <div
+          style={{ display: 'grid', gridTemplateColumns: '1.35fr repeat(5, 1fr)', gap: '4px 8px' }}
+        >
           <div>
             <div style={{ ...dataKeyStyle, color: C.cVitals }}>BP</div>
             <div style={dataValueStyle}>{fmtBp(occupant.last_bp_sys, occupant.last_bp_dia)}</div>
@@ -638,10 +821,15 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
                   fontFamily: FONT_MONO,
                   fontSize: 14,
                   fontWeight: 700,
-                  color: cervixFillColor(occupant.last_cervix_cm) === C.cLabour ? C.ink : cervixFillColor(occupant.last_cervix_cm),
+                  color:
+                    cervixFillColor(occupant.last_cervix_cm) === C.cLabour
+                      ? C.ink
+                      : cervixFillColor(occupant.last_cervix_cm),
                 }}
               >
-                {occupant.last_cervix_cm !== null ? String(occupant.last_cervix_cm).padStart(2, '0') : '—'}
+                {occupant.last_cervix_cm !== null
+                  ? String(occupant.last_cervix_cm).padStart(2, '0')
+                  : '—'}
               </span>
             </div>
           </div>
@@ -678,7 +866,9 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
         </div>
         <div style={sectionStyle(C.cFhrBg, C.cFhr)}>
           <div style={{ ...sectionLabelStyle, color: C.cFhr, textAlign: 'right' }}>FHR · EFM</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'flex-end' }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'flex-end' }}
+          >
             <span
               style={{
                 fontFamily: FONT_MONO,
@@ -715,9 +905,7 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
           <div>
             <div style={{ ...dataKeyStyle, color: C.cInterv }}>Oxytocin</div>
             <div style={{ ...dataValueStyle, fontSize: 12 }}>
-              {occupant.last_oxytocin_uml !== null
-                ? `${occupant.last_oxytocin_uml} mU/min`
-                : '—'}
+              {occupant.last_oxytocin_uml !== null ? `${occupant.last_oxytocin_uml} mU/min` : '—'}
             </div>
           </div>
           <div>
@@ -747,15 +935,45 @@ export function BedTileFull({ bedno, bedLock, occupant, now, onClick }: BedTileF
         }}
       >
         <div>
-          <span style={{ color: footKeyColor, letterSpacing: '0.18em', textTransform: 'uppercase', marginRight: 4, fontWeight: 600 }}>Admit</span>
+          <span
+            style={{
+              color: footKeyColor,
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              marginRight: 4,
+              fontWeight: 600,
+            }}
+          >
+            Admit
+          </span>
           {(occupant.regtime ?? '').slice(0, 5) || '—'}
         </div>
         <div>
-          <span style={{ color: footKeyColor, letterSpacing: '0.18em', textTransform: 'uppercase', marginRight: 4, fontWeight: 600 }}>Hrs</span>
+          <span
+            style={{
+              color: footKeyColor,
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              marginRight: 4,
+              fontWeight: 600,
+            }}
+          >
+            Hrs
+          </span>
           {fmtHours(occupant.regdate, occupant.regtime, now)}
         </div>
         <div>
-          <span style={{ color: footKeyColor, letterSpacing: '0.18em', textTransform: 'uppercase', marginRight: 4, fontWeight: 600 }}>Last</span>
+          <span
+            style={{
+              color: footKeyColor,
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              marginRight: 4,
+              fontWeight: 600,
+            }}
+          >
+            Last
+          </span>
           {fmtAssessTime(occupant.last_assess_date, occupant.last_assess_time)}
           {occupant.last_assess_staff && ` · ${occupant.last_assess_staff}`}
         </div>

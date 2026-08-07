@@ -1,16 +1,19 @@
 // T034: Seed orchestrator tests
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
+import { PgliteAdapter, createPglite } from '@/db/pglite-adapter';
 import { SchemaSync } from '@/db/schema-sync';
 import { SeedOrchestrator, HospitalSeeder, AdminSeeder } from '@/db/seeds/index';
 import { ALL_TABLES } from '@/db/tables/index';
 
 describe('SeedOrchestrator', () => {
-  let db: SqliteAdapter;
+  let db: PgliteAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    // Fresh instance per test: seeder shouldRun() guards are the subject
+    // under test, so the DB must start truly empty (the shared harness
+    // preserves the thai-geo lookups, which would skip ThaiGeoSeeder).
+    db = new PgliteAdapter(createPglite());
+    await SchemaSync.sync(db, ALL_TABLES, 'postgresql');
   });
 
   afterEach(async () => {

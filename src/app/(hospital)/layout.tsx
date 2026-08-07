@@ -5,17 +5,22 @@
 // own session check.
 import { SessionProvider } from 'next-auth/react';
 import { BmsSessionProvider } from '@/contexts/BmsSessionContext';
+import { CallProvider } from '@/components/calls/CallProvider';
 import { TopNavBar } from '@/components/layout/TopNavBar';
-import { withBasePath } from '@/lib/base-path';
+import { ClinicalChatPanel } from '@/components/chat/ClinicalChatPanel';
 
 export default function HospitalLayout({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider basePath={withBasePath('/api/auth')}>
+    <SessionProvider>
       <BmsSessionProvider>
-        <div className="flex min-h-screen flex-col bg-slate-50/50">
-          <TopNavBar variant="hospital" />
-          <main className="flex-1">{children}</main>
-        </div>
+        <CallProvider>
+          <div className="flex min-h-screen flex-col bg-slate-50/50">
+            <TopNavBar variant="hospital" />
+            <main className="flex-1">{children}</main>
+            {/* Clinical chatbot — maternity-ward mode (per-patient clinical RAG). */}
+            <ClinicalChatPanel mode="clinical" />
+          </div>
+        </CallProvider>
       </BmsSessionProvider>
     </SessionProvider>
   );

@@ -25,11 +25,10 @@ jobs:
     timeout-minutes: 15
 
     env:
-      # Tests use SQLite in-memory; no real database connection needed.
+      # Tests use in-memory pglite (embedded Postgres); no database server needed.
       # ENCRYPTION_KEY is generated per-test in tests/integration/* setup,
       # but defining one here lets any code path that reads process.env work.
       ENCRYPTION_KEY: ci_test_encryption_key_64_hex_chars_____________________________padding
-      USE_SQLITE: 'true'
       NODE_ENV: test
 
     steps:

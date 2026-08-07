@@ -2,14 +2,10 @@
 // broadcasts severity changes, updates hospital ONLINE timestamp.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { v4 as uuidv4 } from 'uuid';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import type { SseManager } from '@/lib/sse';
-import {
-  processPartographWebhook,
-  type WebhookPartographPayload,
-} from '@/services/webhook';
+import { processPartographWebhook, type WebhookPartographPayload } from '@/services/webhook';
 
 // Duck-typed mock — SseManager has a private constructor; we only call broadcast().
 class MockSseManager {
@@ -29,7 +25,7 @@ function asSse(mock: MockSseManager): SseManager {
 }
 
 async function seedPatient(
-  db: SqliteAdapter,
+  db: DatabaseAdapter,
   hospitalId: string,
   hn: string,
   an: string,
@@ -47,20 +43,19 @@ async function seedPatient(
 }
 
 describe('processPartographWebhook', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let sse: MockSseManager;
   let hospitalId: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
 
     hospitalId = uuidv4();
     const now = new Date().toISOString();
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [hospitalId, '99901', 'รพ.ทดสอบ Partograph', 'M2', 1, 'UNKNOWN', now, now],
+      [hospitalId, '99901', 'รพ.ทดสอบ Partograph', 'M2', true, 'UNKNOWN', now, now],
     );
 
     sse = new MockSseManager();
@@ -76,14 +71,16 @@ describe('processPartographWebhook', () => {
     const payload: WebhookPartographPayload = {
       type: 'partograph',
       hospitalCode: '99901',
-      observations: [{
-        an: 'AN-1',
-        externalObservationId: 'EXT-1',
-        observeDatetime: '2026-04-19T08:00:00+07:00',
-        hourNo: 1,
-        fetalHeartRate: 140,
-        cervicalDilationCm: 4,
-      }],
+      observations: [
+        {
+          an: 'AN-1',
+          externalObservationId: 'EXT-1',
+          observeDatetime: '2026-04-19T08:00:00+07:00',
+          hourNo: 1,
+          fetalHeartRate: 140,
+          cervicalDilationCm: 4,
+        },
+      ],
     };
 
     const result = await processPartographWebhook(db, hospitalId, payload, asSse(sse));
@@ -147,12 +144,14 @@ describe('processPartographWebhook', () => {
     const payload: WebhookPartographPayload = {
       type: 'partograph',
       hospitalCode: '99901',
-      observations: [{
-        an: 'AN-1',
-        externalObservationId: 'EXT-CRIT',
-        observeDatetime: '2026-04-19T08:00:00+07:00',
-        fetalHeartRate: 80, // CDSS will flag bradycardia
-      }],
+      observations: [
+        {
+          an: 'AN-1',
+          externalObservationId: 'EXT-CRIT',
+          observeDatetime: '2026-04-19T08:00:00+07:00',
+          fetalHeartRate: 80, // CDSS will flag bradycardia
+        },
+      ],
     };
 
     await processPartographWebhook(db, hospitalId, payload, asSse(sse));
@@ -169,30 +168,44 @@ describe('processPartographWebhook', () => {
     await seedPatient(db, hospitalId, 'HN-1', 'AN-1');
 
     // First call: establish severity.
-    await processPartographWebhook(db, hospitalId, {
-      type: 'partograph',
-      hospitalCode: '99901',
-      observations: [{
-        an: 'AN-1',
-        externalObservationId: 'EXT-1',
-        observeDatetime: '2026-04-19T08:00:00+07:00',
-        fetalHeartRate: 140,
-      }],
-    }, asSse(sse));
+    await processPartographWebhook(
+      db,
+      hospitalId,
+      {
+        type: 'partograph',
+        hospitalCode: '99901',
+        observations: [
+          {
+            an: 'AN-1',
+            externalObservationId: 'EXT-1',
+            observeDatetime: '2026-04-19T08:00:00+07:00',
+            fetalHeartRate: 140,
+          },
+        ],
+      },
+      asSse(sse),
+    );
 
     sse.events = [];
 
     // Second call: same severity (also normal FHR).
-    await processPartographWebhook(db, hospitalId, {
-      type: 'partograph',
-      hospitalCode: '99901',
-      observations: [{
-        an: 'AN-1',
-        externalObservationId: 'EXT-2',
-        observeDatetime: '2026-04-19T09:00:00+07:00',
-        fetalHeartRate: 142,
-      }],
-    }, asSse(sse));
+    await processPartographWebhook(
+      db,
+      hospitalId,
+      {
+        type: 'partograph',
+        hospitalCode: '99901',
+        observations: [
+          {
+            an: 'AN-1',
+            externalObservationId: 'EXT-2',
+            observeDatetime: '2026-04-19T09:00:00+07:00',
+            fetalHeartRate: 142,
+          },
+        ],
+      },
+      asSse(sse),
+    );
 
     const events = sse.getEventsByType('partograph_severity_changed');
     expect(events).toHaveLength(0);
@@ -201,16 +214,23 @@ describe('processPartographWebhook', () => {
   it("updates hospital connection_status to 'ONLINE' and bumps last_sync_at", async () => {
     await seedPatient(db, hospitalId, 'HN-1', 'AN-1');
 
-    await processPartographWebhook(db, hospitalId, {
-      type: 'partograph',
-      hospitalCode: '99901',
-      observations: [{
-        an: 'AN-1',
-        externalObservationId: 'EXT-1',
-        observeDatetime: '2026-04-19T08:00:00+07:00',
-        fetalHeartRate: 140,
-      }],
-    }, asSse(sse));
+    await processPartographWebhook(
+      db,
+      hospitalId,
+      {
+        type: 'partograph',
+        hospitalCode: '99901',
+        observations: [
+          {
+            an: 'AN-1',
+            externalObservationId: 'EXT-1',
+            observeDatetime: '2026-04-19T08:00:00+07:00',
+            fetalHeartRate: 140,
+          },
+        ],
+      },
+      asSse(sse),
+    );
 
     const rows = await db.query<{ connection_status: string; last_sync_at: string | null }>(
       'SELECT connection_status, last_sync_at FROM hospitals WHERE id = ?',
@@ -224,27 +244,41 @@ describe('processPartographWebhook', () => {
     await seedPatient(db, hospitalId, 'HN-1', 'AN-1');
 
     // Insert first.
-    await processPartographWebhook(db, hospitalId, {
-      type: 'partograph',
-      hospitalCode: '99901',
-      observations: [{
-        an: 'AN-1',
-        externalObservationId: 'EXT-DEL',
-        observeDatetime: '2026-04-19T08:00:00+07:00',
-        fetalHeartRate: 140,
-      }],
-    }, asSse(sse));
+    await processPartographWebhook(
+      db,
+      hospitalId,
+      {
+        type: 'partograph',
+        hospitalCode: '99901',
+        observations: [
+          {
+            an: 'AN-1',
+            externalObservationId: 'EXT-DEL',
+            observeDatetime: '2026-04-19T08:00:00+07:00',
+            fetalHeartRate: 140,
+          },
+        ],
+      },
+      asSse(sse),
+    );
 
     // Then delete.
-    const result = await processPartographWebhook(db, hospitalId, {
-      type: 'partograph',
-      hospitalCode: '99901',
-      observations: [{
-        an: 'AN-1',
-        externalObservationId: 'EXT-DEL',
-        action: 'delete',
-      }],
-    }, asSse(sse));
+    const result = await processPartographWebhook(
+      db,
+      hospitalId,
+      {
+        type: 'partograph',
+        hospitalCode: '99901',
+        observations: [
+          {
+            an: 'AN-1',
+            externalObservationId: 'EXT-DEL',
+            action: 'delete',
+          },
+        ],
+      },
+      asSse(sse),
+    );
 
     expect(result.observationsAccepted).toBe(1); // counts deleted
 

@@ -21,7 +21,15 @@
 // session), and the same code path the Delphi client exercises in prod.
 
 import { executeSql } from '@/lib/bms-browser-client';
-import { withBasePath } from '@/lib/base-path';
+import { classifyAncItems } from '@/config/anc-classifying-canon';
+import {
+  LABOUR_INFANTS_SINCE,
+  IPT_PREGNANCY_DELIVERIES_SINCE,
+  REFEROUT_MATERNITY_SINCE,
+  REFERIN_SINCE,
+  OVST_FIRST_VISIT_FOR_CIDS,
+} from '@/config/hosxp-queries';
+import { isStaleAdmission } from '@/config/hospital-network';
 import type { ConnectionConfig, SqlApiResponse } from '@/types/bms-browser';
 
 // ─── Webhook payload shapes (mirror src/services/webhook.ts) ────────────────
@@ -114,6 +122,7 @@ interface BrowserAncPatient {
   lmp?: string;
   edc?: string;
   riskLevel?: string;
+  riskItemIds?: number[];
   changwatCode?: string;
   amphurCode?: string;
   tambonCode?: string;
@@ -123,20 +132,62 @@ interface BrowserAncPatient {
 }
 
 export interface BrowserPushBody {
-  labor?: { patients: BrowserLaborPatient[]; mode?: 'incremental' | 'full_snapshot' };
+  /**
+   * BMS PasteJSON session id this pull ran under. Optional — older clients
+   * omit it. The server stamps it on the SyncProgressRun record so operators
+   * can run diagnostic SQL against this hospital's HOSxP via the BMS Session
+   * API (e.g. to check ward.is_maternity_ward / ipt.ipt_admit_type_id when a
+   * hospital's labor feed is unexpectedly empty).
+   */
+  bms_session_id?: string;
+  labor?: {
+    patients: BrowserLaborPatient[];
+    mode?: 'incremental' | 'full_snapshot';
+    // Authoritative complete active-AN set for discharge reconciliation. May be
+    // present with an empty `patients` list (ward emptied / all rows dropped by
+    // the name probe) — the server closes out cached ACTIVE rows absent from it.
+    activeAns?: string[];
+  };
   anc?: { patients: BrowserAncPatient[] };
   partograph?: { observations: BrowserPartographObservation[] };
+  /** Raw HOSxP delivery rows since the server-issued newborn cutoff. */
+  newborns?: {
+    infants: Record<string, unknown>[];
+    pregnancies: Record<string, unknown>[];
+  };
+  /** Raw HOSxP referral rows: referouts (this hospital = origin), referins
+   *  (this hospital = destination, arrival evidence), plus ovst visit
+   *  evidence for the server-issued probe CIDs. Rolling windows. */
+  referrals?: {
+    referouts: Record<string, unknown>[];
+    referins: Record<string, unknown>[];
+    visitEvidences: Record<string, unknown>[];
+  };
 }
 
 export interface BrowserPollResult {
   durationMs: number;
   /** `dropped*` = patients filtered out by the per-patient name probe. */
-  labor: { read: number; mapped: number; sent: number; droppedNameUnstable: number };
+  labor: {
+    read: number;
+    mapped: number;
+    sent: number;
+    droppedNameUnstable: number;
+    /** Admissions auto-closed by the stale-admission policy this cycle. */
+    droppedStaleAdmission?: number;
+  };
   partograph: { read: number; mapped: number; sent: number; droppedNameUnstable: number };
   anc: { read: number; mapped: number; sent: number; droppedNameUnstable: number };
+  /** Delivery rows read since the server-issued newborn cutoff. */
+  newborns?: { infantsRead: number; pregnanciesRead: number };
+  /** Referral rows read from the rolling 60-day HOSxP window. */
+  referrals?: { referoutsRead: number; referinsRead: number };
   pushedToServer: boolean;
   /** Verdict of the name round-trip probe — present whenever a probe ran. */
-  authenticity?: { status: 'authentic' | 'name_unstable' | 'no_data' | 'probe_failed'; detail: string };
+  authenticity?: {
+    status: 'authentic' | 'name_unstable' | 'no_data' | 'probe_failed';
+    detail: string;
+  };
   error?: string;
   /**
    * True when the server returned a permanent rejection (403 — readonly
@@ -147,86 +198,24 @@ export interface BrowserPollResult {
   permanentBlock?: boolean;
 }
 
-export type LaborPushMode = 'incremental' | 'full_snapshot';
-
-/**
- * Decide the labor-push mode for a browser-poll cycle.
- *
- * 'full_snapshot' lets the server discharge cached ACTIVE patients that are
- * absent from this payload (reconciliation). That is only safe when the push
- * is a COMPLETE, verified view of the hospital's active set — i.e. identities
- * round-tripped ('authentic') AND the name probe dropped nobody. Any other
- * state (probe failed, some patients dropped, authenticity never established)
- * means the payload may be a partial/unverified view, so we stay 'incremental'
- * (upsert-only, never discharges) to avoid wrongly closing an active case.
- *
- * Without this, the browser path — now the central sync path — never
- * reconciles discharges, so cached_patients accumulates stale ACTIVE rows and
- * the labor-ward count diverges from HOSxP's true active set.
- */
-export function decideLaborPushMode(opts: {
-  authenticityStatus: NonNullable<BrowserPollResult['authenticity']>['status'] | undefined;
-  droppedNameUnstable: number;
-}): LaborPushMode {
-  return opts.authenticityStatus === 'authentic' && opts.droppedNameUnstable === 0
-    ? 'full_snapshot'
-    : 'incremental';
-}
-
-/**
- * Effective poll delay given how many cycles have failed back-to-back. Healthy
- * polls (and the first couple of transient failures) keep the base cadence;
- * once failures cross `thresholdFailures` the delay doubles each cycle, capped
- * at `maxMs`. A returning success resets the caller's counter to 0 → base.
- *
- * This stops a persistently-unreachable hospital (down gateway, CORS-blocked
- * tunnel from a remote tab) from re-firing the whole query set every 60s
- * forever — failing every time and flooding the console/tunnel for nothing.
- */
-export function pollBackoffDelay(
-  consecutiveFailures: number,
-  baseMs: number,
-  opts: { thresholdFailures?: number; maxMs?: number } = {},
-): number {
-  const threshold = opts.thresholdFailures ?? 3;
-  const maxMs = opts.maxMs ?? 10 * 60_000;
-  if (consecutiveFailures < threshold) return baseMs;
-  const steps = consecutiveFailures - threshold + 1;
-  return Math.min(baseMs * 2 ** steps, maxMs);
-}
-
 // ─── SQL queries (MySQL flavour — HOSxP) ────────────────────────────────────
 //
 // Mirrors src/config/hosxp-queries.ts (server-side polling) but inlined so
 // the browser bundle doesn't drag in PG-only types.
 //
 // Scope:
-//   - i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
-//     → still admitted. dchdate (clinical discharge date) is the reliable "still
-//     in ward" signal: hospitals that skip the "ยืนยันการจำหน่าย" workflow (e.g.
-//     รพ.ท่าตูม on HOSxP V.3) leave confirm_discharge='N' forever, so relying on
-//     it alone bloats the ward with every past admission (observed live: >100
-//     rows, tripping the 100-item push cap so labor never persisted). dchdate
-//     flips on discharge at every site. The `dchdate < regdate` arm covers
-//     MySQL/HOSxP zero-dates ('0000-00-00' for un-discharged, which is < any
-//     real regdate) without a literal that Postgres cannot represent — so the
-//     one query stays correct on MySQL and PostgreSQL alike.
+//   - i.confirm_discharge = 'N'   → still admitted
 //   - w.is_maternity_ward = 'Y'   → per-site scope flag set in HOSxP ward admin
-//   - i.ipt_admit_type_id = 3 OR IS NULL → prefer "delivery admission", but
-//                                    tolerate hospitals that don't code the
-//                                    admit type at all. At hcode 11004, coding
-//                                    it = 3 keeps out early-pregnancy management
-//                                    (miscarriage / threatened abortion),
-//                                    post-partum readmissions, and gynae cases
-//                                    that would otherwise show "ACTIVE LABOR ·
-//                                    PROVINCE" with nonsensical GA values. But
-//                                    รพ.ปราสาท (10918) leaves ipt_admit_type_id
-//                                    NULL on EVERY admission, so a bare "= 3"
-//                                    hid all 6 of its current labor patients —
-//                                    the is_maternity_ward flag is the reliable
-//                                    labor-ward signal, so NULL is admitted.
-//                                    Cf. Pascal client (KKLRMSWebhookUnit.pas L594).
-export const SQL_ACTIVE_LABOUR = `
+//   - i.ipt_admit_type_id = 3     → "delivery admission" specifically. Without
+//                                    this, we pick up early-pregnancy management
+//                                    (miscarriage / threatened abortion, G1 GA
+//                                    10 weeks at hcode 11004 was the first
+//                                    real-world hit), post-partum readmissions,
+//                                    and gynae procedures — all show up under
+//                                    "ACTIVE LABOR · PROVINCE" with clinically
+//                                    nonsensical GA values. Matches the
+//                                    Pascal client (KKLRMSWebhookUnit.pas L594).
+const SQL_ACTIVE_LABOUR = `
   SELECT i.an, i.hn, i.regdate, i.regtime, i.dchdate,
          CONCAT(p.pname, p.fname, ' ', p.lname) AS patient_name,
          p.pname, p.fname, p.lname,
@@ -251,10 +240,10 @@ export const SQL_ACTIVE_LABOUR = `
     LEFT JOIN ipt_pregnancy ip ON ip.an = i.an
     LEFT JOIN ipt_pregnancy_vital_sign pvs ON pvs.an = i.an
    WHERE i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
-     AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
+     AND i.ipt_admit_type_id = 3
    ORDER BY i.regdate DESC`;
 
-export const SQL_PARTOGRAPH = `
+const SQL_PARTOGRAPH = `
   SELECT lp.ipt_labour_partograph_id, lp.an,
          lp.observe_datetime, lp.hour_no,
          lp.fetal_heart_rate,
@@ -269,7 +258,7 @@ export const SQL_PARTOGRAPH = `
     JOIN ipt i ON i.an = lp.an
     JOIN ward w ON w.ward = i.ward AND w.is_maternity_ward = 'Y'
    WHERE i.confirm_discharge = 'N' AND (i.dchdate IS NULL OR i.dchdate < i.regdate)
-     AND (i.ipt_admit_type_id = 3 OR i.ipt_admit_type_id IS NULL)
+     AND i.ipt_admit_type_id = 3
    ORDER BY lp.an, lp.observe_datetime`;
 
 // ANC active window: edc within 45 days post-EDC OR lmp within 330 days.
@@ -277,9 +266,7 @@ export const SQL_PARTOGRAPH = `
 // browser-poll matches what server-side polling used to pull.
 function ancActiveWhere(): string {
   const today = new Date();
-  const postpartumCutoff = new Date(today.getTime() - 45 * 86_400_000)
-    .toISOString()
-    .slice(0, 10);
+  const postpartumCutoff = new Date(today.getTime() - 45 * 86_400_000).toISOString().slice(0, 10);
   const lmpCutoff = new Date(today.getTime() - 330 * 86_400_000).toISOString().slice(0, 10);
   return `(COALESCE(pa.discharge, 'N') <> 'Y'
       AND pa.labor_status_id = 1
@@ -376,23 +363,8 @@ function pickLatest(r1: unknown, r2: unknown): string | null {
   return strOrNull(r1);
 }
 
-// Khon Kaen ANC risk classification — mirrors GetANCRiskLevel in
-// docs/hosxp/KKLRMSWebhookUnit.pas. HR3 > HR2 > HR1; any HR3 item wins.
-function deriveAncRisk(itemIds: number[]): string {
-  let max = 0;
-  for (const id of itemIds) {
-    const lvl =
-      [15, 16, 17, 18].includes(id) ? 3
-      : [4, 6, 10, 12, 13, 14].includes(id) ? 2
-      : [1, 2, 3, 5, 7, 8, 9, 11].includes(id) ? 1
-      : 1;
-    if (lvl > max) max = lvl;
-  }
-  if (max === 3) return 'HR3';
-  if (max === 2) return 'HR2';
-  if (max === 1) return 'HR1';
-  return 'LOW';
-}
+// Khon Kaen ANC risk classification — shared canon (mirrors GetANCRiskLevel
+// in docs/hosxp/KKLRMSWebhookUnit.pas); see src/config/anc-classifying-canon.
 
 function calcAge(birthday: string | null): number {
   if (!birthday) return 0;
@@ -522,29 +494,31 @@ function mapAncBundle(
     const ancId = String(m.person_anc_id ?? '');
     const items = classByAnc.get(ancId) ?? [];
 
-    const visitRows = (visitsByAnc.get(ancId) ?? []).map((v) => {
-      const date = strOrNull(v.anc_service_date);
-      const visitNumber = intOrNull(v.anc_service_number);
-      if (!date || visitNumber == null) return null;
-      const visit: BrowserAncVisit = { date, visitNumber };
-      const ga = intOrNull(v.pa_week);
-      if (ga != null) visit.gaWeeks = ga;
-      const w = numOrNull(v.bw);
-      if (w != null) visit.weightKg = w;
-      const bps = intOrNull(v.bps);
-      if (bps != null) visit.bpSystolic = bps;
-      const bpd = intOrNull(v.bpd);
-      if (bpd != null) visit.bpDiastolic = bpd;
-      const fhr = intOrNull(v.baby_fetal_heart_sound);
-      if (fhr != null) visit.fetalHr = fhr;
-      visit.hctPct = parseLabFloat(strOrNull(v.hct_result));
-      visit.hbGDl = parseLabFloat(strOrNull(v.hb_result));
-      visit.urineProtein = strOrNull(v.albumin);
-      visit.urineGlucose = strOrNull(v.sugar);
-      visit.presentation = strOrNull(v.presentation_name);
-      visit.engagement = strOrNull(v.engagement_name);
-      return visit;
-    }).filter((x): x is BrowserAncVisit => x !== null);
+    const visitRows = (visitsByAnc.get(ancId) ?? [])
+      .map((v) => {
+        const date = strOrNull(v.anc_service_date);
+        const visitNumber = intOrNull(v.anc_service_number);
+        if (!date || visitNumber == null) return null;
+        const visit: BrowserAncVisit = { date, visitNumber };
+        const ga = intOrNull(v.pa_week);
+        if (ga != null) visit.gaWeeks = ga;
+        const w = numOrNull(v.bw);
+        if (w != null) visit.weightKg = w;
+        const bps = intOrNull(v.bps);
+        if (bps != null) visit.bpSystolic = bps;
+        const bpd = intOrNull(v.bpd);
+        if (bpd != null) visit.bpDiastolic = bpd;
+        const fhr = intOrNull(v.baby_fetal_heart_sound);
+        if (fhr != null) visit.fetalHr = fhr;
+        visit.hctPct = parseLabFloat(strOrNull(v.hct_result));
+        visit.hbGDl = parseLabFloat(strOrNull(v.hb_result));
+        visit.urineProtein = strOrNull(v.albumin);
+        visit.urineGlucose = strOrNull(v.sugar);
+        visit.presentation = strOrNull(v.presentation_name);
+        visit.engagement = strOrNull(v.engagement_name);
+        return visit;
+      })
+      .filter((x): x is BrowserAncVisit => x !== null);
 
     const patient: BrowserAncPatient = {
       hn: strOrNull(m.hn),
@@ -563,7 +537,8 @@ function mapAncBundle(
     if (amp) patient.amphurCode = amp;
     const tmb = strOrNull(m.tmbpart);
     if (tmb) patient.tambonCode = tmb;
-    patient.riskLevel = deriveAncRisk(items);
+    patient.riskLevel = classifyAncItems(items).level;
+    patient.riskItemIds = items;
     patient.vdrlResult = pickLatest(m.blood_vdrl1_result, m.blood_vdrl2_result);
     patient.hivResult = pickLatest(m.blood_hiv1_result, m.blood_hiv2_result);
     if (visitRows.length > 0) patient.visits = visitRows;
@@ -577,6 +552,8 @@ function mapAncBundle(
 interface RunOptions {
   config: ConnectionConfig;
   marketplaceToken?: string | null;
+  /** BMS PasteJSON session id — attached to the push body when available. */
+  bmsSessionId?: string | null;
   signal?: AbortSignal;
 }
 
@@ -584,7 +561,12 @@ async function runQuery<T>(sql: string, opts: RunOptions): Promise<T[]> {
   if (opts.signal?.aborted) {
     throw new DOMException('aborted', 'AbortError');
   }
-  const res: SqlApiResponse<T> = await executeSql<T>(sql, opts.config, undefined, opts.marketplaceToken);
+  const res: SqlApiResponse<T> = await executeSql<T>(
+    sql,
+    opts.config,
+    undefined,
+    opts.marketplaceToken,
+  );
   return Array.isArray(res.data) ? res.data : [];
 }
 
@@ -671,10 +653,7 @@ async function probeOneSource(
     for (let i = 0; i < candidates.length; i += BULK_PROBE_BATCH) {
       const batch = candidates.slice(i, i + BULK_PROBE_BATCH);
       const tuples = batch
-        .map(
-          (c) =>
-            `('${sqlString(c.idValue)}','${sqlString(c.fname)}','${sqlString(c.lname)}')`,
-        )
+        .map((c) => `('${sqlString(c.idValue)}','${sqlString(c.fname)}','${sqlString(c.lname)}')`)
         .join(',');
       const sql =
         `SELECT ${idColumn}, fname, lname FROM ${table} ` +
@@ -717,8 +696,14 @@ async function probeAllPatientsNames(
   if (candidates.length === 0) return result;
 
   // Partition by source table and dedupe per-source.
-  const laborByKey = new Map<string, { idValue: string; fname: string; lname: string; key: string }>();
-  const ancByKey = new Map<string, { idValue: string; fname: string; lname: string; key: string }>();
+  const laborByKey = new Map<
+    string,
+    { idValue: string; fname: string; lname: string; key: string }
+  >();
+  const ancByKey = new Map<
+    string,
+    { idValue: string; fname: string; lname: string; key: string }
+  >();
   for (const c of candidates) {
     if (c.source === 'labor') {
       const key = laborKey(c.hn, c.fname, c.lname);
@@ -771,7 +756,7 @@ async function reportAuthenticityVerdict(
   signal?: AbortSignal,
 ): Promise<{ permanentBlock: boolean }> {
   try {
-    const res = await fetch(withBasePath('/api/sync/browser-authenticity'), {
+    const res = await fetch('/api/sync/browser-authenticity', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, reason }),
@@ -785,6 +770,54 @@ async function reportAuthenticityVerdict(
   }
   return { permanentBlock: false };
 }
+
+// ─── Labor push decision (pure, unit-tested) ────────────────────────────────
+//
+// The browser must declare HOSxP's authoritative active-AN set so the server
+// can close out cached ACTIVE patients HOSxP no longer returns — including the
+// "ward just emptied" case (Occupied=0, Mantis #9505). But it must NOT POST a
+// redundant reconciliation on every 30s tick for a perpetually-empty ward
+// (keeps the Sync Log clean). This computes the edge-triggered decision: POST
+// when there is something to upsert OR the active set changed since the last
+// successful push; otherwise skip.
+
+export interface LaborPushDecision {
+  skip: boolean;
+  activeKey: string;
+  labor?: { patients: BrowserLaborPatient[]; mode: 'incremental'; activeAns: string[] };
+}
+
+export function decideLaborPush(args: {
+  laborPatients: BrowserLaborPatient[];
+  laborActiveAns: string[];
+  hasPartograph: boolean;
+  hasAnc: boolean;
+  lastPushedActiveKey: string | null;
+}): LaborPushDecision {
+  const { laborPatients, laborActiveAns, hasPartograph, hasAnc, lastPushedActiveKey } = args;
+  const activeKey = [...laborActiveAns].sort().join('\n');
+  const nothingToUpsert = laborPatients.length === 0 && !hasPartograph && !hasAnc;
+  const activeSetChanged = activeKey !== lastPushedActiveKey;
+
+  if (nothingToUpsert && !activeSetChanged) {
+    return { skip: true, activeKey };
+  }
+
+  // Attach labor reconciliation when there are rows to upsert OR the active set
+  // changed (e.g. the ward emptied/shrank — the server must hear about it so it
+  // can discharge the stragglers). When labor is empty and unchanged we omit it
+  // (the POST is only happening for partograph/anc).
+  const labor =
+    laborPatients.length > 0 || activeSetChanged
+      ? { patients: laborPatients, mode: 'incremental' as const, activeAns: laborActiveAns }
+      : undefined;
+
+  return { skip: false, activeKey, labor };
+}
+
+// Per-tab: the active-AN signature we last successfully pushed. A tab's session
+// is bound to a single hospital, so one module-level value is sufficient.
+let lastPushedActiveKey: string | null = null;
 
 export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResult> {
   const startedAt = Date.now();
@@ -800,13 +833,23 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
     // Five queries in parallel — saves a couple of RTTs vs sequential. The
     // BMS gateway tolerates up to 15 calls/sec/hospital, so 5 in parallel
     // from one tab is well below the limit.
-    const [laborRows, partRows, ancMasters, ancVisits, ancClasses] = await Promise.all([
+    const [rawLaborRows, partRows, ancMasters, ancVisits, ancClasses] = await Promise.all([
       runQuery<Record<string, unknown>>(SQL_ACTIVE_LABOUR, opts),
       runQuery<Record<string, unknown>>(SQL_PARTOGRAPH, opts),
       runQuery<Record<string, unknown>>(ancMastersSql(), opts),
       runQuery<Record<string, unknown>>(ancVisitsSql(), opts),
       runQuery<Record<string, unknown>>(ancClassifyingSql(), opts),
     ]);
+
+    // Stale-admission policy: rows still "active" in HOSxP long after
+    // admission with no discharge entry (dchdate NULL — the ward skipped the
+    // discharge screen) are administratively dead. Excluding them here drops
+    // them from the upsert list AND from activeAns, so the server's existing
+    // reconciliation closes them as DELIVERED via the normal discharge flow.
+    const laborRows = rawLaborRows.filter(
+      (r) => !isStaleAdmission(strOrNull(r.regdate), r.dchdate),
+    );
+    result.labor.droppedStaleAdmission = rawLaborRows.length - laborRows.length;
 
     result.labor.read = laborRows.length;
     result.partograph.read = partRows.length;
@@ -874,7 +917,11 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
           status: 'name_unstable',
           detail: probe.reason ?? 'bulk name probe returned 0 matches',
         };
-        const r = await reportAuthenticityVerdict('name_unstable', probe.reason ?? null, opts.signal);
+        const r = await reportAuthenticityVerdict(
+          'name_unstable',
+          probe.reason ?? null,
+          opts.signal,
+        );
         if (r.permanentBlock) result.permanentBlock = true;
         result.error = 'authenticity_failed_name_unstable';
         result.durationMs = Date.now() - startedAt;
@@ -964,33 +1011,155 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
       result.anc.mapped = ancPatients.length;
     }
 
-    // Skip the POST entirely when there's nothing to send — keeps the Sync
-    // Log clean for hospitals with no active patients (would otherwise
-    // record a "0 rows / 0 rows" run on every browser tick).
-    if (laborPatients.length === 0 && partographs.length === 0 && ancPatients.length === 0) {
+    // Authoritative active-AN set for discharge reconciliation. Built from the
+    // RAW labor rows (every admission HOSxP returned this cycle) — NOT from
+    // `laborPatients`, which the name-authenticity probe may have filtered, so a
+    // dropped-but-still-admitted patient is never missing from it. Reaching here
+    // means all five queries SUCCEEDED (runQuery → executeSql throws on failure
+    // and the Promise.all rejects), so an empty set genuinely means an empty
+    // ward — safe to reconcile/discharge against.
+    const laborActiveAns = laborRows
+      .map((r) => strOrNull(r.an))
+      .filter((an): an is string => an !== null);
+
+    // ─── Newborn deliveries (labour infants + ipt_pregnancy summaries) ────
+    // Cutoff comes from the server (GET /api/sync/browser-push) — it self-
+    // heals from MAX(born_at) per hospital, so the first cycle backfills a
+    // year and later cycles re-read a 2-day overlap. ORDER BY + LIMIT keeps
+    // the payload bounded; the cutoff advances as rows land, so a large
+    // backfill completes progressively across cycles. Additive feed: any
+    // failure here never blocks the main labor/ANC push.
+    let newbornsSection: {
+      infants: Record<string, unknown>[];
+      pregnancies: Record<string, unknown>[];
+    } | null = null;
+    // Server-issued CIDs with open referrals TO this hospital — probed against
+    // ovst below as fallback arrival evidence (referral gateway sync).
+    let arrivalProbe: { cid: string; since: string }[] = [];
+    try {
+      const bootRes = await fetch('/api/sync/browser-push', {
+        method: 'GET',
+        signal: opts.signal,
+        credentials: 'same-origin',
+      });
+      if (bootRes.ok) {
+        const boot = (await bootRes.json()) as {
+          newbornCutoff?: string;
+          referralArrivalProbe?: { cid?: unknown; since?: unknown }[];
+        };
+        if (Array.isArray(boot.referralArrivalProbe)) {
+          arrivalProbe = boot.referralArrivalProbe.filter(
+            (e): e is { cid: string; since: string } =>
+              typeof e?.cid === 'string' &&
+              /^\d{13}$/.test(e.cid) &&
+              typeof e?.since === 'string' &&
+              /^\d{4}-\d{2}-\d{2}$/.test(e.since),
+          );
+        }
+        const cutoff = boot.newbornCutoff;
+        if (typeof cutoff === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(cutoff)) {
+          const infantsSql =
+            LABOUR_INFANTS_SINCE.mysql.replace('{{CUTOFF}}', cutoff) +
+            ' ORDER BY li.birth_date LIMIT 1000';
+          const pregSql =
+            IPT_PREGNANCY_DELIVERIES_SINCE.mysql.replace('{{CUTOFF}}', cutoff) +
+            ' ORDER BY ipr.labor_date LIMIT 1000';
+          const [infantRows, pregRows] = await Promise.all([
+            runQuery<Record<string, unknown>>(infantsSql, opts),
+            runQuery<Record<string, unknown>>(pregSql, opts),
+          ]);
+          result.newborns = { infantsRead: infantRows.length, pregnanciesRead: pregRows.length };
+          if (infantRows.length > 0 || pregRows.length > 0) {
+            newbornsSection = { infants: infantRows, pregnancies: pregRows };
+          }
+        }
+      }
+    } catch {
+      // Newborn feed is best-effort; the next cycle retries from the same cutoff.
+    }
+
+    // ─── Referrals (referout = this hospital as origin, referin = arrival
+    // evidence at this hospital as destination) ───────────────────────────
+    // Rolling 60-day window computed client-side — referrals are a bounded
+    // rolling set, not append-only history, so re-pulling the window every
+    // cycle IS the resync (same self-healing property as the ANC pull).
+    // Additive best-effort feed: failure never blocks the main push.
+    let referralsSection: {
+      referouts: Record<string, unknown>[];
+      referins: Record<string, unknown>[];
+      visitEvidences: Record<string, unknown>[];
+    } | null = null;
+    try {
+      const referoutCutoff = new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10);
+      // Referin evidence only matters within days of the send (server match
+      // window is 30d) and has no maternity filter, so keep it short to bound
+      // volume at big hubs.
+      const referinCutoff = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
+      const referoutsSql =
+        REFEROUT_MATERNITY_SINCE.mysql.replace('{{CUTOFF}}', referoutCutoff) +
+        ' ORDER BY ro.refer_date DESC LIMIT 200';
+      const referinsSql =
+        REFERIN_SINCE.mysql.replace('{{CUTOFF}}', referinCutoff) +
+        ' ORDER BY ri.refer_date DESC LIMIT 500';
+      // ovst fallback probe — only for the server-issued CIDs (hospitals that
+      // never fill the refer-in form still record the arrival visit in ovst).
+      // CIDs are validated 13-digit strings before SQL interpolation.
+      const visitEvidencePromise: Promise<Record<string, unknown>[]> =
+        arrivalProbe.length > 0
+          ? runQuery<Record<string, unknown>>(
+              OVST_FIRST_VISIT_FOR_CIDS.mysql
+                .replace('{{CIDS}}', arrivalProbe.map((e) => `'${e.cid}'`).join(','))
+                .replace('{{CUTOFF}}', arrivalProbe.map((e) => e.since).sort()[0]),
+              opts,
+            )
+          : Promise.resolve([]);
+      const [referoutRows, referinRows, visitEvidenceRows] = await Promise.all([
+        runQuery<Record<string, unknown>>(referoutsSql, opts),
+        runQuery<Record<string, unknown>>(referinsSql, opts),
+        visitEvidencePromise,
+      ]);
+      result.referrals = { referoutsRead: referoutRows.length, referinsRead: referinRows.length };
+      if (referoutRows.length > 0 || referinRows.length > 0 || visitEvidenceRows.length > 0) {
+        referralsSection = {
+          referouts: referoutRows,
+          referins: referinRows,
+          visitEvidences: visitEvidenceRows,
+        };
+      }
+    } catch {
+      // Referral feed is best-effort; the next cycle re-pulls the same window.
+    }
+
+    const decision = decideLaborPush({
+      laborPatients,
+      laborActiveAns,
+      hasPartograph: partographs.length > 0,
+      hasAnc: ancPatients.length > 0,
+      lastPushedActiveKey,
+    });
+
+    // Skip the POST when there's nothing to upsert AND the active set is
+    // unchanged — keeps the Sync Log clean for perpetually-empty wards while
+    // still firing a reconciliation when the ward empties/shrinks (Mantis #9505).
+    // Referrals deliberately do NOT defeat the skip decision: the rolling
+    // window re-pulls the same rows every cycle, so letting it force a push
+    // would re-send them each minute even on idle wards. They ride along
+    // whenever a push happens anyway (ANC actives make that every cycle at
+    // practically all hospitals).
+    if (decision.skip && !newbornsSection) {
       result.durationMs = Date.now() - startedAt;
       return result;
     }
 
     const body: BrowserPushBody = {};
-    if (laborPatients.length > 0) {
-      // full_snapshot only when this push is a complete, verified view of the
-      // active set (authentic + nobody dropped by the name probe), so the
-      // server can discharge cached ACTIVE patients no longer in HOSxP. Any
-      // partial/unverified view stays incremental (upsert-only) so we never
-      // wrongly close an active case. See decideLaborPushMode.
-      body.labor = {
-        patients: laborPatients,
-        mode: decideLaborPushMode({
-          authenticityStatus: result.authenticity?.status,
-          droppedNameUnstable: result.labor.droppedNameUnstable,
-        }),
-      };
-    }
+    if (opts.bmsSessionId) body.bms_session_id = opts.bmsSessionId;
+    if (decision.labor) body.labor = decision.labor;
     if (partographs.length > 0) body.partograph = { observations: partographs };
     if (ancPatients.length > 0) body.anc = { patients: ancPatients };
+    if (newbornsSection) body.newborns = newbornsSection;
+    if (referralsSection) body.referrals = referralsSection;
 
-    const pushRes = await fetch(withBasePath('/api/sync/browser-push'), {
+    const pushRes = await fetch('/api/sync/browser-push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1012,14 +1181,19 @@ export async function runBrowserPoll(opts: RunOptions): Promise<BrowserPollResul
       throw new Error(`browser-push HTTP ${pushRes.status}: ${text.slice(0, 200)}`);
     }
 
-    const pushed = (await pushRes.json().catch(() => null)) as
-      | { labor?: { processed: number }; anc?: { processed: number }; partograph?: { accepted: number } }
-      | null;
+    const pushed = (await pushRes.json().catch(() => null)) as {
+      labor?: { processed: number };
+      anc?: { processed: number };
+      partograph?: { accepted: number };
+    } | null;
 
     result.labor.sent = pushed?.labor?.processed ?? laborPatients.length;
     result.anc.sent = pushed?.anc?.processed ?? ancPatients.length;
     result.partograph.sent = pushed?.partograph?.accepted ?? partographs.length;
     result.pushedToServer = true;
+    // Remember the active set we just reconciled so a perpetually-empty ward
+    // doesn't re-POST an identical reconciliation every tick.
+    lastPushedActiveKey = decision.activeKey;
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
   }

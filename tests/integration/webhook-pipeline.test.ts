@@ -1,9 +1,8 @@
 // Integration tests: webhook pipeline — external hospital data -> cached patients -> CPD -> dashboard
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { v4 as uuidv4 } from 'uuid';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import { generateKey } from '@/lib/encryption';
 import type { SseManager } from '@/lib/sse';
@@ -47,13 +46,12 @@ function asSse(mock: MockSseManager): SseManager {
 }
 
 describe('Webhook Pipeline Integration', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let sseManager: MockSseManager;
   let webhookHospitalId: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
     sseManager = new MockSseManager();
 
@@ -63,7 +61,7 @@ describe('Webhook Pipeline Integration', () => {
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [webhookHospitalId, '99901', 'รพ.เอกชนทดสอบ (Webhook)', 'M2', 1, 'UNKNOWN', now, now],
+      [webhookHospitalId, '99901', 'รพ.เอกชนทดสอบ (Webhook)', 'M2', true, 'UNKNOWN', now, now],
     );
   });
 
@@ -87,20 +85,39 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         patients: [
           {
-            hn: 'WH-001', an: 'WAN-001', name: 'นาง ทดสอบ เว็บฮุค',
-            cid: '0000000000021', age: 28, gravida: 1, ga_weeks: 41,
-            anc_count: 3, admit_date: '2026-03-08T08:00:00+07:00',
-            height_cm: 148, weight_kg: 75, weight_diff_kg: 20,
-            fundal_height_cm: 37, us_weight_g: 4000, hematocrit_pct: 29,
+            hn: 'WH-001',
+            an: 'WAN-001',
+            name: 'นาง ทดสอบ เว็บฮุค',
+            cid: '0000000000021',
+            age: 28,
+            gravida: 1,
+            ga_weeks: 41,
+            anc_count: 3,
+            admit_date: '2026-03-08T08:00:00+07:00',
+            height_cm: 148,
+            weight_kg: 75,
+            weight_diff_kg: 20,
+            fundal_height_cm: 37,
+            us_weight_g: 4000,
+            hematocrit_pct: 29,
             labor_status: 'ACTIVE',
           },
           {
-            hn: 'WH-002', an: 'WAN-002', name: 'นาง ปกติ ดี',
-      cid: '1100500010001',
-            age: 24, gravida: 2, ga_weeks: 38, anc_count: 8,
+            hn: 'WH-002',
+            an: 'WAN-002',
+            name: 'นาง ปกติ ดี',
+            cid: '1100500010001',
+            age: 24,
+            gravida: 2,
+            ga_weeks: 38,
+            anc_count: 8,
             admit_date: '2026-03-08T10:00:00+07:00',
-            height_cm: 162, weight_kg: 60, weight_diff_kg: 10,
-            fundal_height_cm: 30, us_weight_g: 2800, hematocrit_pct: 36,
+            height_cm: 162,
+            weight_kg: 60,
+            weight_diff_kg: 10,
+            fundal_height_cm: 30,
+            us_weight_g: 2800,
+            hematocrit_pct: 36,
             labor_status: 'ACTIVE',
           },
         ],
@@ -109,7 +126,12 @@ describe('Webhook Pipeline Integration', () => {
       const validation = validatePayload(payload);
       expect(validation.valid).toBe(true);
 
-      const result = await processWebhookPayload(db, webhookHospitalId, validation.payload!, asSse(sseManager));
+      const result = await processWebhookPayload(
+        db,
+        webhookHospitalId,
+        validation.payload!,
+        asSse(sseManager),
+      );
 
       expect(result.patientsProcessed).toBe(2);
       expect(result.newAdmissions).toBe(2);
@@ -139,10 +161,10 @@ describe('Webhook Pipeline Integration', () => {
       expect(cpdScores[1].risk_level).toBe(RiskLevel.LOW);
 
       // Step 6: Verify hospital status updated to ONLINE
-      const hospitalStatus = await db.query<{ connection_status: string; last_sync_at: string | null }>(
-        'SELECT connection_status, last_sync_at FROM hospitals WHERE id = ?',
-        [webhookHospitalId],
-      );
+      const hospitalStatus = await db.query<{
+        connection_status: string;
+        last_sync_at: string | null;
+      }>('SELECT connection_status, last_sync_at FROM hospitals WHERE id = ?', [webhookHospitalId]);
       expect(hospitalStatus[0].connection_status).toBe('ONLINE');
       expect(hospitalStatus[0].last_sync_at).not.toBeNull();
 
@@ -177,12 +199,19 @@ describe('Webhook Pipeline Integration', () => {
       // First webhook: admit patient
       const initial: WebhookPayload = {
         hospitalCode: '99901',
-        patients: [{
-          hn: 'WH-UPD', an: 'WAN-UPD', name: 'นาง อัพเดท ข้อมูล',
-      cid: '1100500010002',
-          age: 30, gravida: 2, ga_weeks: 38, admit_date: '2026-03-08T08:00:00+07:00',
-          labor_status: 'ACTIVE',
-        }],
+        patients: [
+          {
+            hn: 'WH-UPD',
+            an: 'WAN-UPD',
+            name: 'นาง อัพเดท ข้อมูล',
+            cid: '1100500010002',
+            age: 30,
+            gravida: 2,
+            ga_weeks: 38,
+            admit_date: '2026-03-08T08:00:00+07:00',
+            labor_status: 'ACTIVE',
+          },
+        ],
       };
 
       await processWebhookPayload(db, webhookHospitalId, initial, asSse(sseManager));
@@ -199,13 +228,21 @@ describe('Webhook Pipeline Integration', () => {
       // Second webhook: same patient, updated GA
       const updated: WebhookPayload = {
         hospitalCode: '99901',
-        patients: [{
-          hn: 'WH-UPD', an: 'WAN-UPD', name: 'นาง อัพเดท ข้อมูล',
-      cid: '1100500010003',
-          age: 30, gravida: 2, ga_weeks: 39, admit_date: '2026-03-08T08:00:00+07:00',
-          height_cm: 155, weight_diff_kg: 14,
-          labor_status: 'ACTIVE',
-        }],
+        patients: [
+          {
+            hn: 'WH-UPD',
+            an: 'WAN-UPD',
+            name: 'นาง อัพเดท ข้อมูล',
+            cid: '1100500010003',
+            age: 30,
+            gravida: 2,
+            ga_weeks: 39,
+            admit_date: '2026-03-08T08:00:00+07:00',
+            height_cm: 155,
+            weight_diff_kg: 14,
+            labor_status: 'ACTIVE',
+          },
+        ],
       };
 
       const result = await processWebhookPayload(db, webhookHospitalId, updated, asSse(sseManager));
@@ -230,10 +267,16 @@ describe('Webhook Pipeline Integration', () => {
 
       const payload: WebhookPayload = {
         hospitalCode: '99901',
-        patients: [{
-          hn: 'WH-PDPA', an: 'WAN-PDPA', name: 'นาง มาลี สมบูรณ์',
-          cid: '0000000000022', age: 25, admit_date: '2026-03-08T08:00:00+07:00',
-        }],
+        patients: [
+          {
+            hn: 'WH-PDPA',
+            an: 'WAN-PDPA',
+            name: 'นาง มาลี สมบูรณ์',
+            cid: '0000000000022',
+            age: 25,
+            admit_date: '2026-03-08T08:00:00+07:00',
+          },
+        ],
       };
 
       await processWebhookPayload(db, webhookHospitalId, payload, asSse(sseManager));
@@ -257,11 +300,16 @@ describe('Webhook Pipeline Integration', () => {
     it('CID is always stored encrypted with SHA-256 hash', async () => {
       const payload: WebhookPayload = {
         hospitalCode: '99901',
-        patients: [{
-          hn: 'WH-CID', an: 'WAN-CID', name: 'นาง มี บัตร',
-          cid: '1100500010004',
-          age: 22, admit_date: '2026-03-08T08:00:00+07:00',
-        }],
+        patients: [
+          {
+            hn: 'WH-CID',
+            an: 'WAN-CID',
+            name: 'นาง มี บัตร',
+            cid: '1100500010004',
+            age: 22,
+            admit_date: '2026-03-08T08:00:00+07:00',
+          },
+        ],
       };
 
       await processWebhookPayload(db, webhookHospitalId, payload, asSse(sseManager));
@@ -283,14 +331,24 @@ describe('Webhook Pipeline Integration', () => {
     it('calculates HIGH risk score for high-risk clinical factors', async () => {
       const payload: WebhookPayload = {
         hospitalCode: '99901',
-        patients: [{
-          hn: 'WH-HR', an: 'WAN-HR', name: 'นาง เสี่ยง สูง',
-      cid: '1100500010005',
-          age: 35, gravida: 1, ga_weeks: 42, anc_count: 2,
-          admit_date: '2026-03-08T08:00:00+07:00',
-          height_cm: 147, weight_diff_kg: 22, fundal_height_cm: 38,
-          us_weight_g: 4200, hematocrit_pct: 28,
-        }],
+        patients: [
+          {
+            hn: 'WH-HR',
+            an: 'WAN-HR',
+            name: 'นาง เสี่ยง สูง',
+            cid: '1100500010005',
+            age: 35,
+            gravida: 1,
+            ga_weeks: 42,
+            anc_count: 2,
+            admit_date: '2026-03-08T08:00:00+07:00',
+            height_cm: 147,
+            weight_diff_kg: 22,
+            fundal_height_cm: 38,
+            us_weight_g: 4200,
+            hematocrit_pct: 28,
+          },
+        ],
       };
 
       await processWebhookPayload(db, webhookHospitalId, payload, asSse(sseManager));
@@ -312,13 +370,19 @@ describe('Webhook Pipeline Integration', () => {
     it('handles partial clinical data — reports missing factors', async () => {
       const payload: WebhookPayload = {
         hospitalCode: '99901',
-        patients: [{
-          hn: 'WH-PARTIAL', an: 'WAN-PARTIAL', name: 'นาง ข้อมูล บางส่วน',
-      cid: '1100500010006',
-          age: 28, gravida: 2, ga_weeks: 38,
-          admit_date: '2026-03-08T08:00:00+07:00',
-          // No height, weight, fundal, US, HCT, ANC
-        }],
+        patients: [
+          {
+            hn: 'WH-PARTIAL',
+            an: 'WAN-PARTIAL',
+            name: 'นาง ข้อมูล บางส่วน',
+            cid: '1100500010006',
+            age: 28,
+            gravida: 2,
+            ga_weeks: 38,
+            admit_date: '2026-03-08T08:00:00+07:00',
+            // No height, weight, fundal, US, HCT, ANC
+          },
+        ],
       };
 
       await processWebhookPayload(db, webhookHospitalId, payload, asSse(sseManager));
@@ -337,14 +401,24 @@ describe('Webhook Pipeline Integration', () => {
     it('broadcasts high_risk_alert SSE for new HIGH risk patient', async () => {
       const payload: WebhookPayload = {
         hospitalCode: '99901',
-        patients: [{
-          hn: 'WH-ALERT', an: 'WAN-ALERT', name: 'นาง แจ้งเตือน',
-      cid: '1100500010007',
-          age: 32, gravida: 1, ga_weeks: 42, anc_count: 1,
-          admit_date: '2026-03-08T08:00:00+07:00',
-          height_cm: 145, weight_diff_kg: 25, fundal_height_cm: 40,
-          us_weight_g: 4500, hematocrit_pct: 26,
-        }],
+        patients: [
+          {
+            hn: 'WH-ALERT',
+            an: 'WAN-ALERT',
+            name: 'นาง แจ้งเตือน',
+            cid: '1100500010007',
+            age: 32,
+            gravida: 1,
+            ga_weeks: 42,
+            anc_count: 1,
+            admit_date: '2026-03-08T08:00:00+07:00',
+            height_cm: 145,
+            weight_diff_kg: 25,
+            fundal_height_cm: 40,
+            us_weight_g: 4500,
+            hematocrit_pct: 26,
+          },
+        ],
       };
 
       await processWebhookPayload(db, webhookHospitalId, payload, asSse(sseManager));
@@ -380,21 +454,40 @@ describe('Webhook Pipeline Integration', () => {
             admit_date, labor_status, synced_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          uuidv4(), hosxpId, 'HN-ORIG', 'AN-ORIG',
+          uuidv4(),
+          hosxpId,
+          'HN-ORIG',
+          'AN-ORIG',
           encrypt('นาง ย้าย มา', TEST_ENCRYPTION_KEY),
-          encrypt(sharedCid, TEST_ENCRYPTION_KEY), cidHash,
-          30, 2, 39, '2026-03-06T08:00:00', 'ACTIVE', now, now, now,
+          encrypt(sharedCid, TEST_ENCRYPTION_KEY),
+          cidHash,
+          30,
+          2,
+          39,
+          '2026-03-06T08:00:00',
+          'ACTIVE',
+          now,
+          now,
+          now,
         ],
       );
 
       // Now webhook same patient at webhook hospital (different AN, same CID)
       const payload: WebhookPayload = {
         hospitalCode: '99901',
-        patients: [{
-          hn: 'WH-XFER', an: 'WAN-XFER', name: 'นาง ย้าย มา',
-          cid: sharedCid, age: 30, gravida: 2, ga_weeks: 39,
-          admit_date: '2026-03-08T10:00:00+07:00', labor_status: 'ACTIVE',
-        }],
+        patients: [
+          {
+            hn: 'WH-XFER',
+            an: 'WAN-XFER',
+            name: 'นาง ย้าย มา',
+            cid: sharedCid,
+            age: 30,
+            gravida: 2,
+            ga_weeks: 39,
+            admit_date: '2026-03-08T10:00:00+07:00',
+            labor_status: 'ACTIVE',
+          },
+        ],
       };
 
       const result = await processWebhookPayload(db, webhookHospitalId, payload, asSse(sseManager));
@@ -456,9 +549,20 @@ describe('Webhook Pipeline Integration', () => {
             admit_date, labor_status, synced_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          patientId, hosxpId, 'HN-HOSxP', 'AN-HOSxP',
+          patientId,
+          hosxpId,
+          'HN-HOSxP',
+          'AN-HOSxP',
           encrypt('นาง HOSxP Patient', TEST_ENCRYPTION_KEY),
-          25, 2, 38, 6, '2026-03-08T08:00:00', 'ACTIVE', now, now, now,
+          25,
+          2,
+          38,
+          6,
+          '2026-03-08T08:00:00',
+          'ACTIVE',
+          now,
+          now,
+          now,
         ],
       );
       // Insert LOW CPD score for this patient
@@ -468,19 +572,37 @@ describe('Webhook Pipeline Integration', () => {
         `INSERT INTO cpd_scores
            (id, patient_id, score, risk_level, recommendation, missing_factors, calculated_at, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [uuidv4(), patientId, cpdResult.score, cpdResult.riskLevel, cpdResult.recommendation, '[]', now, now],
+        [
+          uuidv4(),
+          patientId,
+          cpdResult.score,
+          cpdResult.riskLevel,
+          cpdResult.recommendation,
+          '[]',
+          now,
+          now,
+        ],
       );
 
       // Webhook patient at non-HOSxP hospital
       const payload: WebhookPayload = {
         hospitalCode: '99901',
-        patients: [{
-          hn: 'WH-MIX', an: 'WAN-MIX', name: 'นาง Webhook Patient',
-      cid: '1100500010008',
-          age: 30, gravida: 1, ga_weeks: 41, anc_count: 2,
-          admit_date: '2026-03-08T10:00:00+07:00',
-          height_cm: 148, us_weight_g: 4000, hematocrit_pct: 28,
-        }],
+        patients: [
+          {
+            hn: 'WH-MIX',
+            an: 'WAN-MIX',
+            name: 'นาง Webhook Patient',
+            cid: '1100500010008',
+            age: 30,
+            gravida: 1,
+            ga_weeks: 41,
+            anc_count: 2,
+            admit_date: '2026-03-08T10:00:00+07:00',
+            height_cm: 148,
+            us_weight_g: 4000,
+            hematocrit_pct: 28,
+          },
+        ],
       };
 
       await processWebhookPayload(db, webhookHospitalId, payload, asSse(sseManager));
@@ -505,12 +627,19 @@ describe('Webhook Pipeline Integration', () => {
       // First: admit patient
       const admitPayload: WebhookPayload = {
         hospitalCode: '99901',
-        patients: [{
-          hn: 'WH-DEL', an: 'WAN-DEL', name: 'นาง คลอด แล้ว',
-      cid: '1100500010009',
-          age: 26, gravida: 2, ga_weeks: 39,
-          admit_date: '2026-03-06T08:00:00+07:00', labor_status: 'ACTIVE',
-        }],
+        patients: [
+          {
+            hn: 'WH-DEL',
+            an: 'WAN-DEL',
+            name: 'นาง คลอด แล้ว',
+            cid: '1100500010009',
+            age: 26,
+            gravida: 2,
+            ga_weeks: 39,
+            admit_date: '2026-03-06T08:00:00+07:00',
+            labor_status: 'ACTIVE',
+          },
+        ],
       };
 
       await processWebhookPayload(db, webhookHospitalId, admitPayload, asSse(sseManager));
@@ -526,12 +655,19 @@ describe('Webhook Pipeline Integration', () => {
       // Then: update to DELIVERED
       const deliverPayload: WebhookPayload = {
         hospitalCode: '99901',
-        patients: [{
-          hn: 'WH-DEL', an: 'WAN-DEL', name: 'นาง คลอด แล้ว',
-      cid: '1100500010010',
-          age: 26, gravida: 2, ga_weeks: 39,
-          admit_date: '2026-03-06T08:00:00+07:00', labor_status: 'DELIVERED',
-        }],
+        patients: [
+          {
+            hn: 'WH-DEL',
+            an: 'WAN-DEL',
+            name: 'นาง คลอด แล้ว',
+            cid: '1100500010010',
+            age: 26,
+            gravida: 2,
+            ga_weeks: 39,
+            admit_date: '2026-03-06T08:00:00+07:00',
+            labor_status: 'DELIVERED',
+          },
+        ],
       };
 
       await processWebhookPayload(db, webhookHospitalId, deliverPayload, asSse(sseManager));
@@ -556,12 +692,30 @@ describe('Webhook Pipeline Integration', () => {
       const admitPayload: WebhookPayload = {
         hospitalCode: '99901',
         patients: [
-          { hn: 'WH-FS1', an: 'WAN-FS1', name: 'Patient A',
-      cid: '1100500010011', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
-          { hn: 'WH-FS2', an: 'WAN-FS2', name: 'Patient B',
-      cid: '1100500010012', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
-          { hn: 'WH-FS3', an: 'WAN-FS3', name: 'Patient C',
-      cid: '1100500010013', age: 30, admit_date: '2026-03-06T10:00:00+07:00' },
+          {
+            hn: 'WH-FS1',
+            an: 'WAN-FS1',
+            name: 'Patient A',
+            cid: '1100500010011',
+            age: 25,
+            admit_date: '2026-03-06T08:00:00+07:00',
+          },
+          {
+            hn: 'WH-FS2',
+            an: 'WAN-FS2',
+            name: 'Patient B',
+            cid: '1100500010012',
+            age: 28,
+            admit_date: '2026-03-06T09:00:00+07:00',
+          },
+          {
+            hn: 'WH-FS3',
+            an: 'WAN-FS3',
+            name: 'Patient C',
+            cid: '1100500010013',
+            age: 30,
+            admit_date: '2026-03-06T10:00:00+07:00',
+          },
         ],
       };
       await processWebhookPayload(db, webhookHospitalId, admitPayload, asSse(sseManager));
@@ -580,17 +734,32 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         mode: 'full_snapshot',
         patients: [
-          { hn: 'WH-FS2', an: 'WAN-FS2', name: 'Patient B',
-      cid: '1100500010014', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
+          {
+            hn: 'WH-FS2',
+            an: 'WAN-FS2',
+            name: 'Patient B',
+            cid: '1100500010014',
+            age: 28,
+            admit_date: '2026-03-06T09:00:00+07:00',
+          },
         ],
       };
-      const result = await processWebhookPayload(db, webhookHospitalId, snapshotPayload, asSse(sseManager));
+      const result = await processWebhookPayload(
+        db,
+        webhookHospitalId,
+        snapshotPayload,
+        asSse(sseManager),
+      );
 
       expect(result.patientsProcessed).toBe(1);
       expect(result.discharges).toBe(2);
 
       // Step 3: Verify patient statuses
-      const afterSnapshot = await db.query<{ an: string; labor_status: string; delivered_at: string | null }>(
+      const afterSnapshot = await db.query<{
+        an: string;
+        labor_status: string;
+        delivered_at: string | null;
+      }>(
         'SELECT an, labor_status, delivered_at FROM cached_patients WHERE hospital_id = ? ORDER BY an',
         [webhookHospitalId],
       );
@@ -625,10 +794,22 @@ describe('Webhook Pipeline Integration', () => {
       const admitPayload: WebhookPayload = {
         hospitalCode: '99901',
         patients: [
-          { hn: 'WH-FN1', an: 'WAN-FN1', name: 'Patient X',
-      cid: '1100500010015', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
-          { hn: 'WH-FN2', an: 'WAN-FN2', name: 'Patient Y',
-      cid: '1100500010016', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
+          {
+            hn: 'WH-FN1',
+            an: 'WAN-FN1',
+            name: 'Patient X',
+            cid: '1100500010015',
+            age: 25,
+            admit_date: '2026-03-06T08:00:00+07:00',
+          },
+          {
+            hn: 'WH-FN2',
+            an: 'WAN-FN2',
+            name: 'Patient Y',
+            cid: '1100500010016',
+            age: 28,
+            admit_date: '2026-03-06T09:00:00+07:00',
+          },
         ],
       };
       await processWebhookPayload(db, webhookHospitalId, admitPayload, asSse(sseManager));
@@ -640,17 +821,311 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         mode: 'full_snapshot',
         patients: [
-          { hn: 'WH-FN1', an: 'WAN-FN1', name: 'Patient X',
-      cid: '1100500010017', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
-          { hn: 'WH-FN2', an: 'WAN-FN2', name: 'Patient Y',
-      cid: '1100500010018', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
+          {
+            hn: 'WH-FN1',
+            an: 'WAN-FN1',
+            name: 'Patient X',
+            cid: '1100500010017',
+            age: 25,
+            admit_date: '2026-03-06T08:00:00+07:00',
+          },
+          {
+            hn: 'WH-FN2',
+            an: 'WAN-FN2',
+            name: 'Patient Y',
+            cid: '1100500010018',
+            age: 28,
+            admit_date: '2026-03-06T09:00:00+07:00',
+          },
         ],
       };
-      const result = await processWebhookPayload(db, webhookHospitalId, snapshotPayload, asSse(sseManager));
+      const result = await processWebhookPayload(
+        db,
+        webhookHospitalId,
+        snapshotPayload,
+        asSse(sseManager),
+      );
 
       expect(result.discharges).toBe(0);
       const dischargeEvents = sseManager.getEventsByType('patient_discharged');
       expect(dischargeEvents).toHaveLength(0);
+    });
+  });
+
+  // ─── Scenario 12: activeAns reconciliation — browser-push fix (Mantis #9505) ───
+  //
+  // Production sync is browser-driven: the browser pulls the COMPLETE active
+  // labor set from HOSxP and POSTs it. Its `patients` upsert list may be
+  // filtered (name-authenticity probe) or capped at 100, so it declares the
+  // authoritative active set separately via `activeAns`. The server closes out
+  // any cached ACTIVE patient whose AN is absent from `activeAns`. This is the
+  // fix for the bug where a discharged/emptied ward kept showing ghosts.
+  describe('Scenario 12: activeAns reconciliation — browser-push fix for Mantis #9505', () => {
+    async function admit(rows: Array<{ hn: string; an: string; cid: string }>): Promise<void> {
+      const payload: WebhookPayload = {
+        hospitalCode: '99901',
+        patients: rows.map((p, i) => ({
+          hn: p.hn,
+          an: p.an,
+          name: `Patient ${i}`,
+          cid: p.cid,
+          age: 25 + i,
+          admit_date: '2026-03-06T08:00:00+07:00',
+        })),
+      };
+      await processWebhookPayload(db, webhookHospitalId, payload, asSse(sseManager));
+    }
+
+    async function statuses(): Promise<Array<{ an: string; labor_status: string }>> {
+      return db.query<{ an: string; labor_status: string }>(
+        'SELECT an, labor_status FROM cached_patients WHERE hospital_id = ? ORDER BY an',
+        [webhookHospitalId],
+      );
+    }
+
+    it('discharges ACTIVE patients absent from activeAns (incremental mode — the live browser path)', async () => {
+      await admit([
+        { hn: 'H1', an: 'A1', cid: '1100500010101' },
+        { hn: 'H2', an: 'A2', cid: '1100500010102' },
+        { hn: 'H3', an: 'A3', cid: '1100500010103' },
+      ]);
+      sseManager.clearEvents();
+
+      // Browser upserts the survivor A2 (incremental) and declares the full
+      // active set [A2]. A1 and A3 were discharged in HOSxP this cycle.
+      const result = await processWebhookPayload(
+        db,
+        webhookHospitalId,
+        {
+          hospitalCode: '99901',
+          mode: 'incremental',
+          patients: [
+            {
+              hn: 'H2',
+              an: 'A2',
+              name: 'Patient B',
+              cid: '1100500010102',
+              age: 28,
+              admit_date: '2026-03-06T09:00:00+07:00',
+            },
+          ],
+          activeAns: ['A2'],
+        },
+        asSse(sseManager),
+      );
+
+      expect(result.discharges).toBe(2);
+      expect(await statuses()).toEqual([
+        { an: 'A1', labor_status: 'DELIVERED' },
+        { an: 'A2', labor_status: 'ACTIVE' },
+        { an: 'A3', labor_status: 'DELIVERED' },
+      ]);
+      expect(sseManager.getEventsByType('patient_discharged')).toHaveLength(2);
+    });
+
+    it('does NOT discharge a patient absent from `patients` but present in `activeAns` (name-probe safety)', async () => {
+      await admit([
+        { hn: 'H1', an: 'A1', cid: '1100500010111' },
+        { hn: 'H2', an: 'A2', cid: '1100500010112' },
+      ]);
+
+      // The browser dropped A2 from the upsert list (failed name round-trip),
+      // but A2 is still admitted — activeAns lists BOTH. A2 must stay ACTIVE.
+      const result = await processWebhookPayload(
+        db,
+        webhookHospitalId,
+        {
+          hospitalCode: '99901',
+          mode: 'incremental',
+          patients: [
+            {
+              hn: 'H1',
+              an: 'A1',
+              name: 'Patient A',
+              cid: '1100500010111',
+              age: 25,
+              admit_date: '2026-03-06T08:00:00+07:00',
+            },
+          ],
+          activeAns: ['A1', 'A2'],
+        },
+        asSse(sseManager),
+      );
+
+      expect(result.discharges).toBe(0);
+      expect(await statuses()).toEqual([
+        { an: 'A1', labor_status: 'ACTIVE' },
+        { an: 'A2', labor_status: 'ACTIVE' },
+      ]);
+    });
+
+    it('empty activeAns with empty patients discharges the whole ward (Occupied=0 case)', async () => {
+      await admit([
+        { hn: 'H1', an: 'A1', cid: '1100500010121' },
+        { hn: 'H2', an: 'A2', cid: '1100500010122' },
+        { hn: 'H3', an: 'A3', cid: '1100500010123' },
+      ]);
+      sseManager.clearEvents();
+
+      const result = await processWebhookPayload(
+        db,
+        webhookHospitalId,
+        { hospitalCode: '99901', patients: [], activeAns: [] },
+        asSse(sseManager),
+      );
+
+      expect(result.discharges).toBe(3);
+      const after = await statuses();
+      expect(after.every((r) => r.labor_status === 'DELIVERED')).toBe(true);
+
+      const dashboard = await getProvinceDashboard(db);
+      const wh = dashboard.hospitals.find((h) => h.hcode === '99901');
+      expect(wh!.counts.total).toBe(0);
+    });
+
+    it('reconciliation via activeAns does not clobber a TRANSFERRED row', async () => {
+      await admit([{ hn: 'H1', an: 'A1', cid: '1100500010131' }]);
+      // Seed a TRANSFERRED row the way the transfer-detection block would.
+      const now = new Date().toISOString();
+      await db.execute(
+        `INSERT INTO cached_patients (id, hospital_id, hn, an, name, cid, cid_hash, age, gravida, ga_weeks, anc_count, admit_date, labor_status, synced_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(),
+          webhookHospitalId,
+          'H9',
+          'A9',
+          'x',
+          'x',
+          'h9',
+          30,
+          1,
+          39,
+          4,
+          now,
+          'TRANSFERRED',
+          now,
+          now,
+          now,
+        ],
+      );
+
+      const result = await processWebhookPayload(
+        db,
+        webhookHospitalId,
+        { hospitalCode: '99901', patients: [], activeAns: [] },
+        asSse(sseManager),
+      );
+
+      // A1 (ACTIVE) closed; A9 stays TRANSFERRED (guard in markPatientsDelivered).
+      expect(result.discharges).toBe(1);
+      expect(await statuses()).toEqual([
+        { an: 'A1', labor_status: 'DELIVERED' },
+        { an: 'A9', labor_status: 'TRANSFERRED' },
+      ]);
+    });
+
+    it('marks a reconciled patient TRANSFERRED (not DELIVERED) when their CID is ACTIVE at another hospital', async () => {
+      const now = new Date().toISOString();
+      const hospitalB = uuidv4();
+      await db.execute(
+        `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [hospitalB, '99902', 'รพ.รับส่งต่อ (B)', 'M2', true, 'UNKNOWN', now, now],
+      );
+
+      const seed = (hospId: string, an: string, cidHash: string, status: string) =>
+        db.execute(
+          `INSERT INTO cached_patients (id, hospital_id, hn, an, name, cid, cid_hash, age, gravida, ga_weeks, anc_count, admit_date, labor_status, synced_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(),
+            hospId,
+            `HN${an}`,
+            an,
+            'x',
+            'x',
+            cidHash,
+            28,
+            1,
+            39,
+            4,
+            now,
+            status,
+            now,
+            now,
+            now,
+          ],
+        );
+
+      // A has two ACTIVE patients: A-T (CID also ACTIVE at B → transferred out)
+      // and A-D (CID nowhere else → genuine delivery/discharge).
+      await seed(webhookHospitalId, 'A-T', 'CH-SHARED', 'ACTIVE');
+      await seed(webhookHospitalId, 'A-D', 'CH-UNIQUE', 'ACTIVE');
+      await seed(hospitalB, 'B-T', 'CH-SHARED', 'ACTIVE');
+      sseManager.clearEvents();
+
+      // A reconciles with an empty active set (both gone from A's HOSxP).
+      const result = await processWebhookPayload(
+        db,
+        webhookHospitalId,
+        { hospitalCode: '99901', patients: [], activeAns: [] },
+        asSse(sseManager),
+      );
+
+      const aRows = await db.query<{ an: string; labor_status: string }>(
+        'SELECT an, labor_status FROM cached_patients WHERE hospital_id = ? ORDER BY an',
+        [webhookHospitalId],
+      );
+      expect(aRows).toEqual([
+        { an: 'A-D', labor_status: 'DELIVERED' },
+        { an: 'A-T', labor_status: 'TRANSFERRED' },
+      ]);
+
+      // B's row is never touched by A's reconcile.
+      const bRow = await db.query<{ labor_status: string }>(
+        'SELECT labor_status FROM cached_patients WHERE hospital_id = ? AND an = ?',
+        [hospitalB, 'B-T'],
+      );
+      expect(bRow[0].labor_status).toBe('ACTIVE');
+
+      // Only the genuine delivery emits patient_discharged; the transfer does not.
+      expect(sseManager.getEventsByType('patient_discharged')).toHaveLength(1);
+      expect(result.discharges).toBe(2);
+    });
+
+    it('incremental WITHOUT activeAns never discharges (preserves legacy behavior)', async () => {
+      await admit([
+        { hn: 'H1', an: 'A1', cid: '1100500010141' },
+        { hn: 'H2', an: 'A2', cid: '1100500010142' },
+      ]);
+
+      // Legacy-style incremental push of only A1, no activeAns → A2 untouched.
+      const result = await processWebhookPayload(
+        db,
+        webhookHospitalId,
+        {
+          hospitalCode: '99901',
+          mode: 'incremental',
+          patients: [
+            {
+              hn: 'H1',
+              an: 'A1',
+              name: 'Patient A',
+              cid: '1100500010141',
+              age: 25,
+              admit_date: '2026-03-06T08:00:00+07:00',
+            },
+          ],
+        },
+        asSse(sseManager),
+      );
+
+      expect(result.discharges).toBe(0);
+      expect(await statuses()).toEqual([
+        { an: 'A1', labor_status: 'ACTIVE' },
+        { an: 'A2', labor_status: 'ACTIVE' },
+      ]);
     });
   });
 
@@ -681,9 +1156,17 @@ describe('Webhook Pipeline Integration', () => {
               synced_at, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            uuid(), webhookHospitalId, 'HN-PG', 'AN-PG',
+            uuid(),
+            webhookHospitalId,
+            'HN-PG',
+            'AN-PG',
             encrypt('นาง ทดสอบ Partograph', TEST_ENCRYPTION_KEY),
-            28, '2026-04-19T08:00:00+07:00', 'ACTIVE', now, now, now,
+            28,
+            '2026-04-19T08:00:00+07:00',
+            'ACTIVE',
+            now,
+            now,
+            now,
           ],
         );
 
@@ -699,13 +1182,15 @@ describe('Webhook Pipeline Integration', () => {
           body: JSON.stringify({
             type: 'partograph',
             hospitalCode: '99901',
-            observations: [{
-              an: 'AN-PG',
-              externalObservationId: 'EXT-PG-1',
-              observeDatetime: '2026-04-19T08:00:00+07:00',
-              fetalHeartRate: 140,
-              cervicalDilationCm: 4,
-            }],
+            observations: [
+              {
+                an: 'AN-PG',
+                externalObservationId: 'EXT-PG-1',
+                observeDatetime: '2026-04-19T08:00:00+07:00',
+                fetalHeartRate: 140,
+                cervicalDilationCm: 4,
+              },
+            ],
           }),
         });
         const goodRes = await POST(goodReq as unknown as import('next/server').NextRequest);
@@ -731,10 +1216,12 @@ describe('Webhook Pipeline Integration', () => {
           body: JSON.stringify({
             type: 'partograph',
             hospitalCode: '99901',
-            observations: [{
-              an: 'AN-PG',
-              observeDatetime: '2026-04-19T09:00:00+07:00',
-            }],
+            observations: [
+              {
+                an: 'AN-PG',
+                observeDatetime: '2026-04-19T09:00:00+07:00',
+              },
+            ],
           }),
         });
         const badRes = await POST(badReq as unknown as import('next/server').NextRequest);
@@ -756,12 +1243,30 @@ describe('Webhook Pipeline Integration', () => {
       const admitPayload: WebhookPayload = {
         hospitalCode: '99901',
         patients: [
-          { hn: 'WH-IN1', an: 'WAN-IN1', name: 'Keep Active A',
-      cid: '1100500010019', age: 25, admit_date: '2026-03-06T08:00:00+07:00' },
-          { hn: 'WH-IN2', an: 'WAN-IN2', name: 'Keep Active B',
-      cid: '1100500010020', age: 28, admit_date: '2026-03-06T09:00:00+07:00' },
-          { hn: 'WH-IN3', an: 'WAN-IN3', name: 'Keep Active C',
-      cid: '1100500010021', age: 30, admit_date: '2026-03-06T10:00:00+07:00' },
+          {
+            hn: 'WH-IN1',
+            an: 'WAN-IN1',
+            name: 'Keep Active A',
+            cid: '1100500010019',
+            age: 25,
+            admit_date: '2026-03-06T08:00:00+07:00',
+          },
+          {
+            hn: 'WH-IN2',
+            an: 'WAN-IN2',
+            name: 'Keep Active B',
+            cid: '1100500010020',
+            age: 28,
+            admit_date: '2026-03-06T09:00:00+07:00',
+          },
+          {
+            hn: 'WH-IN3',
+            an: 'WAN-IN3',
+            name: 'Keep Active C',
+            cid: '1100500010021',
+            age: 30,
+            admit_date: '2026-03-06T10:00:00+07:00',
+          },
         ],
       };
       await processWebhookPayload(db, webhookHospitalId, admitPayload, asSse(sseManager));
@@ -773,11 +1278,23 @@ describe('Webhook Pipeline Integration', () => {
         hospitalCode: '99901',
         mode: 'incremental',
         patients: [
-          { hn: 'WH-IN2', an: 'WAN-IN2', name: 'Keep Active B',
-      cid: '1100500010022', age: 28, ga_weeks: 39, admit_date: '2026-03-06T09:00:00+07:00' },
+          {
+            hn: 'WH-IN2',
+            an: 'WAN-IN2',
+            name: 'Keep Active B',
+            cid: '1100500010022',
+            age: 28,
+            ga_weeks: 39,
+            admit_date: '2026-03-06T09:00:00+07:00',
+          },
         ],
       };
-      const result = await processWebhookPayload(db, webhookHospitalId, updatePayload, asSse(sseManager));
+      const result = await processWebhookPayload(
+        db,
+        webhookHospitalId,
+        updatePayload,
+        asSse(sseManager),
+      );
 
       expect(result.discharges).toBe(0);
 

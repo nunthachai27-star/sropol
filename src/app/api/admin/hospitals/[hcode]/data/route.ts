@@ -18,6 +18,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { logger } from '@/lib/logger';
 import { stopOnboardingHosxpSync } from '@/services/sync/onboarding-session';
 
@@ -101,13 +102,15 @@ export async function GET(
   { params }: { params: Promise<{ hcode: string }> },
 ) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const { hcode } = await params;
     const db = await getDatabase();
-    const rows = await db.query<{ id: string }>(
-      'SELECT id FROM hospitals WHERE hcode = ?',
-      [hcode],
-    );
+    const rows = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [
+      hcode,
+    ]);
     if (rows.length === 0) {
       return NextResponse.json({ error: 'hospital_not_found' }, { status: 404 });
     }
@@ -132,6 +135,9 @@ export async function DELETE(
   { params }: { params: Promise<{ hcode: string }> },
 ) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const { hcode } = await params;
 
@@ -148,10 +154,9 @@ export async function DELETE(
     }
 
     const db = await getDatabase();
-    const rows = await db.query<{ id: string }>(
-      'SELECT id FROM hospitals WHERE hcode = ?',
-      [hcode],
-    );
+    const rows = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [
+      hcode,
+    ]);
     if (rows.length === 0) {
       return NextResponse.json({ error: 'hospital_not_found' }, { status: 404 });
     }
@@ -176,10 +181,9 @@ export async function DELETE(
         WHERE patient_id IN (SELECT id FROM cached_patients WHERE hospital_id = ?)`,
       [hospitalId],
     );
-    await db.execute(
-      'DELETE FROM cached_partograph_observations WHERE hospital_id = ?',
-      [hospitalId],
-    );
+    await db.execute('DELETE FROM cached_partograph_observations WHERE hospital_id = ?', [
+      hospitalId,
+    ]);
     await db.execute(
       `DELETE FROM cached_anc_visits
         WHERE hospital_id = ?
@@ -205,10 +209,7 @@ export async function DELETE(
     );
     // cached_patients references maternal_journeys.id, so it must go before
     // maternal_journeys to satisfy the FK.
-    await db.execute(
-      'DELETE FROM cached_patients WHERE hospital_id = ?',
-      [hospitalId],
-    );
+    await db.execute('DELETE FROM cached_patients WHERE hospital_id = ?', [hospitalId]);
     await db.execute(
       'DELETE FROM maternal_journeys WHERE hospital_id = ? OR current_hospital_id = ?',
       [hospitalId, hospitalId],

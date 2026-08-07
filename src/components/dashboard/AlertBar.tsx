@@ -1,64 +1,68 @@
-// AlertBar — persistent 4-tile ribbon with "ALL CLEAR" resting state.
-// Redesigned 2026-04-21 per dashboard brief §4.2: never disappears, never causes layout jumps.
-//
-// Each tile has a hover tooltip explaining what the number actually counts —
-// users were confused by the bare integers (e.g. "what does '3' next to
-// REFERRAL RECEIVED mean?"). The copy mirrors the exact SQL definitions in
-// services/dashboard.ts:getDashboardAlerts so the explanation can't drift
-// out of sync with the metric without a code change.
+// AlertBar — persistent ribbon with "ALL CLEAR" resting state. Recalibrated
+// 2026-07-09: every tile is a number that can actually move, computed from
+// the same configs the drill-down boards use (see dashboard.ts:
+// getDashboardAlerts), and every tile links to its pre-filtered board.
+// The old ribbon showed "all pending referrals" (permanently ~125), an
+// ungated 28-day ANC rule (817 vs the boards' 138), and an eternally-zero
+// in-transit count — alarms that never move teach users to stop looking.
 'use client';
 
 import type { ReactNode } from 'react';
+import Link from 'next/link';
 import type { DashboardAlerts } from '@/types/api';
 import { cn } from '@/lib/utils';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface AlertBarProps {
   alerts: DashboardAlerts;
 }
 
 interface AlertTileProps {
+  testId: string;
+  href: string;
   label: string;
   value: number;
   zeroLabel: string;
   detail: string;
   tooltipTitle: string;
   tooltipBody: ReactNode;
+  /** Color when value > 0 — red for alarms, amber for workload. */
+  hotColor?: string;
 }
 
 function AlertTile({
+  testId,
+  href,
   label,
   value,
   zeroLabel,
   detail,
   tooltipTitle,
   tooltipBody,
+  hotColor = 'var(--risk-high)',
 }: AlertTileProps) {
   const hot = value > 0;
-  const color = hot ? 'var(--risk-high)' : 'var(--risk-low)';
+  const color = hot ? hotColor : 'var(--risk-low)';
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <div
-            tabIndex={0}
+          <Link
+            href={href}
+            data-testid={testId}
             aria-label={`${label}: ${value}. ${tooltipTitle}`}
-            className="flex flex-1 cursor-help items-center gap-3.5 border-r border-[var(--rule-strong)] px-4 py-2.5 outline-none focus-visible:bg-[var(--accent-navy-soft)]"
+            className="flex flex-1 items-center gap-3.5 border-r border-[var(--rule-strong)] px-4 py-2.5 outline-none transition-colors hover:bg-[var(--accent-navy-soft)] focus-visible:bg-[var(--accent-navy-soft)]"
           />
         }
       >
         <div style={{ width: 3, height: 28, background: color }} aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--ink-navy-muted)]">
+          <div className="font-mono text-[12px] uppercase tracking-[0.14em] text-[var(--ink-navy-muted)]">
             {label}
           </div>
           <div
             className={cn(
-              'font-mono text-xs',
+              'font-mono text-sm',
               hot ? 'text-[var(--ink-navy)]' : 'text-[var(--ink-navy-dim)]',
             )}
           >
@@ -66,7 +70,7 @@ function AlertTile({
           </div>
         </div>
         <div
-          className="font-mono text-[28px] font-semibold leading-none tabular-nums"
+          className="font-mono text-[32px] font-semibold leading-none tabular-nums"
           style={{ color, letterSpacing: '-0.02em' }}
         >
           {value}
@@ -74,11 +78,11 @@ function AlertTile({
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-sm whitespace-normal text-left leading-snug">
         <div className="space-y-1">
-          <div className="font-mono text-[10px] uppercase tracking-[0.14em] opacity-70">
+          <div className="font-mono text-[12px] uppercase tracking-[0.14em] opacity-70">
             {label}
           </div>
-          <div className="text-xs font-semibold">{tooltipTitle}</div>
-          <div className="text-[11px] opacity-90">{tooltipBody}</div>
+          <div className="text-sm font-semibold">{tooltipTitle}</div>
+          <div className="text-[13px] opacity-90">{tooltipBody}</div>
         </div>
       </TooltipContent>
     </Tooltip>
@@ -86,7 +90,9 @@ function AlertTile({
 }
 
 export function AlertBar({ alerts }: AlertBarProps) {
-  const total = alerts.referralAlerts + alerts.overdueAnc + alerts.inTransitReferrals;
+  // Only true alarms feed the leading total — due-soon is upcoming workload,
+  // not an incident, so it must not push the ribbon into red on its own.
+  const total = alerts.referralAlerts + alerts.overdueAnc;
   const hot = total > 0;
   const stateColor = hot ? 'var(--risk-high)' : 'var(--risk-low)';
 
@@ -97,7 +103,7 @@ export function AlertBar({ alerts }: AlertBarProps) {
         hot ? 'bg-gradient-to-r from-red-50 to-white' : 'bg-white',
       )}
     >
-      {/* Leading state label — total alerts across the three categories. */}
+      {/* Leading state label — total across the two alarm categories. */}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -110,17 +116,14 @@ export function AlertBar({ alerts }: AlertBarProps) {
         >
           <span
             style={{ background: stateColor }}
-            className={cn(
-              'h-1.5 w-1.5 rounded-full',
-              hot && 'animate-pulse-hi',
-            )}
+            className={cn('h-1.5 w-1.5 rounded-full', hot && 'animate-pulse-hi')}
             aria-hidden="true"
           />
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--ink-navy-dim)]">
+          <span className="font-mono text-[12px] uppercase tracking-[0.14em] text-[var(--ink-navy-dim)]">
             {hot ? 'ACTIVE ALERTS' : 'ALL CLEAR'}
           </span>
           <span
-            className="ml-auto font-mono text-lg font-semibold tabular-nums"
+            className="ml-auto font-mono text-[20px] font-semibold tabular-nums"
             style={{ color: stateColor }}
           >
             {total}
@@ -128,58 +131,63 @@ export function AlertBar({ alerts }: AlertBarProps) {
         </TooltipTrigger>
         <TooltipContent side="bottom" className="max-w-sm whitespace-normal text-left leading-snug">
           <div className="space-y-1">
-            <div className="text-xs font-semibold">
-              {hot ? 'สถานะรวม — มีเหตุการณ์เฝ้าระวัง' : 'สถานะรวม — ปลอดเหตุการณ์'}
+            <div className="text-sm font-semibold">
+              {hot ? 'สถานะรวม — มีงานค้างต้องจัดการ' : 'สถานะรวม — ปลอดเหตุการณ์'}
             </div>
-            <div className="text-[11px] opacity-90">
-              ผลรวมของ 3 หมวดทางขวา — REFERRAL RECEIVED (เคสส่งต่อรอรับ) + OVERDUE ANC
-              (ขาดนัด ANC เกิน 28 วัน) + IN-TRANSIT REFERRAL (รถพยาบาลกำลังเดินทาง).
-              ถ้าเป็น 0 หมายความว่าไม่มีงานค้างต้องเฝ้าในระบบทั้งจังหวัด.
+            <div className="text-[13px] opacity-90">
+              ผลรวมของ REFERRAL ACTION (ส่งต่อเกิน SLA/ฉุกเฉินค้าง) + OVERDUE ANC (ขาดนัดเกิน 35
+              วัน). DUE ≤14D เป็นภาระงานล่วงหน้า ไม่นับรวมในสัญญาณเตือน.
+              คลิกแต่ละช่องเพื่อเปิดหน้ารายการที่กรองไว้แล้ว.
             </div>
           </div>
         </TooltipContent>
       </Tooltip>
       <AlertTile
-        label="REFERRAL RECEIVED"
+        testId="alert-referrals"
+        href="/referrals?overdue=1"
+        label="REFERRAL ACTION"
         value={alerts.referralAlerts}
-        zeroLabel="ไม่มีการส่งต่อค้าง"
-        detail="รอรับเคส · triage pending"
-        tooltipTitle="เคสส่งต่อที่ รพ.ปลายทางยังไม่ได้รับ"
+        zeroLabel="ไม่มีส่งต่อค้างเกิน SLA"
+        detail="เกิน SLA / ฉุกเฉินยังไม่ถึง"
+        tooltipTitle="เคสส่งต่อที่ต้องเร่งจัดการ"
         tooltipBody={
           <>
-            จำนวนเคสส่งต่อ (referral) ที่อยู่ในสถานะ <strong>INITIATED</strong> หรือ{' '}
-            <strong>ACCEPTED</strong> — รพ.ต้นทางส่งต่อมาแล้ว แต่ รพ.ปลายทางยังไม่ขึ้นรถ
-            (IN_TRANSIT) และยังไม่ถึง (ARRIVED). ปฏิบัติ: เร่ง triage เพื่อยืนยันรับหรือปฏิเสธ
-            ภายในเวลาที่เหมาะสม.
+            เคสส่งต่อสถานะ <strong>INITIATED</strong> ค้างเกิน <strong>24 ชั่วโมง</strong> รวมกับเคส{' '}
+            <strong>ฉุกเฉิน (EMERGENCY)</strong> ที่ยังไม่ถึงปลายทาง. ต่างจากเดิมที่นับเคสรอทั้งหมด
+            (ตัวเลขไม่เคยลด) — ช่องนี้จะเป็นศูนย์ได้เมื่อจัดการทัน. คลิกเพื่อเปิดรายการที่กรองแล้ว.
           </>
         }
       />
       <AlertTile
+        testId="alert-overdue-anc"
+        href="/pregnancies?cohort=anc_stale"
         label="OVERDUE ANC"
         value={alerts.overdueAnc}
         zeroLabel="ANC ครบทุกราย"
-        detail="ขาดนัด ANC เกิน 28 วัน"
-        tooltipTitle="หญิงตั้งครรภ์ขาดนัด ANC เกิน 28 วัน"
+        detail="ขาดนัดเกิน 35 วัน"
+        tooltipTitle="หญิงตั้งครรภ์ขาดนัด ANC เกินเกณฑ์"
         tooltipBody={
           <>
-            จำนวนหญิงตั้งครรภ์ที่ยังอยู่ในระยะ <strong>PREGNANCY</strong>{' '}
-            (ยังไม่คลอด/ไม่จำหน่าย) แต่นัด ANC ครั้งล่าสุดผ่านมาแล้ว <strong>มากกว่า 28 วัน</strong>{' '}
-            (last_anc_date เกิน 28 วันจากวันนี้). ปฏิบัติ: ติดตามให้กลับมาตรวจครรภ์
-            หรือเยี่ยมบ้านตามแนวทาง ANC ครบเกณฑ์.
+            นับเฉพาะทะเบียนครรภ์ที่ยัง active (ตัดรายคลอดแล้ว/หลุดติดตามออก เช่นเดียวกับหน้า
+            ฝากครรภ์) ที่นัดล่าสุดผ่านมาเกิน <strong>35 วัน</strong> — ตัวเลขเดียวกับช่อง MISSED ANC
+            ของหน้าฝากครรภ์. ปฏิบัติ: ติดตามให้กลับมาตรวจครรภ์ก่อนหลุดการติดตามที่ 60 วัน.
           </>
         }
       />
       <AlertTile
-        label="IN-TRANSIT REFERRAL"
-        value={alerts.inTransitReferrals}
-        zeroLabel="ไม่มีรถรับส่งอยู่"
-        detail="รถพยาบาลกำลังส่งเคส"
-        tooltipTitle="รถพยาบาลกำลังเดินทางส่งเคส"
+        testId="alert-due-soon"
+        href="/pregnancies?cohort=due_soon"
+        label="DUE ≤14 DAYS"
+        value={alerts.dueSoon}
+        zeroLabel="ไม่มีครรภ์ใกล้คลอด"
+        detail="ใกล้ครบกำหนดคลอด"
+        tooltipTitle="ครรภ์ครบกำหนดภายใน 14 วัน"
+        hotColor="var(--risk-medium)"
         tooltipBody={
           <>
-            จำนวนเคสส่งต่อสถานะ <strong>IN_TRANSIT</strong> — ขึ้นรถพยาบาลจาก รพ.ต้นทาง
-            และกำลังเดินทางไป รพ.ปลายทาง ยังไม่ถึง (ARRIVED). ปฏิบัติ: เฝ้าระวังเหตุระหว่างทาง,
-            พร้อมรับสายจาก รพ.ต้นทางหากผู้ป่วยมีอาการเปลี่ยน.
+            หญิงตั้งครรภ์ในทะเบียน active ที่ EDC อยู่ภายใน <strong>14 วัน</strong>{' '}
+            (รวมที่เลยกำหนดแล้ว) — ภาระงานคลอดที่กำลังมาถึงของทั้งจังหวัด ใช้วางแผนเตียง/ส่งต่อ.
+            แทนที่ช่อง IN-TRANSIT เดิมซึ่งเป็นศูนย์ตลอดเพราะสถานะส่งต่อไม่ถูกอัปเดตจากต้นทาง.
           </>
         }
       />

@@ -5,8 +5,8 @@ import { simulationGuard } from '../_guard';
 import { listLlmModels } from '@/lib/llm-client';
 
 export async function GET() {
-  const guard = simulationGuard();
-  if (guard) return guard;
+  const guard = await simulationGuard();
+  if (guard instanceof NextResponse) return guard;
   try {
     const models = await listLlmModels();
     return NextResponse.json({ models });

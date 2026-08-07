@@ -77,7 +77,10 @@ describe('PreLabourTab', () => {
     render(<PreLabourTab an="AN1" />, { wrapper });
     await waitFor(() => expect(screen.getByText('99')).toBeInTheDocument(), { timeout: 2000 });
     expect(screen.getByText('Y')).toBeInTheDocument();
-    expect(screen.getByText('2026-04-19')).toBeInTheDocument();
+    // labor_date is rendered in Buddhist-Era display format in the read-only
+    // view (2026-04-19 → 19/4/2569), matching the HOSxP paper chart. Assert
+    // the BE display the component actually shows.
+    expect(screen.getByText('19/4/2569')).toBeInTheDocument();
   });
 
   it('renders empty state when both records are null', async () => {
@@ -85,7 +88,9 @@ describe('PreLabourTab', () => {
     mockGetLabour.mockResolvedValue(null);
     mockGetPreg.mockResolvedValue(null);
     render(<PreLabourTab an="AN1" />, { wrapper });
-    await waitFor(() => expect(screen.getByText(/ไม่พบข้อมูล/)).toBeInTheDocument(), { timeout: 2000 });
+    await waitFor(() => expect(screen.getByText(/ไม่พบข้อมูล/)).toBeInTheDocument(), {
+      timeout: 2000,
+    });
   });
 
   it('renders error state when a fetch fails', async () => {
@@ -93,7 +98,9 @@ describe('PreLabourTab', () => {
     mockGetLabour.mockRejectedValue(new Error('BMS down'));
     mockGetPreg.mockResolvedValue(null);
     render(<PreLabourTab an="AN1" />, { wrapper });
-    await waitFor(() => expect(screen.getByText(/โหลดไม่สำเร็จ.*BMS down/)).toBeInTheDocument(), { timeout: 2000 });
+    await waitFor(() => expect(screen.getByText(/โหลดไม่สำเร็จ.*BMS down/)).toBeInTheDocument(), {
+      timeout: 2000,
+    });
   });
 });
 
@@ -147,9 +154,7 @@ describe('PreLabourTab CRUD', () => {
     fireEvent.click(screen.getByRole('button', { name: /แก้ไข/ }));
     fireEvent.click(screen.getByRole('button', { name: /บันทึก/ }));
     await waitFor(() =>
-      expect(
-        screen.getByText(/ipt_pregnancy สำเร็จ แต่ ipt_labour ไม่สำเร็จ/),
-      ).toBeInTheDocument(),
+      expect(screen.getByText(/ipt_pregnancy สำเร็จ แต่ ipt_labour ไม่สำเร็จ/)).toBeInTheDocument(),
     );
   });
 

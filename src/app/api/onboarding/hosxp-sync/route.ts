@@ -38,31 +38,6 @@ function normalizeDatabaseType(value: unknown): DatabaseDialect | null {
   return value === 'mysql' || value === 'postgresql' ? value : null;
 }
 
-async function detectDatabaseType(
-  apiUrl: string,
-  bearerToken: string,
-  marketplaceToken?: string | null,
-): Promise<DatabaseDialect> {
-  try {
-    const client = new BmsSessionClient(apiUrl);
-    const result = await client.executeQuery(
-      'SELECT version()',
-      apiUrl,
-      bearerToken,
-      undefined,
-      { appIdentifier: APP_IDENTIFIER, marketplaceToken },
-    );
-    const first = result.data[0] ?? {};
-    const version = String(
-      first['version()'] ?? first.version ?? Object.values(first)[0] ?? '',
-    ).toLowerCase();
-    return version.includes('postgresql') ? 'postgresql' : 'mysql';
-  } catch (error) {
-    logger.warn('onboarding_hosxp_sync_db_type_detect_failed', { error });
-    return 'mysql';
-  }
-}
-
 async function resolveOrCreateExemptHospital(
   db: Awaited<ReturnType<typeof getDatabase>>,
   hcode: string,
@@ -209,7 +184,21 @@ export async function POST(request: NextRequest) {
 
     const databaseType =
       normalizeDatabaseType(body.databaseType) ??
-      (await detectDatabaseType(apiUrl, bearerToken, marketplaceToken));
+      (await new BmsSessionClient(apiUrl).getDatabaseType(apiUrl, bearerToken, {
+        appIdentifier: APP_IDENTIFIER,
+        marketplaceToken,
+      }));
+    if (!databaseType) {
+      return NextResponse.json(
+        {
+          error: 'db_type_detection_failed',
+          stage: 'detect',
+          detail:
+            'ตรวจสอบชนิดฐานข้อมูล HOSxP อัตโนมัติไม่สำเร็จ — โปรดระบุ databaseType (mysql หรือ postgresql) มากับคำขอแล้วลองใหม่',
+        },
+        { status: 422 },
+      );
+    }
 
     const sessionExpiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
     const existingConfig = await db.query<{ id: string }>(
@@ -307,10 +296,7 @@ export async function GET() {
       id: string;
       connection_status: string | null;
       last_sync_at: string | null;
-    }>(
-      'SELECT id, connection_status, last_sync_at FROM hospitals WHERE hcode = ?',
-      [hcode],
-    );
+    }>('SELECT id, connection_status, last_sync_at FROM hospitals WHERE hcode = ?', [hcode]);
 
     if (hospitals.length === 0) {
       return NextResponse.json({

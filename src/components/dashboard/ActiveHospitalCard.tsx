@@ -55,11 +55,11 @@ export function ActiveHospitalCard({ hospital }: ActiveHospitalCardProps) {
         <div className="flex items-start justify-between">
           <div>
             <div className="font-semibold text-slate-800">{hospital.name}</div>
-            <span className="mt-1 inline-block rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-600">
+            <span className="mt-1 inline-block rounded bg-slate-100 px-2 py-0.5 font-mono text-sm text-slate-600">
               {hospital.level}
             </span>
           </div>
-          <div className="font-mono text-2xl font-bold text-slate-900">
+          <div className="font-mono text-[28px] font-bold text-slate-900">
             {hospital.counts.total}
           </div>
         </div>
@@ -68,7 +68,7 @@ export function ActiveHospitalCard({ hospital }: ActiveHospitalCardProps) {
         {dots.length > 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-3">
             {dots.map((dot) => (
-              <span key={dot.key} className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+              <span key={dot.key} className="inline-flex items-center gap-1.5 text-sm text-slate-500">
                 <span className={`inline-block h-2 w-2 rounded-full ${dot.dotClass}`} aria-hidden="true" />
                 {dot.count} {dot.label}
               </span>
@@ -81,7 +81,7 @@ export function ActiveHospitalCard({ hospital }: ActiveHospitalCardProps) {
           <ConnectionStatus
             status={hospital.connectionStatus}
             lastSyncAt={hospital.lastSyncAt}
-            className="text-xs"
+            className="text-sm"
           />
         </div>
       </div>

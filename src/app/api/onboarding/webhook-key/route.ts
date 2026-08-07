@@ -2,10 +2,10 @@
 //
 // Onboarding companion for the HOSxP webhook_setting auto-provisioner.
 // When a user lands on `/` with a marketplace_token the client calls this
-// route to mint a KK-LRMS webhook API key for their registered hospital,
+// route to mint a SR-LRMS webhook API key for their registered hospital,
 // then pushes the key into HOSxP's `webhook_setting` table (module_id=3,
-// setting_code='KK-LRMS') via BMS REST. This route does NOT touch HOSxP —
-// it only provisions the KK-LRMS side.
+// setting_code='SR-LRMS') via BMS REST. This route does NOT touch HOSxP —
+// it only provisions the SR-LRMS side.
 //
 // The hospital must already exist in the admin `hospitals` table. That's
 // enforced upstream by the session guard (hospital-access-guard), but we

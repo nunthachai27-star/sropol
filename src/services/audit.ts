@@ -4,7 +4,16 @@ import type { DatabaseAdapter } from '@/db/adapter';
 import { logger } from '@/lib/logger';
 
 export interface AuditLogEntry {
-  userId: string;
+  /** Correlation token for the actor — the BMS session id. A soft, non-FK,
+   *  nullable reference. Optional in the type so `auditActorFromSession()` can
+   *  be spread in directly; `logAccess` still validates it is present at
+   *  runtime (see below), so every audited action records *some* identity. */
+  userId?: string | null;
+  /** Human-readable actor identity, snapshotted at write time (the "who" for
+   *  PDPA). Optional so non-session callers can still log. */
+  userName?: string | null;
+  userRole?: string | null;
+  hospitalCode?: string | null;
   action: string;
   resourceType: string;
   resourceId?: string;
@@ -13,10 +22,7 @@ export interface AuditLogEntry {
   metadata?: Record<string, unknown>;
 }
 
-export async function logAccess(
-  db: DatabaseAdapter,
-  entry: AuditLogEntry,
-): Promise<void> {
+export async function logAccess(db: DatabaseAdapter, entry: AuditLogEntry): Promise<void> {
   if (!entry.userId || !entry.action || !entry.resourceType) {
     throw new Error('Missing required audit log fields: userId, action, resourceType');
   }
@@ -24,11 +30,14 @@ export async function logAccess(
   const now = new Date().toISOString();
 
   await db.execute(
-    `INSERT INTO audit_logs (id, user_id, action, resource_type, resource_id, ip_address, user_agent, metadata, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO audit_logs (id, user_id, user_name, user_role, hospital_code, action, resource_type, resource_id, ip_address, user_agent, metadata, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       uuidv4(),
-      entry.userId,
+      entry.userId ?? null,
+      entry.userName ?? null,
+      entry.userRole ?? null,
+      entry.hospitalCode ?? null,
       entry.action,
       entry.resourceType,
       entry.resourceId ?? null,
@@ -52,10 +61,7 @@ export async function logAccess(
  * without affecting the user experience. PDPA compliance gaps that result
  * are tracked through the warn-level metric.
  */
-export async function tryLogAccess(
-  db: DatabaseAdapter,
-  entry: AuditLogEntry,
-): Promise<void> {
+export async function tryLogAccess(db: DatabaseAdapter, entry: AuditLogEntry): Promise<void> {
   try {
     await logAccess(db, entry);
   } catch (error) {

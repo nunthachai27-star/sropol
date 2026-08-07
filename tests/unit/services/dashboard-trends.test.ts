@@ -2,15 +2,14 @@
 // and current/previous shift counts for the redesigned dashboard (§5 of the
 // 2026-04-21 brief).
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import { getTrends } from '@/services/dashboard';
 import { v4 as uuidv4 } from 'uuid';
 
 async function seedPatient(
-  db: SqliteAdapter,
+  db: DatabaseAdapter,
   hospitalId: string,
   admitDate: string,
   opts: { risk?: 'LOW' | 'MEDIUM' | 'HIGH'; deliveredAt?: string | null } = {},
@@ -44,7 +43,7 @@ async function seedPatient(
 }
 
 async function seedReferral(
-  db: SqliteAdapter,
+  db: DatabaseAdapter,
   fromHospitalId: string,
   toHospitalId: string,
   initiatedAt: string,
@@ -80,14 +79,13 @@ async function seedReferral(
 }
 
 describe('getTrends', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let hospitalId: string;
   let otherHospitalId: string;
   const REFERENCE_NOW = new Date('2026-04-21T08:42:07.000Z'); // 15:42 Bangkok (เวรบ่าย shift)
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
     const rows = await db.query<{ id: string; hcode: string }>(
       "SELECT id, hcode FROM hospitals WHERE hcode IN ('10670', '10998')",

@@ -1,4 +1,4 @@
-import { getDatabase, isSqliteEnabled } from '@/db/connection';
+import { getDatabase, getDriverType } from '@/db/connection';
 import { SchemaSync } from '@/db/schema-sync';
 import { hospitalConsultDoctorsTable } from '@/db/tables/hospital-consult-doctors';
 
@@ -20,11 +20,7 @@ export function ensureHospitalConsultDoctorsSchema(): Promise<void> {
   if (!_singleton.promise) {
     _singleton.promise = (async () => {
       const db = await getDatabase();
-      await SchemaSync.sync(
-        db,
-        [hospitalConsultDoctorsTable],
-        isSqliteEnabled() ? 'sqlite' : 'postgresql',
-      );
+      await SchemaSync.sync(db, [hospitalConsultDoctorsTable], getDriverType());
     })().catch((error) => {
       _singleton.promise = null;
       throw error;

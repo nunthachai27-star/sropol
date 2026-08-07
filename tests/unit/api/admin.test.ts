@@ -1,27 +1,25 @@
 // T092: Admin API route tests — TDD: write tests FIRST
 import { describe, it, expect, beforeEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 
 describe('Admin API Logic', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter();
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
 
     // Seed hospitals
     const now = new Date().toISOString();
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['hosp-1', '10670', 'รพ.ขอนแก่น', 'A_S', 1, 'ONLINE', now, now],
+      ['hosp-1', '10670', 'รพ.ขอนแก่น', 'A_S', true, 'ONLINE', now, now],
     );
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['hosp-2', '11000', 'รพ.น้ำพอง', 'M1', 1, 'OFFLINE', now, now],
+      ['hosp-2', '11000', 'รพ.น้ำพอง', 'M1', true, 'OFFLINE', now, now],
     );
   });
 
@@ -30,7 +28,15 @@ describe('Admin API Logic', () => {
     await db.execute(
       `INSERT INTO hospital_bms_config (id, hospital_id, tunnel_url, session_jwt, database_type, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ['cfg-1', 'hosp-1', 'https://tunnel1.example.com', 'jwt-123', 'postgresql', new Date().toISOString(), new Date().toISOString()],
+      [
+        'cfg-1',
+        'hosp-1',
+        'https://tunnel1.example.com',
+        'jwt-123',
+        'postgresql',
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ],
     );
 
     const hospitals = await db.query<{
@@ -63,7 +69,13 @@ describe('Admin API Logic', () => {
     await db.execute(
       `INSERT INTO hospital_bms_config (id, hospital_id, tunnel_url, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?)`,
-      ['cfg-1', 'hosp-1', 'https://old-tunnel.example.com', new Date().toISOString(), new Date().toISOString()],
+      [
+        'cfg-1',
+        'hosp-1',
+        'https://old-tunnel.example.com',
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ],
     );
 
     await db.execute(
@@ -83,7 +95,13 @@ describe('Admin API Logic', () => {
     await db.execute(
       `INSERT INTO hospital_bms_config (id, hospital_id, tunnel_url, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?)`,
-      ['cfg-2', 'hosp-2', 'https://tunnel2.example.com', new Date().toISOString(), new Date().toISOString()],
+      [
+        'cfg-2',
+        'hosp-2',
+        'https://tunnel2.example.com',
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ],
     );
 
     const configs = await db.query<{ tunnel_url: string }>(

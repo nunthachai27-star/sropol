@@ -5,6 +5,7 @@ import type { DatabaseAdapter } from '@/db/adapter';
 import type { HosxpIptRow, HosxpPregnancyRow, HosxpPatientRow } from '@/types/hosxp';
 import { encrypt } from '@/lib/encryption';
 import { calculateAge } from '@/lib/utils';
+import { CooperativeYielder } from '@/lib/event-loop';
 
 export interface SyncPatientData {
   hn: string;
@@ -80,8 +81,14 @@ export async function upsertCachedPatients(
 ): Promise<number> {
   let count = 0;
   const now = new Date().toISOString();
+  // Bounded cooperative yielding (page-stall fix part 2): reached from the
+  // browser-push cycle on the ONE serving event loop; every caller passes the
+  // top-level adapter (never a transaction handle), so ticking per patient is
+  // safe under the never-yield-inside-a-tx rule.
+  const yielder = new CooperativeYielder();
 
   for (const p of patients) {
+    await yielder.tick();
     const existing = await db.query<{ id: string }>(
       'SELECT id FROM cached_patients WHERE hospital_id = ? AND an = ?',
       [hospitalId, p.an],

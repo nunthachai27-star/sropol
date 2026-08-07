@@ -1,35 +1,12 @@
-// T10: PATCH /api/referrals/[id]/transit — mark referral as in transit
-import { NextResponse, type NextRequest } from 'next/server';
-import { getDatabase } from '@/db/connection';
-import { ensureInit } from '@/lib/ensure-init';
+// PATCH /api/referrals/[id]/transit — SOURCE hospital marks the patient in transit.
+import { referralTransitionRoute } from '@/lib/referral-http';
 import { markInTransit } from '@/services/referral';
-import { logger } from '@/lib/logger';
+import { auditActorFromSession } from '@/lib/audit-actor';
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  try {
-    await ensureInit();
-    const { id } = await params;
-    const body = await request.json() as Record<string, unknown>;
-    const { transportMode } = body;
-
-    if (!transportMode) {
-      return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: 'transportMode จำเป็นต้องระบุ', details: null } },
-        { status: 400 },
-      );
-    }
-
-    const db = await getDatabase();
-    const referral = await markInTransit(db, id, String(transportMode));
-    return NextResponse.json(referral);
-  } catch (error) {
-    logger.error('referral_transit_failed', { error });
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'เกิดข้อผิดพลาด กรุณาลองใหม่', details: null } },
-      { status: 500 },
-    );
-  }
-}
+export const PATCH = referralTransitionRoute({
+  side: 'from',
+  requiredField: 'transportMode',
+  logEvent: 'referral_transit_failed',
+  run: (db, id, body, session) =>
+    markInTransit(db, id, String(body.transportMode), auditActorFromSession(session)),
+});

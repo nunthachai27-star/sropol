@@ -17,9 +17,11 @@ export async function GET() {
       {
         status: 'unhealthy',
         database: 'disconnected',
+        cache: { backend: 'memory', degraded: false, degradedSince: null },
         uptime: 0,
         timestamp: new Date().toISOString(),
         hospitalConnections: { total: 0, online: 0, offline: 0, unknown: 0 },
+        degradedReasons: ['health_check_failed'],
       },
       { status: 503 },
     );

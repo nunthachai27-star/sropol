@@ -1,10 +1,11 @@
 import { SessionProvider } from 'next-auth/react';
 import { BmsSessionProvider } from '@/contexts/BmsSessionContext';
-import { withBasePath } from '@/lib/base-path';
+import { CallProvider } from '@/components/calls/CallProvider';
 import { TopNavBarSlot } from '@/components/layout/TopNavBarSlot';
 import { ContentFrameSlot } from '@/components/layout/ContentFrameSlot';
 import { BreadcrumbProvider } from '@/components/layout/BreadcrumbContext';
 import { DbHealthBanner } from '@/components/layout/DbHealthBanner';
+import { ClinicalChatPanel } from '@/components/chat/ClinicalChatPanel';
 
 // BmsSessionProvider is mounted here (in addition to the (hospital) layout)
 // so the provincial dashboard can participate in the BMS session flow —
@@ -14,17 +15,22 @@ import { DbHealthBanner } from '@/components/layout/DbHealthBanner';
 // who arrive at `/` without marketplace context.
 export default function ProvincialLayout({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider basePath={withBasePath('/api/auth')}>
+    <SessionProvider>
       <BmsSessionProvider>
-        <BreadcrumbProvider>
-          <div className="flex min-h-screen flex-col bg-slate-50/50">
-            <DbHealthBanner />
-            <TopNavBarSlot />
-            <main className="flex-1">
-              <ContentFrameSlot>{children}</ContentFrameSlot>
-            </main>
-          </div>
-        </BreadcrumbProvider>
+        <CallProvider>
+          <BreadcrumbProvider>
+            <div className="flex min-h-screen flex-col bg-slate-50/50">
+              <DbHealthBanner />
+              <TopNavBarSlot />
+              <main className="flex-1">
+                <ContentFrameSlot>{children}</ContentFrameSlot>
+              </main>
+              {/* Clinical chatbot — statistics mode (provincial dashboard
+                  aggregates). Clinical drilldown pages can override per-page. */}
+              <ClinicalChatPanel mode="statistics" />
+            </div>
+          </BreadcrumbProvider>
+        </CallProvider>
       </BmsSessionProvider>
     </SessionProvider>
   );

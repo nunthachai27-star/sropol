@@ -2,13 +2,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 
 describe('Referral Check API Logic', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let hospitalId: string;
   const now = new Date().toISOString();
 
@@ -17,15 +16,14 @@ describe('Referral Check API Logic', () => {
   }
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
 
     hospitalId = uuidv4();
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [hospitalId, '99910', 'รพ.ทดสอบ Check API', 'M2', 1, 'ONLINE', now, now],
+      [hospitalId, '99910', 'รพ.ทดสอบ Check API', 'M2', true, 'ONLINE', now, now],
     );
   });
 
@@ -37,10 +35,7 @@ describe('Referral Check API Logic', () => {
     const cid = '1100500000000';
     const hash = cidHash(cid);
 
-    const journeys = await db.query(
-      'SELECT * FROM maternal_journeys WHERE cid_hash = ?',
-      [hash],
-    );
+    const journeys = await db.query('SELECT * FROM maternal_journeys WHERE cid_hash = ?', [hash]);
     expect(journeys).toHaveLength(0);
 
     const labor = await db.query(
@@ -99,7 +94,7 @@ describe('Referral Check API Logic', () => {
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [destHospId, '99911', 'รพ.ปลายทาง Check', 'A', 1, 'ONLINE', now, now],
+      [destHospId, '99911', 'รพ.ปลายทาง Check', 'A', true, 'ONLINE', now, now],
     );
 
     await db.execute(
@@ -133,7 +128,7 @@ describe('Referral Check API Logic', () => {
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [otherHospId, '99912', 'รพ.อื่น Check', 'M1', 1, 'ONLINE', now, now],
+      [otherHospId, '99912', 'รพ.อื่น Check', 'M1', true, 'ONLINE', now, now],
     );
 
     // Journey created at otherHosp

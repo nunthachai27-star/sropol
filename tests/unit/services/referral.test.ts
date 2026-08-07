@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import {
   initiateReferral,
   acceptReferral,
@@ -13,32 +12,31 @@ import {
 import { ReferralStatus, UrgencyLevel } from '@/types/domain';
 
 describe('Referral Workflow Service', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   const fromHospId = 'hosp-from';
   const toHospId = 'hosp-to';
   const journeyId = 'journey-001';
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     // Seed hospitals
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at) VALUES
-       ('${fromHospId}', '11004', 'รพ.พล', 'F2', 1, 'ONLINE', datetime('now'), datetime('now'))`,
+       ('${fromHospId}', '11004', 'รพ.พล', 'F2', TRUE, 'ONLINE', NOW(), NOW())`,
     );
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at) VALUES
-       ('${toHospId}', '10670', 'รพ.ขอนแก่น', 'A_S', 1, 'ONLINE', datetime('now'), datetime('now'))`,
+       ('${toHospId}', '10670', 'รพ.ขอนแก่น', 'A_S', TRUE, 'ONLINE', NOW(), NOW())`,
     );
     // Seed a user (for accepted_by FK)
     await db.execute(
       `INSERT INTO users (id, bms_user_name, role, is_active, created_at, updated_at) VALUES
-       ('user-001', 'testuser', 'NURSE', 1, datetime('now'), datetime('now'))`,
+       ('user-001', 'testuser', 'NURSE', TRUE, NOW(), NOW())`,
     );
     // Seed a journey
     await db.execute(
       `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, cid, cid_hash, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
-       VALUES ('${journeyId}', '${fromHospId}', '${fromHospId}', '12345', 'Test Patient', 'enc_cid', 'cidhash_test', 30, 1, 0, 'PREGNANCY', 'HR3', 0, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
+       VALUES ('${journeyId}', '${fromHospId}', '${fromHospId}', '12345', 'Test Patient', 'enc_cid', 'cidhash_test', 30, 1, 0, 'PREGNANCY', 'HR3', 0, NOW(), NOW(), NOW(), NOW(), NOW())`,
     );
   });
 
@@ -48,8 +46,11 @@ describe('Referral Workflow Service', () => {
 
   it('initiateReferral creates a referral with INITIATED status', async () => {
     const ref = await initiateReferral(db, {
-      journeyId, fromHospitalId: fromHospId, toHospitalId: toHospId,
-      reason: 'HR3 exceeds capability', urgencyLevel: UrgencyLevel.URGENT,
+      journeyId,
+      fromHospitalId: fromHospId,
+      toHospitalId: toHospId,
+      reason: 'HR3 exceeds capability',
+      urgencyLevel: UrgencyLevel.URGENT,
     });
     expect(ref.status).toBe(ReferralStatus.INITIATED);
     expect(ref.fromHospitalId).toBe(fromHospId);
@@ -60,8 +61,11 @@ describe('Referral Workflow Service', () => {
 
   it('acceptReferral transitions to ACCEPTED', async () => {
     const ref = await initiateReferral(db, {
-      journeyId, fromHospitalId: fromHospId, toHospitalId: toHospId,
-      reason: 'HR3', urgencyLevel: UrgencyLevel.URGENT,
+      journeyId,
+      fromHospitalId: fromHospId,
+      toHospitalId: toHospId,
+      reason: 'HR3',
+      urgencyLevel: UrgencyLevel.URGENT,
     });
     const updated = await acceptReferral(db, ref.id, 'user-001');
     expect(updated.status).toBe(ReferralStatus.ACCEPTED);
@@ -71,8 +75,11 @@ describe('Referral Workflow Service', () => {
 
   it('rejectReferral transitions to REJECTED with reason', async () => {
     const ref = await initiateReferral(db, {
-      journeyId, fromHospitalId: fromHospId, toHospitalId: toHospId,
-      reason: 'HR3', urgencyLevel: UrgencyLevel.ROUTINE,
+      journeyId,
+      fromHospitalId: fromHospId,
+      toHospitalId: toHospId,
+      reason: 'HR3',
+      urgencyLevel: UrgencyLevel.ROUTINE,
     });
     const updated = await rejectReferral(db, ref.id, 'No bed available');
     expect(updated.status).toBe(ReferralStatus.REJECTED);
@@ -82,8 +89,11 @@ describe('Referral Workflow Service', () => {
 
   it('full lifecycle: INITIATED → ACCEPTED → IN_TRANSIT → ARRIVED', async () => {
     const ref = await initiateReferral(db, {
-      journeyId, fromHospitalId: fromHospId, toHospitalId: toHospId,
-      reason: 'Test', urgencyLevel: UrgencyLevel.EMERGENCY,
+      journeyId,
+      fromHospitalId: fromHospId,
+      toHospitalId: toHospId,
+      reason: 'Test',
+      urgencyLevel: UrgencyLevel.EMERGENCY,
     });
     await acceptReferral(db, ref.id, 'user-001');
     await markInTransit(db, ref.id, 'ambulance');
@@ -94,8 +104,11 @@ describe('Referral Workflow Service', () => {
 
   it('confirmArrival updates journey current_hospital_id', async () => {
     const ref = await initiateReferral(db, {
-      journeyId, fromHospitalId: fromHospId, toHospitalId: toHospId,
-      reason: 'Test', urgencyLevel: UrgencyLevel.URGENT,
+      journeyId,
+      fromHospitalId: fromHospId,
+      toHospitalId: toHospId,
+      reason: 'Test',
+      urgencyLevel: UrgencyLevel.URGENT,
     });
     await acceptReferral(db, ref.id, 'user-001');
     await markInTransit(db, ref.id, 'ambulance');
@@ -110,8 +123,11 @@ describe('Referral Workflow Service', () => {
 
   it('getPendingReferrals returns outbound referrals', async () => {
     await initiateReferral(db, {
-      journeyId, fromHospitalId: fromHospId, toHospitalId: toHospId,
-      reason: 'Test', urgencyLevel: UrgencyLevel.ROUTINE,
+      journeyId,
+      fromHospitalId: fromHospId,
+      toHospitalId: toHospId,
+      reason: 'Test',
+      urgencyLevel: UrgencyLevel.ROUTINE,
     });
     const pending = await getPendingReferrals(db, fromHospId, 'out');
     expect(pending.length).toBe(1);
@@ -120,8 +136,11 @@ describe('Referral Workflow Service', () => {
 
   it('getPendingReferrals excludes ARRIVED and REJECTED', async () => {
     const ref1 = await initiateReferral(db, {
-      journeyId, fromHospitalId: fromHospId, toHospitalId: toHospId,
-      reason: 'Test1', urgencyLevel: UrgencyLevel.ROUTINE,
+      journeyId,
+      fromHospitalId: fromHospId,
+      toHospitalId: toHospId,
+      reason: 'Test1',
+      urgencyLevel: UrgencyLevel.ROUTINE,
     });
     await rejectReferral(db, ref1.id, 'No bed');
 
@@ -131,8 +150,11 @@ describe('Referral Workflow Service', () => {
 
   it('getPendingReferrals returns inbound referrals', async () => {
     await initiateReferral(db, {
-      journeyId, fromHospitalId: fromHospId, toHospitalId: toHospId,
-      reason: 'Test', urgencyLevel: UrgencyLevel.URGENT,
+      journeyId,
+      fromHospitalId: fromHospId,
+      toHospitalId: toHospId,
+      reason: 'Test',
+      urgencyLevel: UrgencyLevel.URGENT,
     });
     const inbound = await getPendingReferrals(db, toHospId, 'in');
     expect(inbound.length).toBe(1);

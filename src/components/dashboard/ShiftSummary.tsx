@@ -20,11 +20,11 @@ export function ShiftSummary({ trends }: ShiftSummaryProps) {
   return (
     <div className="border border-[var(--rule-strong)] bg-white p-4">
       <div className="flex items-center justify-between">
-        <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--ink-navy-muted)]">
+        <div className="font-mono text-[12px] uppercase tracking-[0.14em] text-[var(--ink-navy-muted)]">
           SHIFT SUMMARY
         </div>
         <div
-          className="font-mono text-[10px] text-[var(--ink-navy-dim)]"
+          className="font-mono text-[12px] text-[var(--ink-navy-dim)]"
           title={`เวรปัจจุบันเริ่ม ${new Date(currentShift.windowStart).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}`}
         >
           {currentShift.label || '—'}
@@ -33,14 +33,14 @@ export function ShiftSummary({ trends }: ShiftSummaryProps) {
       <div className="mt-2.5 grid grid-cols-3 gap-2.5">
         {rows.map(([label, c, p]) => (
           <div key={label}>
-            <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
+            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--ink-navy-muted)]">
               {label}
             </div>
             <div className="flex items-baseline gap-1.5">
-              <div className="font-mono text-[22px] font-semibold leading-none text-[var(--ink-navy)] tabular-nums">
+              <div className="font-mono text-[26px] font-semibold leading-none text-[var(--ink-navy)] tabular-nums">
                 {c}
               </div>
-              <div className="font-mono text-[10px] text-[var(--ink-navy-muted)]">
+              <div className="font-mono text-[12px] text-[var(--ink-navy-muted)]">
                 vs {p} last
               </div>
             </div>
@@ -48,7 +48,7 @@ export function ShiftSummary({ trends }: ShiftSummaryProps) {
         ))}
       </div>
       {previousShift.label && (
-        <div className="mt-2 border-t border-[var(--rule-hair)] pt-1.5 font-mono text-[9px] text-[var(--ink-navy-muted)]">
+        <div className="mt-2 border-t border-[var(--rule-hair)] pt-1.5 font-mono text-[11px] text-[var(--ink-navy-muted)]">
           เปรียบเทียบกับ {previousShift.label}
         </div>
       )}

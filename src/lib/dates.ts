@@ -15,7 +15,17 @@ export function toIsoDate(value: string | Date | null | undefined): string | nul
   if (value == null) return null;
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return null;
-    return value.toISOString().slice(0, 10);
+    // `lmp`/`edc` are declared `datetime` in schema-sync, which maps to
+    // TIMESTAMPTZ on Postgres. A naive "YYYY-MM-DD" string written into that
+    // column is interpreted as midnight in the HOST timezone (Asia/Bangkok,
+    // +07) and stored as an earlier UTC instant (e.g. "2025-05-01" becomes
+    // 2025-04-30T17:00:00Z). Reading the calendar day back via UTC getters
+    // (toISOString) would return the day BEFORE the one that was written.
+    // Local getters recover the host-midnight the value was written at.
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
   if (typeof value !== 'string') return null;
   const s = value.trim();
@@ -25,6 +35,21 @@ export function toIsoDate(value: string | Date | null | undefined): string | nul
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Normalize a pg TIMESTAMPTZ value (Date object) or ISO string to a full
+ * ISO-8601 string. Service mappers MUST use this (not bare `as string`
+ * casts) when a query row feeds an API field declared `string` — pg returns
+ * Date objects, and server-side string methods on them crash (the
+ * `/api/hospitals/[hcode]/patients` `.localeCompare` 500 was this bug).
+ * Null-safe; unparseable input returns null instead of throwing.
+ */
+export function toIsoString(value: string | Date | null | undefined): string | null {
+  if (value == null) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
 }
 
 export function isoDatesEqual(

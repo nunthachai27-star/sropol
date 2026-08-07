@@ -8,6 +8,16 @@ const REDACTED = '[REDACTED]';
 
 // Field names that must never reach logs (PDPA + auth tokens).
 // Match is case-insensitive and substring-based so e.g. "patientCid" is caught.
+//
+// WHO containment T6 (spec §5 P2, §10.1): 'hn', 'patient_name', 'patientname',
+// 'firstname', 'lastname' added — pre-existing `logger.warn('pregnancy_overlap',
+// { hn: anc.hn, ... })`-style call sites (services/webhook.ts,
+// services/sync/anc.ts) were leaking patient HN into logs unredacted before
+// this. Deliberately NOT 'name' (bare) — that would also redact
+// non-PHI keys like `eventName`/`hostname`. The substring match does
+// over-redact incidental non-PHI keys containing "hn" (e.g. `hnList`, or
+// the ProviderID `hnameTh` org-name field) — accepted collateral; the goal
+// is zero PHI false negatives, not surgical precision.
 const SENSITIVE_KEYS = [
   'cid',
   'password',
@@ -19,6 +29,11 @@ const SENSITIVE_KEYS = [
   'sessionid',
   'session_id',
   'secret',
+  'hn',
+  'patient_name',
+  'patientname',
+  'firstname',
+  'lastname',
 ];
 
 function isSensitive(key: string): boolean {
@@ -47,7 +62,7 @@ function emit(level: LogLevel, event: string, context: Record<string, unknown> =
     ts: new Date().toISOString(),
     level,
     event,
-    ...redact(context) as Record<string, unknown>,
+    ...(redact(context) as Record<string, unknown>),
   });
   // Use the matching console method so output preserves stderr/stdout semantics
   // and existing observability tooling (Docker logs, journald) continues to work.

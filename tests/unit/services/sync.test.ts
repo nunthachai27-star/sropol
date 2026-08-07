@@ -1,9 +1,7 @@
 // T045: Sync service tests — write FIRST (TDD)
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createHash } from 'crypto';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import {
   transformHosxpPatient,
@@ -17,11 +15,10 @@ import type { DatabaseAdapter } from '@/db/adapter';
 import { LaborStatus } from '@/types/domain';
 
 describe('Sync Service', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
   });
 
@@ -60,7 +57,12 @@ describe('Sync Service', () => {
         sex: '2',
       };
 
-      const result = transformHosxpPatient(ipt, pregnancy, patient, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
+      const result = transformHosxpPatient(
+        ipt,
+        pregnancy,
+        patient,
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      );
       expect(result.hn).toBe('000105188');
       expect(result.an).toBe('6700012345');
       expect(result.gravida).toBe(2);
@@ -169,9 +171,7 @@ describe('Sync Service', () => {
     });
 
     it('should detect new admissions', () => {
-      const newData = [
-        { an: '6700099999', hn: '000199999', laborStatus: 'ACTIVE' },
-      ];
+      const newData = [{ an: '6700099999', hn: '000199999', laborStatus: 'ACTIVE' }];
       const existingAns: string[] = [];
       const changes = detectChanges(newData as any, existingAns);
       expect(changes.newAdmissions).toHaveLength(1);
@@ -179,9 +179,7 @@ describe('Sync Service', () => {
     });
 
     it('should detect discharges (patients missing from new data)', () => {
-      const newData = [
-        { an: 'AN-STILL-ACTIVE', laborStatus: 'ACTIVE' },
-      ];
+      const newData = [{ an: 'AN-STILL-ACTIVE', laborStatus: 'ACTIVE' }];
       const existingAns = ['AN-STILL-ACTIVE', 'AN-DISCHARGED'];
       const changes = detectChanges(newData as any, existingAns);
       expect(changes.discharges).toHaveLength(1);
@@ -229,18 +227,30 @@ describe('Sync Service', () => {
       await db.execute(
         `INSERT INTO cached_patients (id, hospital_id, hn, an, name, age, admit_date, labor_status, delivered_at, synced_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'DELIVERED', ?, ?, ?, ?)`,
-        [patientId, hospitalId, 'HN-ALREADY', 'AN-ALREADY', 'test', 25, '2026-03-08', '2026-03-07T12:00:00', now, now, now],
+        [
+          patientId,
+          hospitalId,
+          'HN-ALREADY',
+          'AN-ALREADY',
+          'test',
+          25,
+          '2026-03-08',
+          '2026-03-07T12:00:00Z',
+          now,
+          now,
+          now,
+        ],
       );
 
       const { markPatientsDelivered } = await import('@/services/sync');
       await markPatientsDelivered(db, hospitalId, ['AN-ALREADY']);
 
       // delivered_at should not change
-      const result = await db.query<{ delivered_at: string }>(
+      const result = await db.query<{ delivered_at: string | Date }>(
         'SELECT delivered_at FROM cached_patients WHERE id = ?',
         [patientId],
       );
-      expect(result[0].delivered_at).toBe('2026-03-07T12:00:00');
+      expect(new Date(result[0].delivered_at).toISOString()).toBe('2026-03-07T12:00:00.000Z');
     });
 
     it('handles empty array without error', async () => {

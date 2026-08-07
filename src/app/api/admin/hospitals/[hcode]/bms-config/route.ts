@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { BmsSessionClient } from '@/lib/bms-session';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '@/lib/logger';
@@ -11,41 +12,34 @@ export async function PUT(
   { params }: { params: Promise<{ hcode: string }> },
 ) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const { hcode } = await params;
     const body = await request.json();
     const { tunnelUrl } = body;
 
     if (!tunnelUrl) {
-      return NextResponse.json(
-        { error: 'Tunnel URL is required' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'Tunnel URL is required' }, { status: 400 });
     }
 
     // Validate URL format
     try {
       new URL(tunnelUrl);
     } catch {
-      return NextResponse.json(
-        { error: 'Invalid URL format' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 });
     }
 
     const db = await getDatabase();
 
     // Get hospital ID
-    const hospitals = await db.query<{ id: string }>(
-      'SELECT id FROM hospitals WHERE hcode = ?',
-      [hcode],
-    );
+    const hospitals = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [
+      hcode,
+    ]);
 
     if (hospitals.length === 0) {
-      return NextResponse.json(
-        { error: 'Hospital not found' },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: 'Hospital not found' }, { status: 404 });
     }
 
     const hospitalId = hospitals[0].id;
@@ -71,10 +65,18 @@ export async function PUT(
     }
 
     // Upsert BMS config
-    const existing = await db.query<{ id: string }>(
-      'SELECT id FROM hospital_bms_config WHERE hospital_id = ?',
+    const existing = await db.query<{ id: string; database_type: string | null }>(
+      'SELECT id, database_type FROM hospital_bms_config WHERE hospital_id = ?',
       [hospitalId],
     );
+
+    // getDatabaseType returns null when detection fails (or was skipped
+    // because session validation itself failed). Keep whatever dialect was
+    // already persisted rather than overwriting a working value with null —
+    // same guard applied to the other getDatabaseType call sites (C5).
+    if (!databaseType && existing.length > 0) {
+      databaseType = existing[0].database_type;
+    }
 
     if (existing.length > 0) {
       await db.execute(
@@ -96,9 +98,6 @@ export async function PUT(
     });
   } catch (error) {
     logger.error('bms_config_update_failed', { error });
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

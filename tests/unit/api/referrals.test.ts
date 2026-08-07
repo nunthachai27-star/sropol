@@ -1,8 +1,7 @@
 // T10: Referral API routes tests — TDD: tests cover service layer used by route handlers
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { v4 as uuidv4 } from 'uuid';
 import {
   initiateReferral,
@@ -11,11 +10,12 @@ import {
   markInTransit,
   confirmArrival,
   getPendingReferrals,
+  autoArriveReferrals,
 } from '@/services/referral';
 import { UrgencyLevel, ReferralStatus } from '@/types/domain';
 
 // Helper: seed two hospitals and a journey (minimal journey row)
-async function seedFixtures(db: SqliteAdapter) {
+async function seedFixtures(db: DatabaseAdapter) {
   const now = new Date().toISOString();
 
   const hospAId = uuidv4();
@@ -24,12 +24,12 @@ async function seedFixtures(db: SqliteAdapter) {
   await db.execute(
     `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [hospAId, '10670', 'รพ.A', 'M1', 1, 'ONLINE', now, now],
+    [hospAId, '10670', 'รพ.A', 'M1', true, 'ONLINE', now, now],
   );
   await db.execute(
     `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [hospBId, '11000', 'รพ.B', 'A_S', 1, 'ONLINE', now, now],
+    [hospBId, '11000', 'รพ.B', 'A_S', true, 'ONLINE', now, now],
   );
 
   const journeyId = uuidv4();
@@ -37,37 +37,82 @@ async function seedFixtures(db: SqliteAdapter) {
   await db.execute(
     `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, cid, cid_hash, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [journeyId, hospAId, hospAId, '12345', 'Test Patient', 'enc_cid_test', 'cidhash_test', 30, 1, 0, 'PREGNANCY', 'HR3', 0, now, now, now, now, now],
+    [
+      journeyId,
+      hospAId,
+      hospAId,
+      '12345',
+      'Test Patient',
+      'enc_cid_test',
+      'cidhash_test',
+      30,
+      1,
+      0,
+      'PREGNANCY',
+      'HR3',
+      0,
+      now,
+      now,
+      now,
+      now,
+      now,
+    ],
   );
 
   // Seed users for accepted_by FK
-  for (const userId of ['doctor-007', 'ob-gyn-B', 'doctor-X', 'doctor-Y', 'doctor-Z', 'nurse-001', 'midwife-A']) {
+  for (const userId of [
+    'doctor-007',
+    'ob-gyn-B',
+    'doctor-X',
+    'doctor-Y',
+    'doctor-Z',
+    'nurse-001',
+    'midwife-A',
+  ]) {
     await db.execute(
       `INSERT INTO users (id, bms_user_name, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-      [userId, userId, 'NURSE', 1, now, now],
+      [userId, userId, 'NURSE', true, now, now],
     );
   }
 
   return { hospAId, hospBId, journeyId };
 }
 
-async function seedExtraJourney(db: SqliteAdapter, hospitalId: string): Promise<string> {
+async function seedExtraJourney(db: DatabaseAdapter, hospitalId: string): Promise<string> {
   const id = uuidv4();
   const now = new Date().toISOString();
   await db.execute(
     `INSERT INTO maternal_journeys (id, hospital_id, current_hospital_id, hn, name, cid, cid_hash, age, gravida, para, care_stage, anc_risk_level, anc_visit_count, registered_at, stage_changed_at, synced_at, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, hospitalId, hospitalId, `HN-${id.slice(0,8)}`, 'Extra Patient', 'enc_cid_extra', 'cidhash_extra', 28, 1, 0, 'PREGNANCY', 'LOW', 0, now, now, now, now, now],
+    [
+      id,
+      hospitalId,
+      hospitalId,
+      `HN-${id.slice(0, 8)}`,
+      'Extra Patient',
+      'enc_cid_extra',
+      'cidhash_extra',
+      28,
+      1,
+      0,
+      'PREGNANCY',
+      'LOW',
+      0,
+      now,
+      now,
+      now,
+      now,
+      now,
+    ],
   );
   return id;
 }
 
 describe('Referral API — POST /api/referrals (initiateReferral)', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
   });
 
   afterEach(async () => {
@@ -137,11 +182,10 @@ describe('Referral API — POST /api/referrals (initiateReferral)', () => {
 });
 
 describe('Referral API — GET /api/referrals (getPendingReferrals)', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
   });
 
   afterEach(async () => {
@@ -200,11 +244,10 @@ describe('Referral API — GET /api/referrals (getPendingReferrals)', () => {
 });
 
 describe('Referral API — PATCH accept', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
   });
 
   afterEach(async () => {
@@ -230,11 +273,10 @@ describe('Referral API — PATCH accept', () => {
 });
 
 describe('Referral API — PATCH reject', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
   });
 
   afterEach(async () => {
@@ -265,7 +307,7 @@ describe('Referral API — PATCH reject', () => {
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [altHospId, '11002', 'รพ.C', 'M2', 1, 'ONLINE', now, now],
+      [altHospId, '11002', 'รพ.C', 'M2', true, 'ONLINE', now, now],
     );
 
     const ref = await initiateReferral(db, {
@@ -283,11 +325,10 @@ describe('Referral API — PATCH reject', () => {
 });
 
 describe('Referral API — full lifecycle INITIATED → ACCEPTED → IN_TRANSIT → ARRIVED', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
   });
 
   afterEach(async () => {
@@ -332,11 +373,10 @@ describe('Referral API — full lifecycle INITIATED → ACCEPTED → IN_TRANSIT 
 });
 
 describe('Dashboard Referrals — GET /api/dashboard/referrals', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
   });
 
   afterEach(async () => {
@@ -467,5 +507,107 @@ describe('Dashboard Referrals — GET /api/dashboard/referrals', () => {
     expect(byStatus['REJECTED']).toBe(1);
     expect(byStatus['ARRIVED']).toBe(1);
     expect(byStatus['INITIATED']).toBe(1);
+  });
+});
+
+describe('autoArriveReferrals — arrival inferred from journey ownership', () => {
+  let db: DatabaseAdapter;
+
+  beforeEach(async () => {
+    db = await createTestDb();
+  });
+
+  afterEach(async () => {
+    await db.close();
+  });
+
+  async function moveJourneyTo(journeyId: string, hospitalId: string, at: Date) {
+    await db.execute(
+      `UPDATE maternal_journeys SET current_hospital_id = ?, updated_at = ? WHERE id = ?`,
+      [hospitalId, at.toISOString(), journeyId],
+    );
+  }
+
+  it('marks an INITIATED referral ARRIVED when the journey moved to the destination after initiation', async () => {
+    const { hospAId, hospBId, journeyId } = await seedFixtures(db);
+    const ref = await initiateReferral(db, {
+      journeyId,
+      fromHospitalId: hospAId,
+      toHospitalId: hospBId,
+      reason: 'ส่งต่อ ANC เสี่ยงสูง',
+      urgencyLevel: UrgencyLevel.URGENT,
+    });
+    const evidenceAt = new Date(Date.now() + 60_000);
+    await moveJourneyTo(journeyId, hospBId, evidenceAt);
+
+    const arrivedCount = await autoArriveReferrals(db);
+
+    expect(arrivedCount).toBe(1);
+    const rows = await db.query<{ status: string; arrived_at: string }>(
+      `SELECT status, arrived_at FROM cached_referrals WHERE id = ?`,
+      [ref.id],
+    );
+    expect(rows[0].status).toBe('ARRIVED');
+    // Arrival evidence time = the journey's ownership-change timestamp.
+    expect(new Date(rows[0].arrived_at).toISOString()).toBe(evidenceAt.toISOString());
+  });
+
+  it('leaves referrals alone while the journey still sits at the origin hospital', async () => {
+    const { hospAId, hospBId, journeyId } = await seedFixtures(db);
+    const ref = await initiateReferral(db, {
+      journeyId,
+      fromHospitalId: hospAId,
+      toHospitalId: hospBId,
+      reason: 'ยังไม่เดินทาง',
+      urgencyLevel: UrgencyLevel.ROUTINE,
+    });
+
+    const arrivedCount = await autoArriveReferrals(db);
+
+    expect(arrivedCount).toBe(0);
+    const rows = await db.query<{ status: string }>(
+      `SELECT status FROM cached_referrals WHERE id = ?`,
+      [ref.id],
+    );
+    expect(rows[0].status).toBe('INITIATED');
+  });
+
+  it('ignores journey updates that predate the referral (stale evidence)', async () => {
+    const { hospAId, hospBId, journeyId } = await seedFixtures(db);
+    // Journey happens to already point at hospital B, but was last updated
+    // BEFORE the referral existed — that is not arrival evidence.
+    await moveJourneyTo(journeyId, hospBId, new Date(Date.now() - 3600_000));
+    const ref = await initiateReferral(db, {
+      journeyId,
+      fromHospitalId: hospAId,
+      toHospitalId: hospBId,
+      reason: 'หลักฐานเก่า',
+      urgencyLevel: UrgencyLevel.ROUTINE,
+    });
+
+    const arrivedCount = await autoArriveReferrals(db);
+
+    expect(arrivedCount).toBe(0);
+    const rows = await db.query<{ status: string }>(
+      `SELECT status FROM cached_referrals WHERE id = ?`,
+      [ref.id],
+    );
+    expect(rows[0].status).toBe('INITIATED');
+  });
+
+  it('is a no-op when disabled via options', async () => {
+    const { hospAId, hospBId, journeyId } = await seedFixtures(db);
+    await initiateReferral(db, {
+      journeyId,
+      fromHospitalId: hospAId,
+      toHospitalId: hospBId,
+      reason: 'ปิดการทำงานอัตโนมัติ',
+      urgencyLevel: UrgencyLevel.ROUTINE,
+    });
+    await moveJourneyTo(journeyId, hospBId, new Date(Date.now() + 60_000));
+
+    const arrivedCount = await autoArriveReferrals(db, { enabled: false });
+
+    expect(arrivedCount).toBe(0);
   });
 });

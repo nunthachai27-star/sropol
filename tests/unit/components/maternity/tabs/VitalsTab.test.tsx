@@ -16,23 +16,46 @@ vi.mock('@/services/maternity-ward', () => ({
   upsertNurseNote: vi.fn(),
   deleteNurseNote: vi.fn(),
 }));
+// The Vitals "กราฟ" sub-tab (default) now renders a server-rendered PNG fetched
+// via getIpdVitalSignChart. Override just that export so no real network call
+// fires; keep the rest of the client module intact for any transitive imports.
+vi.mock('@/lib/bms-browser-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bms-browser-client')>();
+  return { ...actual, getIpdVitalSignChart: vi.fn() };
+});
 import { useBmsSession } from '@/hooks/useBmsSession';
-import {
-  getPatientNurseNotes,
-  upsertNurseNote,
-  deleteNurseNote,
-} from '@/services/maternity-ward';
+import { getPatientNurseNotes, upsertNurseNote, deleteNurseNote } from '@/services/maternity-ward';
+import { getIpdVitalSignChart } from '@/lib/bms-browser-client';
 import { VitalsTab } from '@/components/maternity/tabs/VitalsTab';
 
 const mockBmsSession = useBmsSession as unknown as ReturnType<typeof vi.fn>;
 const mockGet = getPatientNurseNotes as unknown as ReturnType<typeof vi.fn>;
 const mockUpsert = upsertNurseNote as unknown as ReturnType<typeof vi.fn>;
 const mockDelete = deleteNurseNote as unknown as ReturnType<typeof vi.fn>;
+const mockChart = getIpdVitalSignChart as unknown as ReturnType<typeof vi.fn>;
+
+// jsdom does not implement object-URL APIs; the chart turns its PNG blob into
+// one for <img src>. Stub them so the success path renders deterministically.
+URL.createObjectURL = vi.fn(() => 'blob:mock-url');
+URL.revokeObjectURL = vi.fn();
+
+function pngBlob() {
+  return new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
+}
 const cfg = { apiUrl: 'https://t.example/api', bearerToken: 'B', appIdentifier: 'X' };
 const userInfo = { loginname: 'n1', fullname: 'N', hospcode: '10670' };
 const wrapper = ({ children }: { children: ReactNode }) => (
   <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>{children}</SWRConfig>
 );
+
+// The VitalSignEntryDialog is a large clinical form (40+ ipd_nurse_note fields
+// across Batches 2.1–2.3). Rendering it and firing a handful of controlled-input
+// changes re-renders the whole form each time, which in jsdom pushes the
+// heaviest tests (the multi-field "save posts …" cases) past Vitest's default
+// 5s test budget under load — the failure surfaced as a flaky timeout that
+// hopped between those tests run-to-run. The assertions are correct and the
+// save fires synchronously; the tests just need room to finish their DOM work.
+vi.setConfig({ testTimeout: 20000 });
 
 function makeRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -79,6 +102,15 @@ beforeEach(() => {
   mockGet.mockReset();
   mockUpsert.mockReset();
   mockDelete.mockReset();
+  // Default: chart reports "no data" (a returned failure, not a throw) so the
+  // default กราฟ tab in unrelated tests renders a stable panel without a real
+  // fetch and without SWR retrying. Chart-specific tests override this.
+  mockChart.mockReset();
+  mockChart.mockResolvedValue({
+    ok: false,
+    messageCode: 500,
+    message: 'ยังไม่มีข้อมูลสัญญาณชีพสำหรับผู้ป่วยรายนี้',
+  });
 });
 
 describe('VitalsTab — basics', () => {
@@ -99,9 +131,7 @@ describe('VitalsTab — basics', () => {
     mockBmsSession.mockReturnValue({ config: cfg });
     mockGet.mockRejectedValue(new Error('BMS down'));
     render(<VitalsTab an="AN1" />, { wrapper });
-    await waitFor(() =>
-      expect(screen.getByText(/โหลดไม่สำเร็จ.*BMS down/)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/โหลดไม่สำเร็จ.*BMS down/)).toBeInTheDocument());
   });
 });
 
@@ -125,10 +155,7 @@ describe('VitalsTab — sub-tabs + Add button', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /เพิ่มข้อมูลใหม่/ })).toBeInTheDocument(),
     );
-    expect(screen.getByRole('tab', { name: /กราฟ/ })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    expect(screen.getByRole('tab', { name: /กราฟ/ })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('Add button sits in the same row as the tab list', async () => {
@@ -142,70 +169,48 @@ describe('VitalsTab — sub-tabs + Add button', () => {
   });
 });
 
-describe('VitalsTab — chart view', () => {
-  it('chart renders combined Temp+Pulse panel + RR + BP strips, all sharing one day-grouped header', async () => {
-    mockBmsSession.mockReturnValue({ config: cfg, userInfo });
+describe('VitalsTab — chart view (server-rendered PNG)', () => {
+  it('renders the chart <img> once the PNG loads', async () => {
+    mockBmsSession.mockReturnValue({ config: cfg, userInfo, marketplaceToken: 'MKT' });
     mockGet.mockResolvedValue([makeRow()]);
+    mockChart.mockResolvedValue({ ok: true, blob: pngBlob() });
     render(<VitalsTab an="AN1" />, { wrapper });
-    await waitFor(() =>
-      expect(screen.getByTestId('vital-sign-chart')).toBeInTheDocument(),
-    );
-    // HOSxP merges Temperature and Pulse onto one chart with dual Y axes.
-    expect(screen.getByTestId('vs-panel-temp-pulse')).toBeInTheDocument();
-    expect(screen.getByTestId('vs-panel-rr')).toBeInTheDocument();
-    expect(screen.getByTestId('vs-panel-bp')).toBeInTheDocument();
-    // The Date / Admit day / Op day / Time header sits above everything and
-    // its day columns line up vertically across all panels below.
-    expect(screen.getByTestId('vs-day-header')).toBeInTheDocument();
-    // 37 °C reference line on the Temp scale (the red line in HOSxP).
-    expect(screen.getByTestId('vs-temp-ref-37')).toBeInTheDocument();
+    const img = await screen.findByTestId('vital-sign-chart');
+    expect(img.tagName).toBe('IMG');
+    expect(img).toHaveAttribute('src', 'blob:mock-url');
   });
 
-  it('renders the base form even when there are no observations', async () => {
-    mockBmsSession.mockReturnValue({ config: cfg, userInfo });
+  it('fetches the chart for this AN with the session marketplace token', async () => {
+    mockBmsSession.mockReturnValue({ config: cfg, userInfo, marketplaceToken: 'MKT' });
+    mockGet.mockResolvedValue([makeRow()]);
+    mockChart.mockResolvedValue({ ok: true, blob: pngBlob() });
+    render(<VitalsTab an="AN1" />, { wrapper });
+    await screen.findByTestId('vital-sign-chart');
+    // (config, an, chart_type_id default = 2 = chart page 1, marketplaceToken)
+    expect(mockChart).toHaveBeenCalledWith(cfg, 'AN1', 2, 'MKT');
+  });
+
+  it('shows an actionable Thai message (not a crash) when there is no vital data', async () => {
+    mockBmsSession.mockReturnValue({ config: cfg, userInfo, marketplaceToken: null });
     mockGet.mockResolvedValue([]);
+    mockChart.mockResolvedValue({
+      ok: false,
+      messageCode: 500,
+      message: 'ยังไม่มีข้อมูลสัญญาณชีพสำหรับผู้ป่วยรายนี้',
+    });
     render(<VitalsTab an="AN1" />, { wrapper });
-    await waitFor(() =>
-      expect(screen.getByTestId('vital-sign-chart')).toBeInTheDocument(),
-    );
+    const panel = await screen.findByTestId('vital-sign-chart-error');
+    expect(panel).toHaveTextContent(/ยังไม่มีข้อมูลสัญญาณชีพ/);
   });
 
-  it('plots a temperature point per observation on the combined panel', async () => {
-    mockBmsSession.mockReturnValue({ config: cfg, userInfo });
-    mockGet.mockResolvedValue([
-      makeRow({ nurse_note_id: 1, note_date: '2026-04-19', note_time: '08:00:00', temperature: 37.2 }),
-      makeRow({ nurse_note_id: 2, note_date: '2026-04-19', note_time: '12:00:00', temperature: 37.6 }),
-    ]);
+  it('offers a retry when the chart fetch throws a transport error', async () => {
+    mockBmsSession.mockReturnValue({ config: cfg, userInfo, marketplaceToken: null });
+    mockGet.mockResolvedValue([makeRow()]);
+    mockChart.mockRejectedValue(new Error('ไม่สามารถเชื่อมต่อบริการสร้างกราฟสัญญาณชีพได้'));
     render(<VitalsTab an="AN1" />, { wrapper });
-    const panel = await screen.findByTestId('vs-panel-temp-pulse');
-    expect(panel.querySelectorAll('[data-series="temp"]').length).toBe(2);
-  });
-
-  it('plots a pulse point per observation on the combined panel', async () => {
-    mockBmsSession.mockReturnValue({ config: cfg, userInfo });
-    mockGet.mockResolvedValue([
-      makeRow({ nurse_note_id: 1, note_date: '2026-04-19', note_time: '08:00:00', pulse: 82 }),
-      makeRow({ nurse_note_id: 2, note_date: '2026-04-19', note_time: '12:00:00', pulse: 88 }),
-    ]);
-    render(<VitalsTab an="AN1" />, { wrapper });
-    const panel = await screen.findByTestId('vs-panel-temp-pulse');
-    expect(panel.querySelectorAll('[data-series="pulse"]').length).toBe(2);
-  });
-
-  it('flags temperature ≥38 with an abnormal data point on the Temp series', async () => {
-    mockBmsSession.mockReturnValue({ config: cfg, userInfo });
-    mockGet.mockResolvedValue([makeRow({ nurse_note_id: 1, temperature: 38.7 })]);
-    render(<VitalsTab an="AN1" />, { wrapper });
-    const panel = await screen.findByTestId('vs-panel-temp-pulse');
-    expect(panel.querySelector('[data-series="temp"][data-abnormal="true"]')).not.toBeNull();
-  });
-
-  it('flags pulse <60 or >100 with an abnormal data point on the Pulse series', async () => {
-    mockBmsSession.mockReturnValue({ config: cfg, userInfo });
-    mockGet.mockResolvedValue([makeRow({ nurse_note_id: 1, pulse: 115 })]);
-    render(<VitalsTab an="AN1" />, { wrapper });
-    const panel = await screen.findByTestId('vs-panel-temp-pulse');
-    expect(panel.querySelector('[data-series="pulse"][data-abnormal="true"]')).not.toBeNull();
+    const panel = await screen.findByTestId('vital-sign-chart-error');
+    expect(panel).toHaveTextContent(/ไม่สามารถเชื่อมต่อ/);
+    expect(within(panel).getByRole('button', { name: /ลองใหม่/ })).toBeInTheDocument();
   });
 });
 
@@ -245,13 +250,29 @@ describe('VitalsTab — entry dialog (Batch 2.1)', () => {
     const dlg = await screen.findByRole('dialog');
     const q = within(dlg);
     for (const field of [
-      'note_date', 'note_time',
-      'temperature', 'pulse', 'heart_rate',
-      'bp_systolic', 'bp_diastolic',
-      'respiratory_rate', 'spo2_ra', 'spo2_o2', 'pain_score',
-      'weight', 'height', 'bmi', 'bsa', 'waist',
-      'lung_text', 'heart_text', 'abdomen_text', 'fetal_heart_text',
-      'cervical_open_size', 'eff', 'station',
+      'note_date',
+      'note_time',
+      'temperature',
+      'pulse',
+      'heart_rate',
+      'bp_systolic',
+      'bp_diastolic',
+      'respiratory_rate',
+      'spo2_ra',
+      'spo2_o2',
+      'pain_score',
+      'weight',
+      'height',
+      'bmi',
+      'bsa',
+      'waist',
+      'lung_text',
+      'heart_text',
+      'abdomen_text',
+      'fetal_heart_text',
+      'cervical_open_size',
+      'eff',
+      'station',
       'note',
     ]) {
       expect(q.getByLabelText(field)).toBeInTheDocument();
@@ -348,32 +369,56 @@ describe('VitalsTab — entry dialog (Batch 2.1)', () => {
     const q = within(dlg);
     for (const field of [
       // Extended vitals
-      'ibps', 'ibpd', 'imap',
-      'etco2', 'cvp', 'icp', 'pvc',
+      'ibps',
+      'ibpd',
+      'imap',
+      'etco2',
+      'cvp',
+      'icp',
+      'pvc',
       // Scores + oxygen flags
-      'sedation_score', 'news2_score', 'sos_score',
-      'has_hypercapnic_rf', 'has_oxygen_ventilator',
+      'sedation_score',
+      'news2_score',
+      'sos_score',
+      'has_hypercapnic_rf',
+      'has_oxygen_ventilator',
       // Biometric
       'weight_loss',
       // Fluid intake
-      'fluid_intake_oral', 'fluid_intake_parenteral',
-      'fluid_intake_1', 'fluid_intake_1_int',
-      'fluid_intake_2', 'fluid_intake_2_int',
-      'fluid_intake_3', 'fluid_intake_3_int',
-      'fluid_intake_4', 'fluid_intake_4_int',
-      'fluid_intake_medication1', 'fluid_intake_medication1_int',
-      'fluid_intake_medication2', 'fluid_intake_medication2_int',
-      'fluid_intake_medication3', 'fluid_intake_medication3_int',
+      'fluid_intake_oral',
+      'fluid_intake_parenteral',
+      'fluid_intake_1',
+      'fluid_intake_1_int',
+      'fluid_intake_2',
+      'fluid_intake_2_int',
+      'fluid_intake_3',
+      'fluid_intake_3_int',
+      'fluid_intake_4',
+      'fluid_intake_4_int',
+      'fluid_intake_medication1',
+      'fluid_intake_medication1_int',
+      'fluid_intake_medication2',
+      'fluid_intake_medication2_int',
+      'fluid_intake_medication3',
+      'fluid_intake_medication3_int',
       // Fluid output
-      'fluid_output_urine', 'fluid_output_emesis',
-      'fluid_output_drainage', 'fluid_output_drainage_2',
-      'fluid_output_drainage_3', 'fluid_output_drainage_4',
-      'fluid_output_aspiration', 'fluid_blood_loss',
+      'fluid_output_urine',
+      'fluid_output_emesis',
+      'fluid_output_drainage',
+      'fluid_output_drainage_2',
+      'fluid_output_drainage_3',
+      'fluid_output_drainage_4',
+      'fluid_output_aspiration',
+      'fluid_blood_loss',
       // Stool / urine
-      'urine_qty', 'urine_qty_unit',
-      'stools_qty', 'stools_qty_unit',
+      'urine_qty',
+      'urine_qty_unit',
+      'stools_qty',
+      'stools_qty_unit',
       // Text blocks
-      'ipd_nurse_note_diet_text', 'medication_text', 'bottom_note_text',
+      'ipd_nurse_note_diet_text',
+      'medication_text',
+      'bottom_note_text',
     ]) {
       expect(q.getByLabelText(field)).toBeInTheDocument();
     }
@@ -387,10 +432,16 @@ describe('VitalsTab — entry dialog (Batch 2.1)', () => {
     fireEvent.click(await screen.findByRole('button', { name: /เพิ่มข้อมูลใหม่/ }));
     const dlg = await screen.findByRole('dialog');
     fireEvent.change(within(dlg).getByLabelText('fluid_intake_oral'), { target: { value: '250' } });
-    fireEvent.change(within(dlg).getByLabelText('fluid_output_urine'), { target: { value: '180' } });
+    fireEvent.change(within(dlg).getByLabelText('fluid_output_urine'), {
+      target: { value: '180' },
+    });
     fireEvent.change(within(dlg).getByLabelText('news2_score'), { target: { value: '3' } });
-    fireEvent.change(within(dlg).getByLabelText('has_oxygen_ventilator'), { target: { value: 'Y' } });
-    fireEvent.change(within(dlg).getByLabelText('medication_text'), { target: { value: 'paracetamol' } });
+    fireEvent.change(within(dlg).getByLabelText('has_oxygen_ventilator'), {
+      target: { value: 'Y' },
+    });
+    fireEvent.change(within(dlg).getByLabelText('medication_text'), {
+      target: { value: 'paracetamol' },
+    });
     fireEvent.click(within(dlg).getByRole('button', { name: /^บันทึก$/ }));
     await waitFor(() => expect(mockUpsert).toHaveBeenCalled());
     const body = mockUpsert.mock.calls[0][3] as Record<string, unknown>;

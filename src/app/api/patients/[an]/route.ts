@@ -4,22 +4,24 @@ import { getDatabase } from '@/db/connection';
 import { decrypt, getEncryptionKey } from '@/lib/encryption';
 import { auth } from '@/lib/auth';
 import { tryLogAccess } from '@/services/audit';
+import { auditActorFromSession } from '@/lib/audit-actor';
 import { ensureInit } from '@/lib/ensure-init';
 import { parsePatientId } from '@/lib/utils';
 import { logger } from '@/lib/logger';
 import type { PatientDetailResponse } from '@/types/api';
 import { getJourneyByHn, getActiveJourneyByCid } from '@/services/journey';
+import { getJourneyReferrals, getJourneyNewborns } from '@/services/journey-list';
 
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ an: string }> },
-) {
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ an: string }> }) {
   try {
     await ensureInit();
     const { an: patientId } = await params;
     const parsed = parsePatientId(patientId);
     if (!parsed) {
-      return NextResponse.json({ error: 'Invalid patient ID format', code: 'BAD_REQUEST' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Invalid patient ID format', code: 'BAD_REQUEST' },
+        { status: 400 },
+      );
     }
     const { hcode, an } = parsed;
     const db = await getDatabase();
@@ -28,7 +30,7 @@ export async function GET(
     const session = await auth();
     if (session?.user) {
       await tryLogAccess(db, {
-        userId: session.user.id,
+        ...auditActorFromSession(session),
         action: 'VIEW_PATIENT',
         resourceType: 'PATIENT',
         resourceId: an,
@@ -43,7 +45,6 @@ export async function GET(
       hn: string;
       an: string;
       name: string;
-      cid: string | null;
       cid_hash: string | null;
       journey_id: string | null;
       age: number;
@@ -77,7 +78,7 @@ export async function GET(
       hospital_name: string;
       level: string;
     }>(
-      `SELECT cp.id, cp.hn, cp.an, cp.name, cp.cid, cp.cid_hash, cp.journey_id,
+      `SELECT cp.id, cp.hn, cp.an, cp.name, cp.cid_hash, cp.journey_id,
               cp.age,
               cp.gravida, cp.para, cp.abortion, cp.living_children, cp.preg_no,
               cp.ga_weeks, cp.ga_day, cp.anc_count, cp.admit_date,
@@ -96,10 +97,7 @@ export async function GET(
     );
 
     if (patients.length === 0) {
-      return NextResponse.json(
-        { error: 'Patient not found', code: 'NOT_FOUND' },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: 'Patient not found', code: 'NOT_FOUND' }, { status: 404 });
     }
 
     const p = patients[0];
@@ -130,28 +128,30 @@ export async function GET(
       factor_hematocrit: number | null;
       missing_factors: string;
       calculated_at: string;
-    }>(
-      'SELECT * FROM cpd_scores WHERE patient_id = ? ORDER BY calculated_at DESC LIMIT 1',
-      [p.id],
-    );
+    }>('SELECT * FROM cpd_scores WHERE patient_id = ? ORDER BY calculated_at DESC LIMIT 1', [p.id]);
 
-    const cpdScore = cpdScores.length > 0 ? {
-      score: cpdScores[0].score,
-      riskLevel: cpdScores[0].risk_level as PatientDetailResponse['cpdScore'] extends null ? never : NonNullable<PatientDetailResponse['cpdScore']>['riskLevel'],
-      recommendation: cpdScores[0].recommendation,
-      factors: {
-        gravida: cpdScores[0].factor_gravida,
-        ancCount: cpdScores[0].factor_anc_count,
-        gaWeeks: cpdScores[0].factor_ga_weeks,
-        heightCm: cpdScores[0].factor_height_cm,
-        weightDiffKg: cpdScores[0].factor_weight_diff,
-        fundalHeightCm: cpdScores[0].factor_fundal_ht,
-        usWeightG: cpdScores[0].factor_us_weight,
-        hematocritPct: cpdScores[0].factor_hematocrit,
-      },
-      missingFactors: JSON.parse(cpdScores[0].missing_factors || '[]'),
-      calculatedAt: cpdScores[0].calculated_at,
-    } : null;
+    const cpdScore =
+      cpdScores.length > 0
+        ? {
+            score: cpdScores[0].score,
+            riskLevel: cpdScores[0].risk_level as PatientDetailResponse['cpdScore'] extends null
+              ? never
+              : NonNullable<PatientDetailResponse['cpdScore']>['riskLevel'],
+            recommendation: cpdScores[0].recommendation,
+            factors: {
+              gravida: cpdScores[0].factor_gravida,
+              ancCount: cpdScores[0].factor_anc_count,
+              gaWeeks: cpdScores[0].factor_ga_weeks,
+              heightCm: cpdScores[0].factor_height_cm,
+              weightDiffKg: cpdScores[0].factor_weight_diff,
+              fundalHeightCm: cpdScores[0].factor_fundal_ht,
+              usWeightG: cpdScores[0].factor_us_weight,
+              hematocritPct: cpdScores[0].factor_hematocrit,
+            },
+            missingFactors: JSON.parse(cpdScores[0].missing_factors || '[]'),
+            calculatedAt: cpdScores[0].calculated_at,
+          }
+        : null;
 
     // Look up hospital ID for journey query
     const hospitals = await db.query<{ id: string }>(
@@ -166,15 +166,7 @@ export async function GET(
     //   2. cid_hash cross-hospital match (woman registered ANC at hospital A
     //      then labored at hospital B — HN differs, CID stays constant).
     //   3. HN + hospital (legacy HOSxP data without CID).
-    let journeyContext: {
-      journeyId: string;
-      careStage: string;
-      ancRiskLevel: string;
-      ancVisitCount: number;
-      lastAncDate: string | null;
-      lmp: string | null;
-      edc: string | null;
-    } | null = null;
+    let journeyContext: PatientDetailResponse['journeyContext'] = null;
     const journey =
       (p.cid_hash ? await getActiveJourneyByCid(db, p.cid_hash) : null) ??
       (hospitalId ? await getJourneyByHn(db, p.hn, hospitalId) : null);
@@ -187,6 +179,10 @@ export async function GET(
         lastAncDate: journey.lastAncDate,
         lmp: journey.lmp,
         edc: journey.edc,
+        // Transfer + birth context — same service getters the journey
+        // detail page uses, so both views can never disagree.
+        referrals: await getJourneyReferrals(db, journey.id),
+        newborns: await getJourneyNewborns(db, journey.id),
       };
     }
 

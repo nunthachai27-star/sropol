@@ -1,20 +1,18 @@
 // Partogram API route logic tests — tests the DB + partogram service logic
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import { generatePartogramEntries } from '@/services/partogram';
 import { v4 as uuidv4 } from 'uuid';
 
 describe('Partogram API Logic', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let hospitalId: string;
   let patientId: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
 
     // Get hospital
@@ -28,7 +26,19 @@ describe('Partogram API Logic', () => {
     const now = new Date().toISOString();
     await db.execute(
       'INSERT INTO cached_patients (id, hospital_id, hn, an, name, age, admit_date, labor_status, synced_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [patientId, hospitalId, 'HN-P1', 'AN-P1', 'enc-name', 28, '2026-03-09T06:00:00Z', 'ACTIVE', now, now, now],
+      [
+        patientId,
+        hospitalId,
+        'HN-P1',
+        'AN-P1',
+        'enc-name',
+        28,
+        '2026-03-09T06:00:00Z',
+        'ACTIVE',
+        now,
+        now,
+        now,
+      ],
     );
   });
 
@@ -61,7 +71,7 @@ describe('Partogram API Logic', () => {
     const entries = generatePartogramEntries(vitalInputs);
     return {
       partogram: {
-        startTime: patient.admit_date,
+        startTime: new Date(patient.admit_date).toISOString(),
         entries,
       },
     };
@@ -88,7 +98,7 @@ describe('Partogram API Logic', () => {
     const result = await getPartogramForAN('AN-P1');
     expect(result).not.toBeNull();
     expect(result!.partogram.entries).toHaveLength(5);
-    expect(result!.partogram.startTime).toBe('2026-03-09T06:00:00Z');
+    expect(result!.partogram.startTime).toBe('2026-03-09T06:00:00.000Z');
 
     // First entry (3cm) is before active phase so no alert/action lines
     expect(result!.partogram.entries[0].dilationCm).toBe(3);

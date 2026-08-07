@@ -2,9 +2,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import {
   transformHosxpPatient,
@@ -24,12 +23,11 @@ import { RiskLevel } from '@/types/domain';
 const TEST_ENCRYPTION_KEY = generateKey();
 
 describe('Sync Pipeline Integration', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let hospitalId: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
 
     // Get the first hospital ID for tests
@@ -109,9 +107,17 @@ describe('Sync Pipeline Integration', () => {
 
     // Verify patient is in DB
     const dbPatients = await db.query<{
-      id: string; hn: string; an: string; gravida: number; ga_weeks: number;
-      height_cm: number; weight_diff_kg: number; fundal_height_cm: number;
-      us_weight_g: number; hematocrit_pct: number; anc_count: number;
+      id: string;
+      hn: string;
+      an: string;
+      gravida: number;
+      ga_weeks: number;
+      height_cm: number;
+      weight_diff_kg: number;
+      fundal_height_cm: number;
+      us_weight_g: number;
+      hematocrit_pct: number;
+      anc_count: number;
       labor_status: string;
     }>(
       'SELECT id, hn, an, gravida, ga_weeks, height_cm, weight_diff_kg, fundal_height_cm, us_weight_g, hematocrit_pct, anc_count, labor_status FROM cached_patients WHERE an = ?',
@@ -148,7 +154,10 @@ describe('Sync Pipeline Integration', () => {
           missing_factors, calculated_at, created_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        uuidv4(), dbPatients[0].id, cpdResult.score, cpdResult.riskLevel,
+        uuidv4(),
+        dbPatients[0].id,
+        cpdResult.score,
+        cpdResult.riskLevel,
         cpdResult.recommendation,
         cpdResult.factorScores.gravida ?? null,
         cpdResult.factorScores.ancCount ?? null,
@@ -159,15 +168,19 @@ describe('Sync Pipeline Integration', () => {
         cpdResult.factorScores.usWeightG ?? null,
         cpdResult.factorScores.hematocritPct ?? null,
         JSON.stringify(cpdResult.missingFactors),
-        now, now,
+        now,
+        now,
       ],
     );
 
     // Verify full chain: patient in DB + CPD score in DB + correct risk level
-    const storedScore = await db.query<{ score: number; risk_level: string; recommendation: string }>(
-      'SELECT score, risk_level, recommendation FROM cpd_scores WHERE patient_id = ?',
-      [dbPatients[0].id],
-    );
+    const storedScore = await db.query<{
+      score: number;
+      risk_level: string;
+      recommendation: string;
+    }>('SELECT score, risk_level, recommendation FROM cpd_scores WHERE patient_id = ?', [
+      dbPatients[0].id,
+    ]);
     expect(storedScore).toHaveLength(1);
     expect(storedScore[0].score).toBe(14.5);
     expect(storedScore[0].risk_level).toBe('HIGH');
@@ -183,25 +196,46 @@ describe('Sync Pipeline Integration', () => {
     // Step 1: Seed initial patients
     const initialPatients: SyncPatientData[] = [
       {
-        hn: 'HN-A01', an: 'AN-A01',
+        hn: 'HN-A01',
+        an: 'AN-A01',
         name: encrypt('นาง เดิม หนึ่ง', TEST_ENCRYPTION_KEY),
-        cid: 'enc_test_001', cidHash: 'testhash00000000000000000000000000000000000000000000000000000001',
-        age: 25, gravida: 2, gaWeeks: 38, ancCount: 5,
-        admitDate: '2026-03-01T08:00:00', laborStatus: 'ACTIVE', syncedAt: now,
+        cid: 'enc_test_001',
+        cidHash: 'testhash00000000000000000000000000000000000000000000000000000001',
+        age: 25,
+        gravida: 2,
+        gaWeeks: 38,
+        ancCount: 5,
+        admitDate: '2026-03-01T08:00:00',
+        laborStatus: 'ACTIVE',
+        syncedAt: now,
       },
       {
-        hn: 'HN-A02', an: 'AN-A02',
+        hn: 'HN-A02',
+        an: 'AN-A02',
         name: encrypt('นาง เดิม สอง', TEST_ENCRYPTION_KEY),
-        cid: 'enc_test_002', cidHash: 'testhash00000000000000000000000000000000000000000000000000000002',
-        age: 30, gravida: 3, gaWeeks: 39, ancCount: 7,
-        admitDate: '2026-03-02T10:00:00', laborStatus: 'ACTIVE', syncedAt: now,
+        cid: 'enc_test_002',
+        cidHash: 'testhash00000000000000000000000000000000000000000000000000000002',
+        age: 30,
+        gravida: 3,
+        gaWeeks: 39,
+        ancCount: 7,
+        admitDate: '2026-03-02T10:00:00',
+        laborStatus: 'ACTIVE',
+        syncedAt: now,
       },
       {
-        hn: 'HN-A03', an: 'AN-A03',
+        hn: 'HN-A03',
+        an: 'AN-A03',
         name: encrypt('นาง เดิม สาม', TEST_ENCRYPTION_KEY),
-        cid: 'enc_test_003', cidHash: 'testhash00000000000000000000000000000000000000000000000000000003',
-        age: 28, gravida: 1, gaWeeks: 40, ancCount: 4,
-        admitDate: '2026-03-03T12:00:00', laborStatus: 'ACTIVE', syncedAt: now,
+        cid: 'enc_test_003',
+        cidHash: 'testhash00000000000000000000000000000000000000000000000000000003',
+        age: 28,
+        gravida: 1,
+        gaWeeks: 40,
+        ancCount: 4,
+        admitDate: '2026-03-03T12:00:00',
+        laborStatus: 'ACTIVE',
+        syncedAt: now,
       },
     ];
     await upsertCachedPatients(db, hospitalId, initialPatients);
@@ -272,8 +306,12 @@ describe('Sync Pipeline Integration', () => {
     await upsertCachedPatients(db, hospitalId, [syncData]);
 
     const rows = await db.query<{
-      id: string; gravida: number | null; ga_weeks: number | null;
-      height_cm: number | null; us_weight_g: number | null; hematocrit_pct: number | null;
+      id: string;
+      gravida: number | null;
+      ga_weeks: number | null;
+      height_cm: number | null;
+      us_weight_g: number | null;
+      hematocrit_pct: number | null;
       anc_count: number | null;
     }>(
       'SELECT id, gravida, ga_weeks, height_cm, us_weight_g, hematocrit_pct, anc_count FROM cached_patients WHERE an = ?',
@@ -322,11 +360,18 @@ describe('Sync Pipeline Integration', () => {
   it('upsert is idempotent — re-syncing same data updates in place', async () => {
     const now = new Date().toISOString();
     const patient: SyncPatientData = {
-      hn: 'HN-IDEM', an: 'AN-IDEM',
+      hn: 'HN-IDEM',
+      an: 'AN-IDEM',
       name: encrypt('นาง ซ้ำ ข้อมูล', TEST_ENCRYPTION_KEY),
-      cid: 'enc_test_004', cidHash: 'testhash00000000000000000000000000000000000000000000000000000004',
-      age: 27, gravida: 2, gaWeeks: 38, ancCount: 5,
-      admitDate: '2026-03-06T08:00:00', laborStatus: 'ACTIVE', syncedAt: now,
+      cid: 'enc_test_004',
+      cidHash: 'testhash00000000000000000000000000000000000000000000000000000004',
+      age: 27,
+      gravida: 2,
+      gaWeeks: 38,
+      ancCount: 5,
+      admitDate: '2026-03-06T08:00:00',
+      laborStatus: 'ACTIVE',
+      syncedAt: now,
     };
 
     // Insert once
@@ -402,18 +447,32 @@ describe('Sync Pipeline Integration', () => {
     for (const h of hospitals) {
       const patients: SyncPatientData[] = [
         {
-          hn: `HN-${h.hcode}-01`, an: `AN-${h.hcode}-01`,
+          hn: `HN-${h.hcode}-01`,
+          an: `AN-${h.hcode}-01`,
           name: encrypt(`Patient 1 at ${h.hcode}`, TEST_ENCRYPTION_KEY),
-          cid: 'enc_test_005', cidHash: 'testhash00000000000000000000000000000000000000000000000000000005',
-          age: 25, gravida: 2, gaWeeks: 38, ancCount: 5,
-          admitDate: '2026-03-08T08:00:00', laborStatus: 'ACTIVE', syncedAt: now,
+          cid: 'enc_test_005',
+          cidHash: 'testhash00000000000000000000000000000000000000000000000000000005',
+          age: 25,
+          gravida: 2,
+          gaWeeks: 38,
+          ancCount: 5,
+          admitDate: '2026-03-08T08:00:00',
+          laborStatus: 'ACTIVE',
+          syncedAt: now,
         },
         {
-          hn: `HN-${h.hcode}-02`, an: `AN-${h.hcode}-02`,
+          hn: `HN-${h.hcode}-02`,
+          an: `AN-${h.hcode}-02`,
           name: encrypt(`Patient 2 at ${h.hcode}`, TEST_ENCRYPTION_KEY),
-          cid: 'enc_test_006', cidHash: 'testhash00000000000000000000000000000000000000000000000000000006',
-          age: 30, gravida: 1, gaWeeks: 41, ancCount: 3,
-          admitDate: '2026-03-08T10:00:00', laborStatus: 'ACTIVE', syncedAt: now,
+          cid: 'enc_test_006',
+          cidHash: 'testhash00000000000000000000000000000000000000000000000000000006',
+          age: 30,
+          gravida: 1,
+          gaWeeks: 41,
+          ancCount: 3,
+          admitDate: '2026-03-08T10:00:00',
+          laborStatus: 'ACTIVE',
+          syncedAt: now,
         },
       ];
       const count = await upsertCachedPatients(db, h.id, patients);
@@ -450,22 +509,34 @@ describe('Sync Pipeline Integration', () => {
 
     // Same patient at two hospitals (transferred)
     const patientAtA: SyncPatientData = {
-      hn: 'HN-XFER-A', an: 'AN-XFER-A',
+      hn: 'HN-XFER-A',
+      an: 'AN-XFER-A',
       name: encrypt('นาง ย้าย รพ.', TEST_ENCRYPTION_KEY),
       cid: encrypt(rawCid, TEST_ENCRYPTION_KEY),
       cidHash,
-      age: 28, gravida: 2, gaWeeks: 39, ancCount: 6,
-      admitDate: '2026-03-06T08:00:00', laborStatus: 'ACTIVE', syncedAt: now,
+      age: 28,
+      gravida: 2,
+      gaWeeks: 39,
+      ancCount: 6,
+      admitDate: '2026-03-06T08:00:00',
+      laborStatus: 'ACTIVE',
+      syncedAt: now,
     };
     await upsertCachedPatients(db, hospitals[0].id, [patientAtA]);
 
     const patientAtB: SyncPatientData = {
-      hn: 'HN-XFER-B', an: 'AN-XFER-B',
+      hn: 'HN-XFER-B',
+      an: 'AN-XFER-B',
       name: encrypt('นาง ย้าย รพ.', TEST_ENCRYPTION_KEY),
       cid: encrypt(rawCid, TEST_ENCRYPTION_KEY),
       cidHash,
-      age: 28, gravida: 2, gaWeeks: 39, ancCount: 6,
-      admitDate: '2026-03-07T10:00:00', laborStatus: 'ACTIVE', syncedAt: now,
+      age: 28,
+      gravida: 2,
+      gaWeeks: 39,
+      ancCount: 6,
+      admitDate: '2026-03-07T10:00:00',
+      laborStatus: 'ACTIVE',
+      syncedAt: now,
     };
     await upsertCachedPatients(db, hospitals[1].id, [patientAtB]);
 
@@ -498,9 +569,18 @@ describe('Sync Pipeline Integration', () => {
            (id, hospital_id, hn, an, name, age, admit_date,
             labor_status, synced_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)`,
-        [patientId, hospitalId, 'HN-PG1', 'AN-PG1',
-         encrypt('นาง ทดสอบ พาร์โต', TEST_ENCRYPTION_KEY), 30,
-         '2026-04-19T08:00:00Z', now, now, now],
+        [
+          patientId,
+          hospitalId,
+          'HN-PG1',
+          'AN-PG1',
+          encrypt('นาง ทดสอบ พาร์โต', TEST_ENCRYPTION_KEY),
+          30,
+          '2026-04-19T08:00:00Z',
+          now,
+          now,
+          now,
+        ],
       );
 
       // Mock BmsSessionClient.executeQuery so that:
@@ -549,7 +629,7 @@ describe('Sync Pipeline Integration', () => {
         pname: 'นาง',
         fname: 'ทดสอบ',
         lname: 'พาร์โต',
-        cid: '1234567890123',
+        cid: '1234567890121',
         birthday: '1995-01-01',
         sex: '2',
         preg_number: 2,
@@ -559,25 +639,30 @@ describe('Sync Pipeline Integration', () => {
         labor_date: null,
       };
 
-      const wrapResult = (
-        data: Record<string, unknown>[],
-      ): BmsQueryResult => ({
+      const wrapResult = (data: Record<string, unknown>[]): BmsQueryResult => ({
         data,
         field: [],
         field_name: [],
         record_count: data.length,
       });
 
-      vi.spyOn(BmsSessionClient.prototype, 'executeQuery')
-        .mockImplementation(async (sql: string): Promise<BmsQueryResult> => {
+      vi.spyOn(BmsSessionClient.prototype, 'executeQuery').mockImplementation(
+        async (sql: string): Promise<BmsQueryResult> => {
           if (sql.includes('ipt_labour_partograph')) {
             return wrapResult([partographRow]);
+          }
+          // Authenticity probe: pollHospital round-trips the first row's CID
+          // against `patient`. A real (authentic) hospital returns a row here,
+          // so mock a non-empty result to let the sync proceed to partograph.
+          if (sql.includes('WHERE cid =')) {
+            return wrapResult([{ one: 1 }]);
           }
           if (sql.includes('FROM ipt')) {
             return wrapResult([activePatientRow]);
           }
           return wrapResult([]);
-        });
+        },
+      );
 
       const sseManager = { broadcast: vi.fn() } as unknown as SseManager;
 
@@ -590,6 +675,7 @@ describe('Sync Pipeline Integration', () => {
         'postgresql',
         TEST_ENCRYPTION_KEY,
         sseManager,
+        { marketplaceToken: 'test-marketplace-token' },
       );
 
       // Partograph row landed in cache.
@@ -597,9 +683,7 @@ describe('Sync Pipeline Integration', () => {
         moulding: string | null;
         source_pk: string;
         patient_id: string;
-      }>(
-        'SELECT moulding, source_pk, patient_id FROM cached_partograph_observations',
-      );
+      }>('SELECT moulding, source_pk, patient_id FROM cached_partograph_observations');
       expect(obs).toHaveLength(1);
       expect(obs[0].moulding).toBe('+++');
       expect(obs[0].source_pk).toBe('9001');
@@ -608,21 +692,18 @@ describe('Sync Pipeline Integration', () => {
       const patientAfter = await db.query<{
         partograph_severity: string | null;
         partograph_alert_count: number | null;
-      }>(
-        'SELECT partograph_severity, partograph_alert_count FROM cached_patients WHERE an = ?',
-        ['AN-PG1'],
-      );
+      }>('SELECT partograph_severity, partograph_alert_count FROM cached_patients WHERE an = ?', [
+        'AN-PG1',
+      ]);
       expect(patientAfter[0].partograph_severity).toBe('CRITICAL');
       expect(patientAfter[0].partograph_alert_count).toBeGreaterThan(0);
 
       // SSE broadcast included the severity-changed event.
       const broadcastMock = sseManager.broadcast as unknown as ReturnType<typeof vi.fn>;
-      const severityCalls = broadcastMock.mock.calls.filter(
-        (c: unknown[]) => {
-          const data = c[1] as { type?: string } | undefined;
-          return data?.type === 'partograph_severity_changed';
-        },
-      );
+      const severityCalls = broadcastMock.mock.calls.filter((c: unknown[]) => {
+        const data = c[1] as { type?: string } | undefined;
+        return data?.type === 'partograph_severity_changed';
+      });
       expect(severityCalls.length).toBeGreaterThanOrEqual(1);
     });
   });

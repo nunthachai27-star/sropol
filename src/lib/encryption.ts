@@ -38,13 +38,15 @@ export function generateKey(): string {
   return randomBytes(32).toString('hex');
 }
 
+const HEX_64 = /^[0-9a-fA-F]{64}$/;
+
 // Helper: get key from environment
 export function getEncryptionKey(): string {
   const key = process.env.ENCRYPTION_KEY;
   if (!key) {
     throw new Error('ENCRYPTION_KEY environment variable is required');
   }
-  if (key.length !== 64) {
+  if (!HEX_64.test(key)) {
     throw new Error('ENCRYPTION_KEY must be a 64-character hex string (32 bytes)');
   }
   return key;

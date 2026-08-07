@@ -5,9 +5,8 @@ import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs';
 import * as path from 'path';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import { generateKey } from '@/lib/encryption';
 import type { SseManager } from '@/lib/sse';
@@ -25,17 +24,12 @@ import {
 
 // ─── Fixture loading helpers ───
 
-const FIXTURES_DIR = path.resolve(
-  __dirname,
-  '../fixtures/hosxp-simulated',
-);
+const FIXTURES_DIR = path.resolve(__dirname, '../fixtures/hosxp-simulated');
 
 function loadFixture<T>(filename: string): T {
   const filePath = path.join(FIXTURES_DIR, filename);
   if (!fs.existsSync(filePath)) {
-    throw new Error(
-      `Fixture file not found: ${filename}. Run hosxp-simulator (Task #1/#4) first.`,
-    );
+    throw new Error(`Fixture file not found: ${filename}. Run hosxp-simulator (Task #1/#4) first.`);
   }
   return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
 }
@@ -79,16 +73,11 @@ function cidHash(cid: string): string {
 
 describe('Suite 1: Fixture Data Shape Validation', () => {
   it('fixture files exist in tests/fixtures/hosxp-simulated/', () => {
-    const requiredFiles = [
-      'anc-patients.json',
-      'labor-patients.json',
-      'referral-create.json',
-    ];
+    const requiredFiles = ['anc-patients.json', 'labor-patients.json', 'referral-create.json'];
     for (const file of requiredFiles) {
-      expect(
-        fixtureExists(file),
-        `Missing fixture: ${file} — run hosxp-simulator first`,
-      ).toBe(true);
+      expect(fixtureExists(file), `Missing fixture: ${file} — run hosxp-simulator first`).toBe(
+        true,
+      );
     }
   });
 
@@ -159,10 +148,7 @@ describe('Suite 1: Fixture Data Shape Validation', () => {
       const validLevels = ['LOW', 'HR1', 'HR2', 'HR3'];
       for (const [i, p] of payload.patients.entries()) {
         if (p.riskLevel != null) {
-          expect(
-            validLevels,
-            `patients[${i}].riskLevel "${p.riskLevel}"`,
-          ).toContain(p.riskLevel);
+          expect(validLevels, `patients[${i}].riskLevel "${p.riskLevel}"`).toContain(p.riskLevel);
         }
       }
     });
@@ -209,14 +195,8 @@ describe('Suite 1: Fixture Data Shape Validation', () => {
       for (const [i, p] of payload.patients.entries()) {
         if (!p.visits) continue;
         for (const [j, v] of p.visits.entries()) {
-          expect(
-            typeof v.date,
-            `patients[${i}].visits[${j}].date`,
-          ).toBe('string');
-          expect(
-            typeof v.visitNumber,
-            `patients[${i}].visits[${j}].visitNumber`,
-          ).toBe('number');
+          expect(typeof v.date, `patients[${i}].visits[${j}].date`).toBe('string');
+          expect(typeof v.visitNumber, `patients[${i}].visits[${j}].visitNumber`).toBe('number');
         }
       }
     });
@@ -321,7 +301,7 @@ describe('Suite 1: Fixture Data Shape Validation', () => {
       expect(payload.hospitalCode).toBe('10679');
       expect(payload.toHospitalCode).toBe('11304');
       expect(payload.diagnosisCode).toBe('S330');
-      expect(payload.urgencyLevel).toBe('ROUTINE');  // mapped from null emergency_type_id
+      expect(payload.urgencyLevel).toBe('ROUTINE'); // mapped from null emergency_type_id
     });
   });
 
@@ -368,22 +348,19 @@ describe('Suite 1: Fixture Data Shape Validation', () => {
 
 // Helper: get existing hospital id from seeded data by hcode, or insert if missing
 async function getOrCreateHospital(
-  db: SqliteAdapter,
+  db: DatabaseAdapter,
   hcode: string,
   name: string,
   level: string,
 ): Promise<string> {
-  const rows = await db.query<{ id: string }>(
-    'SELECT id FROM hospitals WHERE hcode = ?',
-    [hcode],
-  );
+  const rows = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [hcode]);
   if (rows.length > 0) return rows[0].id;
   const id = uuidv4();
   const now = new Date().toISOString();
   await db.execute(
     `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, hcode, name, level, 1, 'UNKNOWN', now, now],
+    [id, hcode, name, level, true, 'UNKNOWN', now, now],
   );
   return id;
 }
@@ -391,13 +368,12 @@ async function getOrCreateHospital(
 // ─── Suite 2: ANC Processing Validation ───
 
 describe('Suite 2: ANC Processing Validation', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let sseManager: MockSseManager;
   let hospitalId: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
     sseManager = new MockSseManager();
 
@@ -430,7 +406,7 @@ describe('Suite 2: ANC Processing Validation', () => {
     expect(rows.length).toBe(payload.patients.length);
     for (const row of rows) {
       expect(row.hn).not.toBeNull();
-      expect(row.hn).toBe('');  // null HN from fixture → empty string in DB
+      expect(row.hn).toBe(''); // null HN from fixture → empty string in DB
     }
   });
 
@@ -458,10 +434,9 @@ describe('Suite 2: ANC Processing Validation', () => {
       expect(rows.length, `patients[${i}]: journey found by CID hash`).toBeGreaterThan(0);
       const journey = rows[0];
       // Plain CID must NOT appear in the stored cid field
-      expect(
-        journey.cid,
-        `Journey ${i}: stored cid must not be the plain CID`,
-      ).not.toBe(original.cid);
+      expect(journey.cid, `Journey ${i}: stored cid must not be the plain CID`).not.toBe(
+        original.cid,
+      );
       // CID hash must be correct SHA-256
       expect(journey.cid_hash).toBe(expectedHash);
     }
@@ -626,8 +601,13 @@ describe('Suite 2: ANC Processing Validation', () => {
     const payload = loadFixture<WebhookAncPayload>('anc-patients.json');
     await processAncWebhook(db, hospitalId, payload, asSse(sseManager));
 
+    // Coalesced contract (2026-07-17): ONE bulk event per ingest call whose
+    // counts cover every processed patient — not one event per patient.
     const journeyEvents = sseManager.getEventsByType('journey_update');
-    expect(journeyEvents.length).toBe(payload.patients.length);
+    expect(journeyEvents).toHaveLength(1);
+    const evt = journeyEvents[0].data as Record<string, unknown>;
+    expect(evt.bulk).toBe(true);
+    expect(Number(evt.created) + Number(evt.updated)).toBe(payload.patients.length);
   });
 
   it('second call with same data updates rather than duplicates', async () => {
@@ -651,18 +631,22 @@ describe('Suite 2: ANC Processing Validation', () => {
 // ─── Suite 3: Labor Processing Validation ───
 
 describe('Suite 3: Labor Processing Validation', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let sseManager: MockSseManager;
   let hospitalId: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
     sseManager = new MockSseManager();
 
     const laborFixture = loadFixture<WebhookPayload>('labor-patients.json');
-    hospitalId = await getOrCreateHospital(db, laborFixture.hospitalCode, 'รพ.ทดสอบ HOSxP Labor', 'F1');
+    hospitalId = await getOrCreateHospital(
+      db,
+      laborFixture.hospitalCode,
+      'รพ.ทดสอบ HOSxP Labor',
+      'F1',
+    );
     await createApiKey(db, hospitalId, 'HOSxP Labor Test Key');
   });
 
@@ -682,7 +666,7 @@ describe('Suite 3: Labor Processing Validation', () => {
     await processWebhookPayload(db, hospitalId, payload, asSse(sseManager));
 
     const rows = await db.query<{ count: number }>(
-      "SELECT COUNT(*) as count FROM cached_patients WHERE hospital_id = ?",
+      'SELECT COUNT(*) as count FROM cached_patients WHERE hospital_id = ?',
       [hospitalId],
     );
     expect(rows[0].count).toBe(payload.patients.length);
@@ -716,7 +700,7 @@ describe('Suite 3: Labor Processing Validation', () => {
     expect(p.height_cm).toBe(168);
     expect(p.weight_kg).toBe(87.0);
     expect(p.labor_status).toBe('ACTIVE');
-    expect(p.anc_count).toBeNull();  // known gap: admit records don't carry ANC count
+    expect(p.anc_count).toBeNull(); // known gap: admit records don't carry ANC count
     expect(p.admit_date).toBe('2026-03-25T15:02:13+07:00');
   });
 
@@ -779,23 +763,32 @@ describe('Suite 3: Labor Processing Validation', () => {
 // ─── Suite 4: Referral Processing Validation ───
 
 describe('Suite 4: Referral Processing Validation', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let sseManager: MockSseManager;
   let fromHospitalId: string;
   let toHospitalId: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
     sseManager = new MockSseManager();
 
     const createFixture = loadFixture<WebhookReferralCreatePayload>('referral-create.json');
 
-    fromHospitalId = await getOrCreateHospital(db, createFixture.hospitalCode, 'รพ.ต้นทาง ทดสอบ', 'F1');
+    fromHospitalId = await getOrCreateHospital(
+      db,
+      createFixture.hospitalCode,
+      'รพ.ต้นทาง ทดสอบ',
+      'F1',
+    );
     await createApiKey(db, fromHospitalId, 'From Hospital Key');
 
-    toHospitalId = await getOrCreateHospital(db, createFixture.toHospitalCode, 'รพ.ปลายทาง ทดสอบ', 'A_S');
+    toHospitalId = await getOrCreateHospital(
+      db,
+      createFixture.toHospitalCode,
+      'รพ.ปลายทาง ทดสอบ',
+      'A_S',
+    );
     await createApiKey(db, toHospitalId, 'To Hospital Key');
   });
 
@@ -893,13 +886,12 @@ describe('Suite 4: Referral Processing Validation', () => {
 // ─── Suite 5: Referral Check API Logic Validation ───
 
 describe('Suite 5: Referral Check API Logic Validation', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let sseManager: MockSseManager;
   let hospitalId: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
     sseManager = new MockSseManager();
 
@@ -918,9 +910,9 @@ describe('Suite 5: Referral Check API Logic Validation', () => {
     const checkFixture = loadFixture<Array<{ cid: string }>>('referral-check.json');
     expect(checkFixture.length).toBe(3);
     // First is ANC patient, second is labor patient, third is unknown
-    expect(checkFixture[0].cid).toBe('1770401294201');  // ANC patient 0
-    expect(checkFixture[1].cid).toBe('0999991049501');  // Labor patient
-    expect(checkFixture[2].cid).toBe('0000000000000');  // Unknown
+    expect(checkFixture[0].cid).toBe('1770401294201'); // ANC patient 0
+    expect(checkFixture[1].cid).toBe('0999991049501'); // Labor patient
+    expect(checkFixture[2].cid).toBe('0000000000000'); // Unknown
   });
 
   it('patient with ANC data: CID hash lookup finds the journey', async () => {
@@ -981,18 +973,22 @@ describe('Suite 5: Referral Check API Logic Validation', () => {
 // ─── Suite 6: Edge Case Validation ───
 
 describe('Suite 6: Edge Case Validation from Real Fixture Data', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let sseManager: MockSseManager;
   let hospitalId: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
     sseManager = new MockSseManager();
 
     const ancFixture = loadFixture<WebhookAncPayload>('anc-patients.json');
-    hospitalId = await getOrCreateHospital(db, ancFixture.hospitalCode, 'รพ.ทดสอบ Edge Cases', 'F1');
+    hospitalId = await getOrCreateHospital(
+      db,
+      ancFixture.hospitalCode,
+      'รพ.ทดสอบ Edge Cases',
+      'F1',
+    );
     await createApiKey(db, hospitalId, 'Edge Case Test Key');
   });
 
@@ -1014,9 +1010,7 @@ describe('Suite 6: Edge Case Validation from Real Fixture Data', () => {
   it('patients with null visit fields (bp, fetalHr) are processed without errors', async () => {
     const ancFixture = loadFixture<WebhookAncPayload>('anc-patients.json');
     const nullVisitFieldPatients = ancFixture.patients.filter((p) =>
-      p.visits?.some(
-        (v) => v.bpSystolic == null || v.bpDiastolic == null || v.fetalHr == null,
-      ),
+      p.visits?.some((v) => v.bpSystolic == null || v.bpDiastolic == null || v.fetalHr == null),
     );
     expect(nullVisitFieldPatients.length).toBeGreaterThan(0);
 
@@ -1045,7 +1039,20 @@ describe('Suite 6: Edge Case Validation from Real Fixture Data', () => {
     await db.execute(
       `INSERT INTO hospitals (id, hcode, name, level, is_active, connection_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [laborHospitalId, laborFixture.hospitalCode + '_L', 'รพ.Labor Edge', 'M1', 1, 'UNKNOWN', now, now],
+      [
+        laborHospitalId,
+        // hcode is VARCHAR(5) — Postgres rejects a longer value even though
+        // SQLite silently accepted it. Swap the last char instead of
+        // appending a suffix so this stays distinct from the ANC-fixture
+        // hospital seeded in beforeEach while fitting the column.
+        laborFixture.hospitalCode.slice(0, 4) + 'L',
+        'รพ.Labor Edge',
+        'M1',
+        true,
+        'UNKNOWN',
+        now,
+        now,
+      ],
     );
     await createApiKey(db, laborHospitalId, 'Labor Edge Key');
 

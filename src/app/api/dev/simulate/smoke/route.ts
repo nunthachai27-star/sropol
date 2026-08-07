@@ -9,11 +9,7 @@
 import { NextResponse } from 'next/server';
 import { simulationGuard } from '../_guard';
 import { llmChat, llmJson } from '@/lib/llm-client';
-import {
-  getProfileById,
-  profilePromptHint,
-  PROFILE_IDS,
-} from '@/services/dev-simulation/profiles';
+import { getProfileById, profilePromptHint, PROFILE_IDS } from '@/services/dev-simulation/profiles';
 import {
   evaluateAncEvent,
   evaluateLaborEvent,
@@ -41,7 +37,7 @@ interface SmokeCase {
 
 const SYSTEM_PROMPT = [
   'You are generating realistic DEV-ONLY synthetic obstetric data for a Thai',
-  'maternal-care dashboard covering Khon Kaen Province. Output a FLAT JSON',
+  'maternal-care dashboard covering Surin Province. Output a FLAT JSON',
   'object matching the schema — no wrapper keys, all required fields at the',
   'top level. JSON only, no markdown.',
 ].join(' ');
@@ -74,15 +70,15 @@ function missingFields(parsed: unknown, fields: string[]): string[] {
 }
 
 export async function GET() {
-  const guard = simulationGuard();
-  if (guard) return guard;
+  const guard = await simulationGuard();
+  if (guard instanceof NextResponse) return guard;
 
   // Picks a profile with strong clinical constraints so the evaluator has real
   // work to do. preeclampsia_severe requires BP ≥160/100 + heavy proteinuria —
   // a schema or profile miss will show up.
   const profile = getProfileById('preeclampsia_severe')!;
   const hcode = '10670';
-  const hospitalName = 'รพ.ขอนแก่น';
+  const hospitalName = 'รพ.สุรินทร์';
   const cases: SmokeCase[] = [];
 
   // ────────────────────── CASE 1 — planner ──────────────────────
@@ -90,7 +86,7 @@ export async function GET() {
     const eventTypes: SimEventType[] = ['labor', 'anc', 'referral', 'partograph'];
     const prompt = [
       `Plan a realistic 8-event shift at ${hospitalName} (hcode ${hcode}),`,
-      'a community hospital in Khon Kaen Province, Thailand.',
+      'a community hospital in Surin Province, Thailand.',
       `Allowed event types: ${eventTypes.join(', ')}.`,
       'Each event: {order, eventType, profileId, name, note}.',
       `profileId must be from [${PROFILE_IDS.slice(0, 5).join(', ')}, ...].`,
@@ -123,7 +119,11 @@ export async function GET() {
     try {
       const raw = await llmJson<Record<string, unknown>>({
         messages: [
-          { role: 'system', content: 'You plan obstetric ward shifts. JSON only. The events array MUST be named exactly "events".' },
+          {
+            role: 'system',
+            content:
+              'You plan obstetric ward shifts. JSON only. The events array MUST be named exactly "events".',
+          },
           { role: 'user', content: prompt },
         ],
         jsonSchema: schema,
@@ -136,7 +136,8 @@ export async function GET() {
         (Array.isArray(raw.events) ? raw.events : null) ??
         (Array.isArray(raw.shift_plan) ? raw.shift_plan : null) ??
         (Array.isArray(raw.plan) ? raw.plan : null) ??
-        Object.values(raw).find((v): v is unknown[] => Array.isArray(v)) ?? [];
+        Object.values(raw).find((v): v is unknown[] => Array.isArray(v)) ??
+        [];
       const narrative = typeof raw.narrative === 'string' ? raw.narrative : '';
       const parsed = { narrative, events, rawKeys: Object.keys(raw) };
       cases.push({
@@ -200,13 +201,22 @@ export async function GET() {
       if (!name) errors.push('missing field: name');
       // applyProfileToLabor ensures clinical fields — verify one round.
       const laborEvent: WebhookPatientPayload = {
-        hn: '000012345', an: '690001234',
-        name: name ?? 'นาง ทดลอง', cid: '1234567890123',
-        age: 28, gravida: 1, ga_weeks: 35, anc_count: 4,
+        hn: '000012345',
+        an: '690001234',
+        name: name ?? 'นาง ทดลอง',
+        cid: '1234567890123',
+        age: 28,
+        gravida: 1,
+        ga_weeks: 35,
+        anc_count: 4,
         admit_date: new Date().toISOString(),
-        height_cm: 158, weight_kg: 70, weight_diff_kg: 14,
-        fundal_height_cm: 34.5, us_weight_g: 3100,
-        hematocrit_pct: 34, labor_status: 'ACTIVE',
+        height_cm: 158,
+        weight_kg: 70,
+        weight_diff_kg: 14,
+        fundal_height_cm: 34.5,
+        us_weight_g: 3100,
+        hematocrit_pct: 34,
+        labor_status: 'ACTIVE',
       };
       const ev = evaluateLaborEvent(profile, laborEvent);
       const allErrors = [...errors, ...ev.errors];
@@ -296,7 +306,7 @@ export async function GET() {
   // ────────────────────── CASE 4 — referral narrative ──────────────────────
   {
     const prompt = [
-      `Referral from ${hospitalName} (${hcode}) to รพ.ศูนย์ขอนแก่น (99999).`,
+      `Referral from ${hospitalName} (${hcode}) to รพ.ศูนย์สุรินทร์ (99999).`,
       profilePromptHint(profile),
       'Output {name, reason, diagnosisCode, urgency}.',
     ].join('\n');
@@ -313,7 +323,10 @@ export async function GET() {
     const t0 = Date.now();
     try {
       const parsed = await llmJson<{
-        name: string; reason: string; diagnosisCode: string; urgency: string;
+        name: string;
+        reason: string;
+        diagnosisCode: string;
+        urgency: string;
       }>({
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },

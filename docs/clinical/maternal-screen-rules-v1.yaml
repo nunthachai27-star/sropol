@@ -1,0 +1,568 @@
+# Maternal Screen — Local PDF-Tier Rules (Preeclampsia + Antepartum Hemorrhage)
+#
+# STATUS: PROVISIONAL_UNAPPROVED. No rule in this file may drive a production
+# alert. It is the Phase 0 fixture/oracle consumed by:
+#   - tests/fixtures/maternal-screen-clinical-cases.json (the test oracle)
+#   - src/config/maternal-screen-rules.ts (Phase 1, mirrors this file)
+#   - src/services/maternal-screening.ts (Phase 1 pure rule engine)
+#
+# Every clinical interpretation below is a SAFETY-CONSERVATIVE reading of an
+# ambiguous PDF table (docs/maternal-screen-plan.md §2.1, §2.2, §7.5) and
+# carries `approved: false`. See maternal-screen-evidence-register.md for the
+# full citation of every sourceId used here.
+
+metadata:
+  ruleSetVersion: "0.1.0-provisional"
+  status: PROVISIONAL_UNAPPROVED
+  approvedBy: null
+  approvedAt: null
+  sourcePdf: "docs/maternal-screen.pdf"
+  purpose: LOCAL_PDF_TIER
+  designDoc: "docs/maternal-screen-plan.md"
+  evidenceRegister: "docs/clinical/maternal-screen-evidence-register.md"
+  companionFixture: "docs/clinical/maternal-screen-acuity-v1.yaml"
+
+# Tier ranking used to select the single highest-matched `localTier` across
+# ALL firing rules (spec §7.2 step 7). The engine must still return every
+# match, not only the highest. This ranking itself is provisional pending
+# sign-off (decision T1-RANK below).
+localTierRank:
+  NO_LOCAL_MATCH: 0
+  LOCAL_MILD: 1
+  LOCAL_MODERATE: 2
+  LOCAL_SEVERE: 3
+
+# Fields whose absence (null / not present / 'UNKNOWN') marks the overall
+# MaternalScreenResult as isComplete:false and is listed in
+# missingRequiredFields (spec §6.2). This is a Task 1 fixture-design decision
+# (design doc does not enumerate an exact list) chosen to cover the
+# structural minimum of both the preeclampsia and hemorrhage/acuity domains.
+# `bleedingRate`, `oxygenSaturationPct`, and `fetalTracingPattern` are
+# deliberately EXCLUDED from this list — see maternal-screen-acuity-v1.yaml
+# `stabilityDeterminationFields` for the separate, narrower field set used
+# only to decide STABLE vs UNKNOWN emergency acuity.
+mandatoryFields:
+  - gaWeeks
+  - gaDays
+  - systolicBp
+  - diastolicBp
+  - proteinuriaGrade
+  - headache
+  - vaginalBleeding
+  - fetalHeartRateBpm
+  - maternalPulseBpm
+  - consciousness
+  - shockSignsPresent
+
+# ---------------------------------------------------------------------------
+# Every ambiguous clinical decision from spec §7.5 (items 1-19) and §20,
+# resolved conservatively. `ref` matches the §7.5 item number where one
+# exists; items with no direct §7.5 number use a `T1-*` label. ALL are
+# approved:false pending clinical sign-off.
+# ---------------------------------------------------------------------------
+clinicalDecisions:
+  - ref: "7.5-1"
+    question: "Does one severe symptom alone establish severe preeclampsia screening?"
+    choice: >
+      Yes. Any single severe-column symptom (headache, blurred vision,
+      epigastric pain, pulmonary edema) alone fires LOCAL_SEVERE. Domains
+      (clinical/BP/lab) are independent anyOf groups; the highest individual
+      finding across any domain wins (spec §7.2 step 7, design doc §7.1's
+      "highest individual finding wins" principle).
+    approved: false
+  - ref: "7.5-2"
+    question: "Are PIH diagnosis and GA >= 20 weeks prerequisites for all preeclampsia levels?"
+    choice: >
+      No. piHDiagnosed and gaWeeks are captured as input but are NOT gating
+      prerequisites for any BP/lab/symptom rule in this fixture. Gating a
+      real finding behind an unconfirmed PIH diagnosis flag or GA cutoff
+      could suppress a genuinely severe result — the conservative choice is
+      to never suppress. Covered by case "severe proteinuria fires despite
+      early GA and undiagnosed PIH" in the clinical-cases fixture.
+    approved: false
+  - ref: "7.5-3"
+    question: "Is SBP >= 140 alone mild when DBP is normal or missing?"
+    choice: "Yes — see PE-BP-MILD-140."
+    approved: false
+  - ref: "7.5-4"
+    question: "Is moderate BP SBP >= 150 OR DBP >= 100?"
+    choice: "Yes — see PE-BP-MODERATE-SBP-150 and PE-BP-MODERATE-DBP-100."
+    approved: false
+  - ref: "7.5-5"
+    question: "Is severe BP SBP >= 160 OR DBP >= 110?"
+    choice: "Yes — see PE-BP-SEVERE-SBP-160 and PE-BP-SEVERE-DBP-110."
+    approved: false
+  - ref: "7.5-6"
+    question: "Does proteinuria 2+ belong to moderate, severe, or both, and which wins?"
+    choice: >
+      2+ resolves to SEVERE (the higher tier wins, conservative). 3+ is also
+      severe per the PDF's stated ceiling; 4+ is conservatively included in
+      the severe rule too, as a value more severe than the PDF's stated 3+
+      ceiling should not fall through to a lower tier. 1+ maps to the mild
+      lab domain only; the PDF's moderate column's overlapping "1-2+" range
+      is absorbed into mild(1+)/severe(2+) — no separate PE-PROT-MODERATE
+      rule is encoded because the moderate protein range has no residual,
+      non-overlapping value once 1+/2+ are resolved.
+    approved: false
+  - ref: "7.5-7"
+    question: "Is creatinine 1.1 normal, with only values strictly greater than 1.1 severe?"
+    choice: >
+      Yes. creatinineMgDl > 1.1 (strict) is severe; exactly 1.10 is NOT
+      severe. NICE's lower "clinical concern" threshold (>=1.0) is recorded
+      as supporting/contextual evidence only (SRC-NICE-NG133) and is not
+      adopted as the local trigger. Creatinine doubling from a known
+      baseline (ACOG severe-feature criterion) is NOT encoded as a firing
+      rule in v1 — see the "creatinine doubling" case in the clinical-cases
+      fixture, which documents this as an intentional scope limitation, not
+      a defect.
+    approved: false
+  - ref: "7.5-8"
+    question: "Is platelet count exactly 100,000/uL non-severe?"
+    choice: >
+      Yes. plateletPerUl < 100000 (strict) is severe; exactly 100000 is NOT
+      severe. NICE's surveillance concern threshold (<150,000) is recorded
+      as supporting/contextual evidence only and is not adopted as the local
+      trigger in v1.
+    approved: false
+  - ref: "7.5-9"
+    question: "Must BP be confirmed by repeated measurements, and at what interval?"
+    choice: >
+      No repeat-measurement or minimum-interval gating is encoded. A single
+      qualifying reading is sufficient to fire a BP rule. Per design doc
+      §7.4.2, the system must never delay escalation while waiting for a
+      second reading or a fixed interval. ACOG's "two readings >=4 hours
+      apart" severe-feature confirmation protocol (SRC-ACOG-DISTRICT-IV-HTN)
+      is recorded as supporting/contextual evidence for a future confirmed-
+      diagnosis workflow, not as a gate on this screening tier.
+    approved: false
+  - ref: "7.5-10"
+    question: "Are FHR exactly 110 and exactly 160 normal?"
+    choice: >
+      Yes, inclusive: the normal FHR screening band is 110-160 bpm
+      inclusive; 109 and 161 are abnormal. fetalHeartRateBpm outside this
+      band is treated as one alternative form of "fetal distress" evidence
+      within APH-ABRUPTIO-PATTERN, alongside the categorical
+      fetalTracingPattern NON_REASSURING/SINUSOIDAL values. A normal FHR
+      value (110-160 inclusive, or fetalTracingPattern REASSURING) never
+      downgrades a proven finding on another axis (GC4) and never proves
+      placenta previa (design doc correction §2.4.5).
+    approved: false
+  - ref: "7.5-11"
+    question: "What is the minimum evidence required to label each suspected hemorrhage condition?"
+    choice: >
+      ABRUPTIO_PLACENTAE: vaginalBleeding=true AND at least one of
+      (abdominalOrBackPain, uterineTenderness, frequentContractions, fetal
+      distress [fetalTracingPattern NON_REASSURING/SINUSOIDAL, or
+      fetalHeartRateBpm outside 110-160]); OR concealedBleedingSuspected=true
+      AND at least one of (abdominalOrBackPain, uterineTenderness,
+      frequentContractions) — visible bleeding is NOT required (GC4, design
+      doc correction §2.4.4).
+      PLACENTA_PREVIA: vaginalBleeding=true AND abdominalOrBackPain is not
+      true (false or not assessed) — "usually painless" per
+      SRC-ACOG-BLEEDING-FAQ; this is deliberately permissive (fires even
+      when pain status is unassessed) because under-flagging a suspected
+      condition from missing data is unsafe (GC1). Never labeled diagnosed.
+      UTERINE_RUPTURE: at least one of (contractionDurationExceedsInterval,
+      suprapubicTenderness, bandlsRing) — independent of vaginalBleeding,
+      because rupture bleeding may be entirely intra-abdominal
+      (SRC-WHO-EMERGENCY-VAGINAL-BLEEDING).
+      VASA_PREVIA: vaginalBleeding=true AND membranesRuptured=true AND
+      fetalTracingPattern in (SINUSOIDAL, NON_REASSURING) — SMFM Consult 37
+      anchors suspicion on bleeding + sinusoidal tracing with ROM as
+      critical context; NON_REASSURING is conservatively included alongside
+      SINUSOIDAL to avoid under-flagging (SRC-SMFM-CONSULT-37-VASA-PREVIA).
+      All four patterns are non-exclusive and may co-fire on the same input
+      by design (over-suspicion is the safe failure mode).
+    approved: false
+  - ref: "7.5-12"
+    question: "How is vaginal bleeding below 26 weeks and unknown GA handled?"
+    choice: >
+      APH-GA26-VAGINAL-BLEEDING does not fire below GA 26+0 or when gaWeeks
+      is unknown (it cannot evaluate a null field). This NEVER downgrades
+      the result: the suspected hemorrhage-pattern rules
+      (APH-ABRUPTIO-PATTERN / APH-PREVIA-PATTERN / APH-RUPTURE-UTERUS-PATTERN
+      / APH-VASA-PREVIA-PATTERN) are independent of GA and evaluate their
+      own evidence regardless of gestational age, so bleeding below 26 weeks
+      or with unknown GA typically still resolves to LOCAL_SEVERE via a
+      pattern rule. When GA is unknown, gaWeeks (and gaDays) are added to
+      missingRequiredFields. See design doc §7.3.
+    approved: false
+  - ref: "7.5-13"
+    question: "Does the local system adopt a 24+0, 26+0, or other APH definition?"
+    choice: >
+      26+0 weeks (gaWeeks >= 26), matching the local PDF verbatim. RCOG's
+      24+0 (SRC-RCOG-GTG63-APH) and older WHO 22-week material
+      (SRC-WHO-EMERGENCY-VAGINAL-BLEEDING) are recorded as supporting
+      evidence only, not adopted as the controlling boundary. UI naming for
+      bleeding outside this window is out of scope for Task 1 (data/docs
+      only).
+    approved: false
+  - ref: "7.5-14"
+    question: "Which findings determine emergencyAcuity, independent of the PDF tier?"
+    choice: >
+      See maternal-screen-acuity-v1.yaml. shockSignsPresent=true,
+      consciousness in (PAIN, UNRESPONSIVE), bleedingRate=HEAVY, and
+      fetalTracingPattern=SINUSOIDAL map to EMERGENCY;
+      oxygenSaturationPct<95, maternalPulseBpm>120, and
+      fetalTracingPattern=NON_REASSURING map to URGENT. STABLE requires all
+      six acuity-relevant fields to be explicitly assessed and none of the
+      above conditions met; if any are unassessed and no instability
+      condition fires, the result is UNKNOWN, never STABLE (GC1).
+    approved: false
+  - ref: "7.5-15"
+    question: >
+      Does the approved preeclampsia model include liver dysfunction,
+      oliguria, creatinine doubling, and uteroplacental dysfunction?
+    choice: >
+      Not in v1. astIuL, altIuL, urineOutputMlPerHour, and
+      creatinineBaselineMgDl are captured in MaternalScreenInput for future
+      use but have NO corresponding LOCAL_PDF_TIER rule in this fixture —
+      the local PDF does not enumerate them and ACOG's inclusion of them
+      (SRC-ACOG-DISTRICT-IV-HTN) is recorded as supporting/contextual
+      evidence pending a dedicated clinical decision and possible
+      EXTERNAL_SAFETY rule purpose in a future rule-set version.
+    approved: false
+  - ref: "7.5-16"
+    question: "Which BP confirmation interval applies to screening, diagnosis, and urgent-treatment contexts?"
+    choice: >
+      Not modeled in v1; no interval gating exists anywhere in this fixture
+      (see 7.5-9). Every BP reading is expected to be timestamped and stored
+      by the persistence layer (Phase 2), but confirmation-interval logic is
+      out of scope for the pure rule engine.
+    approved: false
+  - ref: "7.5-17"
+    question: "Which quantitative protein method is preferred, and how is dipstick-only evidence displayed?"
+    choice: >
+      Only dipstick-derived ProteinuriaGrade values are modeled in v1
+      (NEGATIVE/TRACE/ONE_PLUS..FOUR_PLUS/UNKNOWN). PCR/ACR quantitative
+      methods are not modeled as a distinct input in this fixture (design
+      doc §2.3 notes NICE prefers PCR/ACR confirmation). Provenance/method
+      display is a UI concern (Phase 4), out of scope here.
+    approved: false
+  - ref: "7.5-18"
+    question: "What documented evidence constitutes 'placenta previa excluded' before examination workflows change?"
+    choice: >
+      Not resolved in v1. placentaPreviaExcluded and placentaLocationSource
+      are captured as input fields but are NOT consumed by any rule in this
+      fixture — no rule uses an exclusion flag to authorize, enable, or
+      imply a digital vaginal examination, consistent with design doc §7.4.1
+      (examination decisions remain clinician-controlled under local
+      protocol, never system-authorized).
+    approved: false
+  - ref: "7.5-19"
+    question: "Does the screen capture a sinusoidal CTG pattern as structured data, or consume it from a separate CTG system?"
+    choice: >
+      Captured as structured data via the fetalTracingPattern enum
+      (REASSURING/NON_REASSURING/SINUSOIDAL/UNKNOWN) on MaternalScreenInput,
+      consumed directly by APH-VASA-PREVIA-PATTERN, the fetal-distress
+      branch of APH-ABRUPTIO-PATTERN, and the emergency-acuity rules.
+    approved: false
+  - ref: "T1-MANDATORY-FIELDS"
+    question: >
+      Which fields are mandatory for isComplete / missingRequiredFields
+      (design doc §20 "Define required versus optional fields")?
+    choice: >
+      See the top-level mandatoryFields list above (11 fields spanning GA,
+      BP, proteinuria, headache, vaginal bleeding, FHR, pulse, consciousness,
+      and shock signs). This is a Task 1 fixture-design decision, not
+      literally specified by the design doc, and must be reconciled with
+      MANDATORY_SCREEN_FIELDS in src/config/maternal-screen-rules.ts (Task 2)
+      before clinical sign-off.
+    approved: false
+
+# ---------------------------------------------------------------------------
+# Rules
+# ---------------------------------------------------------------------------
+rules:
+  # --- Preeclampsia: clinical/symptom domain (severe column) ---------------
+  - id: PE-HEADACHE-IN-LOCAL-SEVERE-COLUMN
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-ACOG-PREECLAMPSIA-FAQ]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_SEVERE
+    logic:
+      anyOf:
+        - { field: headache, operator: "==", value: "SEVERE" }
+    clinicalDecision: { ref: "7.5-1", choice: "one severe symptom alone fires LOCAL_SEVERE", approved: false }
+
+  - id: PE-HEADACHE-MODERATE-TOLERABLE
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-ACOG-PREECLAMPSIA-FAQ]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_MODERATE
+    logic:
+      anyOf:
+        - { field: headache, operator: "==", value: "MILD" }
+    clinicalDecision:
+      ref: "7.5-1"
+      choice: >
+        Encodes the local PDF's Clinical/Moderate cell (design doc §2.1:
+        "mild/tolerable headache" => moderate). Without this rule an assessed
+        HeadacheSeverity 'MILD' would map to no rule and evaluate to
+        NO_LOCAL_MATCH — the exact missing/dropped-criterion failure Phase 0
+        exists to prevent. HeadacheSeverity 'MILD' is the normalized ordinal
+        for the PDF's "mild/tolerable" wording; it fires LOCAL_MODERATE
+        independently, and the highest matched tier across all domains still
+        wins (so a co-present severe finding is not masked). Conservative and
+        provisional pending sign-off.
+      approved: false
+
+  - id: PE-BLURRED-VISION-IN-LOCAL-SEVERE-COLUMN
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-ACOG-PREECLAMPSIA-FAQ]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_SEVERE
+    logic:
+      anyOf:
+        - { field: blurredVision, operator: "==", value: true }
+    clinicalDecision:
+      ref: "7.5-1"
+      choice: >
+        Extension beyond the verbatim rule-ID list (spec §7.1) to cover the
+        PDF's severe-column symptom "blurred vision" independently, per the
+        "one severe symptom alone" decision.
+      approved: false
+
+  - id: PE-EPIGASTRIC-PAIN-IN-LOCAL-SEVERE-COLUMN
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-ACOG-PREECLAMPSIA-FAQ, SRC-ACOG-DISTRICT-IV-HTN]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_SEVERE
+    logic:
+      anyOf:
+        - { field: epigastricPain, operator: "==", value: true }
+    clinicalDecision:
+      ref: "7.5-1"
+      choice: "Extension to cover the PDF's severe-column 'epigastric tightness/pain' independently."
+      approved: false
+
+  - id: PE-PULMONARY-EDEMA-IN-LOCAL-SEVERE-COLUMN
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-ACOG-PREECLAMPSIA-FAQ]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_SEVERE
+    logic:
+      anyOf:
+        - { field: pulmonaryEdema, operator: "==", value: true }
+    clinicalDecision:
+      ref: "7.5-1"
+      choice: "Extension to cover the PDF's severe-column 'pulmonary edema' independently."
+      approved: false
+
+  # --- Preeclampsia: blood-pressure domain ----------------------------------
+  - id: PE-BP-MILD-140
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-NICE-NG133]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_MILD
+    logic:
+      anyOf:
+        - { field: systolicBp, operator: ">=", value: 140 }
+        - { field: diastolicBp, operator: ">=", value: 90 }
+    clinicalDecision:
+      ref: "7.5-3"
+      choice: >
+        SBP >= 140 OR DBP >= 90 is mild (PDF's unqualified "BP at least 140"
+        cell, corroborated by NICE's 140/90 hypertension-in-pregnancy
+        definition); fires independent of higher-tier matches, since the
+        engine selects the highest matched tier separately and returns all
+        matches.
+      approved: false
+
+  - id: PE-BP-MODERATE-SBP-150
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-NICE-NG133]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_MODERATE
+    logic:
+      anyOf:
+        - { field: systolicBp, operator: ">=", value: 150 }
+    clinicalDecision: { ref: "7.5-4", choice: "moderate BP = SBP >= 150 OR DBP >= 100", approved: false }
+
+  - id: PE-BP-MODERATE-DBP-100
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-NICE-NG133]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_MODERATE
+    logic:
+      anyOf:
+        - { field: diastolicBp, operator: ">=", value: 100 }
+    clinicalDecision: { ref: "7.5-4", choice: "moderate BP = SBP >= 150 OR DBP >= 100", approved: false }
+
+  - id: PE-BP-SEVERE-SBP-160
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-NICE-NG133, SRC-ACOG-DISTRICT-IV-HTN]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_SEVERE
+    logic:
+      anyOf:
+        - { field: systolicBp, operator: ">=", value: 160 }
+    clinicalDecision: { ref: "7.5-5", choice: "severe BP = SBP >= 160 OR DBP >= 110", approved: false }
+
+  - id: PE-BP-SEVERE-DBP-110
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-NICE-NG133, SRC-ACOG-DISTRICT-IV-HTN]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_SEVERE
+    logic:
+      anyOf:
+        - { field: diastolicBp, operator: ">=", value: 110 }
+    clinicalDecision: { ref: "7.5-5", choice: "severe BP = SBP >= 160 OR DBP >= 110", approved: false }
+
+  # --- Preeclampsia: laboratory domain --------------------------------------
+  - id: PE-LAB-SEVERE-CREATININE-1_1
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-ACOG-DISTRICT-IV-HTN, SRC-NICE-NG133]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_SEVERE
+    logic:
+      anyOf:
+        - { field: creatinineMgDl, operator: ">", value: 1.1 }
+    clinicalDecision:
+      ref: "7.5-7"
+      choice: "creatinine strictly greater than 1.1 mg/dL is severe; exactly 1.10 is NOT severe"
+      approved: false
+
+  - id: PE-LAB-SEVERE-PLATELET-100K
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-ACOG-DISTRICT-IV-HTN]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_SEVERE
+    logic:
+      anyOf:
+        - { field: plateletPerUl, operator: "<", value: 100000 }
+    clinicalDecision:
+      ref: "7.5-8"
+      choice: "platelet count strictly less than 100,000/uL is severe; exactly 100,000 is NOT severe"
+      approved: false
+
+  - id: PE-PROT-MILD-1PLUS
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-NICE-NG133]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_MILD
+    logic:
+      anyOf:
+        - { field: proteinuriaGrade, operator: "==", value: "ONE_PLUS" }
+    clinicalDecision:
+      ref: "7.5-6"
+      choice: "1+ maps to the mild lab domain; the moderate column's overlapping 1-2+ range is absorbed into mild(1+)/severe(2+)"
+      approved: false
+
+  - id: PE-PROT-SEVERE-2TO3PLUS
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-NICE-NG133]
+    condition: PREECLAMPSIA
+    localTier: LOCAL_SEVERE
+    logic:
+      anyOf:
+        - { field: proteinuriaGrade, operator: "in", value: ["TWO_PLUS", "THREE_PLUS", "FOUR_PLUS"] }
+    clinicalDecision:
+      ref: "7.5-6"
+      choice: >
+        2+ and 3+ resolve to severe (higher tier wins, overlap with the
+        moderate column resolved conservatively); 4+ conservatively included
+        beyond the PDF's stated 3+ ceiling.
+      approved: false
+
+  # --- Antepartum hemorrhage -------------------------------------------------
+  - id: APH-GA26-VAGINAL-BLEEDING
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-RCOG-GTG63-APH, SRC-WHO-EMERGENCY-VAGINAL-BLEEDING]
+    condition: ANTEPARTUM_HEMORRHAGE
+    localTier: LOCAL_SEVERE
+    logic:
+      allOf:
+        - { field: gaWeeks, operator: ">=", value: 26 }
+        - { field: vaginalBleeding, operator: "==", value: true }
+    clinicalDecision:
+      ref: "7.5-12"
+      choice: >
+        GA >= 26 weeks (gaWeeks alone crossing 26; 26+0 qualifies, 25+6 does
+        not) AND vaginalBleeding=true fires LOCAL_SEVERE. Unknown gaWeeks
+        with bleeding present does NOT fire this specific rule and does NOT
+        downgrade the overall result — gaWeeks is added to
+        missingRequiredFields and the independent suspected hemorrhage
+        pattern rules (which do not gate on GA) still evaluate.
+      approved: false
+
+  - id: APH-ABRUPTIO-PATTERN
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-ACOG-BLEEDING-FAQ, SRC-WHO-EMERGENCY-VAGINAL-BLEEDING]
+    condition: ABRUPTIO_PLACENTAE
+    localTier: LOCAL_SEVERE
+    logic:
+      anyOf:
+        - allOf:
+            - { field: vaginalBleeding, operator: "==", value: true }
+            - anyOf:
+                - { field: abdominalOrBackPain, operator: "==", value: true }
+                - { field: uterineTenderness, operator: "==", value: true }
+                - { field: frequentContractions, operator: "==", value: true }
+                - { field: fetalTracingPattern, operator: "in", value: ["NON_REASSURING", "SINUSOIDAL"] }
+                - { field: fetalHeartRateBpm, operator: "<", value: 110 }
+                - { field: fetalHeartRateBpm, operator: ">", value: 160 }
+        - allOf:
+            - { field: concealedBleedingSuspected, operator: "==", value: true }
+            - anyOf:
+                - { field: abdominalOrBackPain, operator: "==", value: true }
+                - { field: uterineTenderness, operator: "==", value: true }
+                - { field: frequentContractions, operator: "==", value: true }
+    clinicalDecision: { ref: "7.5-11", choice: "see the ABRUPTIO_PLACENTAE minimum-evidence entry above", approved: false }
+
+  - id: APH-PREVIA-PATTERN
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-ACOG-BLEEDING-FAQ, SRC-RCOG-GTG63-APH]
+    condition: PLACENTA_PREVIA
+    localTier: LOCAL_SEVERE
+    logic:
+      allOf:
+        - { field: vaginalBleeding, operator: "==", value: true }
+        - { field: abdominalOrBackPain, operator: "!=", value: true }
+    clinicalDecision: { ref: "7.5-11", choice: "see the PLACENTA_PREVIA minimum-evidence entry above; suspected only, never diagnosed", approved: false }
+
+  - id: APH-RUPTURE-UTERUS-PATTERN
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-WHO-EMERGENCY-VAGINAL-BLEEDING]
+    condition: UTERINE_RUPTURE
+    localTier: LOCAL_SEVERE
+    logic:
+      anyOf:
+        - { field: contractionDurationExceedsInterval, operator: "==", value: true }
+        - { field: suprapubicTenderness, operator: "==", value: true }
+        - { field: bandlsRing, operator: "==", value: true }
+    clinicalDecision:
+      ref: "7.5-11"
+      choice: "see the UTERINE_RUPTURE minimum-evidence entry above; independent of vaginalBleeding (may be entirely intra-abdominal)"
+      approved: false
+
+  - id: APH-VASA-PREVIA-PATTERN
+    purpose: LOCAL_PDF_TIER
+    controllingSourceId: LOCAL_PDF
+    supportingSourceIds: [SRC-SMFM-CONSULT-37-VASA-PREVIA]
+    condition: VASA_PREVIA
+    localTier: LOCAL_SEVERE
+    logic:
+      allOf:
+        - { field: vaginalBleeding, operator: "==", value: true }
+        - { field: membranesRuptured, operator: "==", value: true }
+        - { field: fetalTracingPattern, operator: "in", value: ["SINUSOIDAL", "NON_REASSURING"] }
+    clinicalDecision: { ref: "7.5-11", choice: "see the VASA_PREVIA minimum-evidence entry above", approved: false }

@@ -8,31 +8,28 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDatabase } from '@/db/connection';
 import { ensureInit } from '@/lib/ensure-init';
+import { requireAdmin } from '@/lib/admin-guard';
 import { logger } from '@/lib/logger';
-import {
-  getLatestSyncRun,
-  listSyncRuns,
-} from '@/services/sync/progress-store';
+import { getLatestSyncRun, listSyncRuns } from '@/services/sync/progress-store';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ hcode: string }> },
 ) {
   try {
+    const guard = await requireAdmin();
+    if (guard instanceof NextResponse) return guard;
+
     await ensureInit();
     const { hcode } = await params;
     const sp = request.nextUrl.searchParams;
     const onlyLatest = sp.get('latest') === 'true';
-    const limit = Math.min(
-      Math.max(parseInt(sp.get('limit') ?? '20', 10) || 20, 1),
-      100,
-    );
+    const limit = Math.min(Math.max(parseInt(sp.get('limit') ?? '20', 10) || 20, 1), 100);
 
     const db = await getDatabase();
-    const rows = await db.query<{ id: string }>(
-      'SELECT id FROM hospitals WHERE hcode = ?',
-      [hcode],
-    );
+    const rows = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [
+      hcode,
+    ]);
     if (rows.length === 0) {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: 'ไม่พบโรงพยาบาล' } },

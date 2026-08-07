@@ -1,9 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDatabase } from '@/db/connection';
+import { auth } from '@/lib/auth';
+import { tryLogAccess } from '@/services/audit';
+import { auditActorFromSession } from '@/lib/audit-actor';
 import { ensureInit } from '@/lib/ensure-init';
 import { logger } from '@/lib/logger';
-import { decryptSafe } from '@/lib/encryption';
-import type { JourneyListItem, JourneyListResponse } from '@/types/api';
+import { listHospitalJourneys } from '@/services/journey-list';
 
 export async function GET(
   request: NextRequest,
@@ -14,94 +16,33 @@ export async function GET(
     const { hcode } = await params;
     const db = await getDatabase();
     const searchParams = request.nextUrl.searchParams;
-    const stage = searchParams.get('stage') ?? undefined;
-    const riskLevel = searchParams.get('risk_level') ?? undefined;
-    const page = parseInt(searchParams.get('page') ?? '1', 10);
-    const perPage = parseInt(searchParams.get('per_page') ?? '20', 10);
 
-    // Find hospital by hcode
-    const hospitals = await db.query<{ id: string }>(`SELECT id FROM hospitals WHERE hcode = ?`, [
-      hcode,
-    ]);
-    if (hospitals.length === 0) {
+    const result = await listHospitalJourneys(db, hcode, {
+      stage: searchParams.get('stage') ?? undefined,
+      riskLevel: searchParams.get('risk_level') ?? undefined,
+      page: parseInt(searchParams.get('page') ?? '1', 10),
+      perPage: parseInt(searchParams.get('per_page') ?? '20', 10),
+    });
+
+    if (result === null) {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: 'ไม่พบโรงพยาบาล', details: null } },
         { status: 404 },
       );
     }
-    const hospitalId = hospitals[0].id;
 
-    let countSql = `SELECT COUNT(*) as total FROM maternal_journeys mj WHERE mj.current_hospital_id = ?`;
-    let dataSql = `SELECT mj.*, h.name as hospital_name, h.hcode FROM maternal_journeys mj JOIN hospitals h ON h.id = mj.hospital_id WHERE mj.current_hospital_id = ?`;
-    const params2: unknown[] = [hospitalId];
-
-    if (stage) {
-      countSql += ` AND care_stage = ?`;
-      dataSql += ` AND mj.care_stage = ?`;
-      params2.push(stage);
-      // Freshness gates — only meaningful for PREGNANCY stage. Excludes
-      // historical rows that were migrated/loaded with care_stage='PREGNANCY'
-      // but whose owners already delivered (or were lost to follow-up):
-      //   - ga_weeks > 42 is biologically impossible (post-term)
-      //   - EDC more than 14 days past = effectively delivered
-      //   - last ANC visit > 60 days ago = lost to follow-up at this hospital
-      // Without these, the ANC tab showed pregnancies with EDC from 2010–2019.
-      if (stage === 'PREGNANCY') {
-        // Use JS-computed ISO cutoffs instead of `NOW() - INTERVAL …`. edc /
-        // last_anc_date are stored as ISO-8601 TEXT in existing deployments, so
-        // `text >= timestamptz` throws on Postgres (and NOW() is not portable to
-        // SQLite). ISO-8601 strings sort lexicographically = chronologically, so
-        // a parameterised string comparison is correct on TEXT and TIMESTAMPTZ
-        // columns and on both databases.
-        const edcCutoff = new Date(Date.now() - 14 * 86_400_000).toISOString();
-        const lastAncCutoff = new Date(Date.now() - 60 * 86_400_000).toISOString();
-        const freshClause = `
-          AND (mj.ga_weeks IS NULL OR mj.ga_weeks <= 42)
-          AND (mj.edc IS NULL OR mj.edc >= ?)
-          AND (mj.last_anc_date IS NULL OR mj.last_anc_date >= ?)`;
-        countSql += freshClause;
-        dataSql += freshClause;
-        params2.push(edcCutoff, lastAncCutoff);
-      }
-    }
-    if (riskLevel) {
-      countSql += ` AND anc_risk_level = ?`;
-      dataSql += ` AND mj.anc_risk_level = ?`;
-      params2.push(riskLevel);
+    // PDPA access log — fire-and-forget (tryLogAccess never throws).
+    const session = await auth();
+    if (session?.user) {
+      await tryLogAccess(db, {
+        ...auditActorFromSession(session),
+        action: 'VIEW_HOSPITAL_JOURNEYS',
+        resourceType: 'HOSPITAL',
+        resourceId: hcode,
+      });
     }
 
-    const countRows = await db.query<{ total: number }>(countSql, params2);
-    const total = Number(countRows[0]?.total) || 0;
-
-    dataSql += ` ORDER BY mj.created_at DESC LIMIT ? OFFSET ?`;
-    const dataParams = [...params2, perPage, (page - 1) * perPage];
-    const rows = await db.query<Record<string, unknown>>(dataSql, dataParams);
-
-    const journeys: JourneyListItem[] = rows.map((r) => ({
-      id: r.id as string,
-      hn: r.hn as string,
-      name: decryptSafe(r.name as string),
-      age: r.age as number,
-      gravida: r.gravida as number,
-      para: r.para as number,
-      gaWeeks: r.ga_weeks as number | null,
-      lmp: r.lmp as string | null,
-      edc: r.edc as string | null,
-      careStage: r.care_stage as string,
-      ancRiskLevel: r.anc_risk_level as string,
-      ancVisitCount: r.anc_visit_count as number,
-      lastAncDate: r.last_anc_date as string | null,
-      hospitalName: r.hospital_name as string,
-      hcode: r.hcode as string,
-      registeredAt: r.registered_at as string,
-    }));
-
-    const response: JourneyListResponse = {
-      journeys,
-      pagination: { total, page, perPage, totalPages: Math.ceil(total / perPage) },
-    };
-
-    return NextResponse.json(response);
+    return NextResponse.json(result);
   } catch (error) {
     logger.error('hospital_journeys_api_failed', { error });
     return NextResponse.json(

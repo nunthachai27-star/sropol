@@ -13,9 +13,9 @@ export interface HosxpPatientRow {
 // Patient address (joined from patient + thaiaddress)
 export interface HosxpPatientAddressRow {
   hn: string;
-  chwpart: string | null;  // จังหวัด 2-digit
-  amppart: string | null;  // อำเภอ 2-digit
-  tmbpart: string | null;  // ตำบล 2-digit
+  chwpart: string | null; // จังหวัด 2-digit
+  amppart: string | null; // อำเภอ 2-digit
+  tmbpart: string | null; // ตำบล 2-digit
 }
 
 export interface HosxpIptRow {
@@ -37,6 +37,22 @@ export interface HosxpPregnancyRow {
   anc_complete: string | null;
   child_count: number | null;
   deliver_type: number | null;
+}
+
+/** Row from IPT_PREGNANCY_DELIVERIES_SINCE — the per-admission delivery
+ *  summary (ipt_pregnancy). Fallback source for the newborn sync when a
+ *  site fills the IPD pregnancy record but not ipt_labour_infant. */
+export interface HosxpIptPregnancyRow {
+  an: string;
+  mother_hn: string | null;
+  mother_cid?: string | null;
+  mother_name?: string | null;
+  mother_birthday?: string | null;
+  labor_date: string | null;
+  child_count: number | null;
+  dead_child_count: number | null;
+  preg_number: number | null;
+  ga: number | null;
 }
 
 export interface HosxpVitalSignRow {
@@ -140,10 +156,19 @@ export interface HosxpAncClassifyingRow {
 }
 
 export interface HosxpLabourInfantRow {
+  /** Mother identity (patient table via ipt join) — lets the sync create
+   *  retrospective journeys for pre-registry deliveries. */
+  mother_cid?: string | null;
+  mother_name?: string | null;
+  mother_birthday?: string | null;
   ipt_labour_infant_id: number;
   ipt_labour_id: number;
   an: string;
-  infant_number: number;
+  /** 1-based birth order within the delivery. NULLABLE in production HOSxP
+   *  (hospitals 10998/11008 ship NULL here) while cached_newborns.infant_number
+   *  is NOT NULL — the sync layer MUST default missing values before
+   *  persisting (defaultMissingInfantNumbers in services/sync/newborn.ts). */
+  infant_number: number | null;
   sex: string | null;
   birth_weight: number | null;
   body_length: number | null;
@@ -171,6 +196,10 @@ export interface HosxpLabourInfantRow {
   infant_dchstts: string | null;
   birth_date: string | null;
   birth_time: string | null;
+  /** Mother's HN via the ipt join — present on LABOUR_INFANTS_SINCE (the
+   *  batch/polling variant); resolves journeys for admissions that predate
+   *  the cached_patients window. */
+  mother_hn?: string | null;
 }
 
 export interface HosxpReferoutRow {

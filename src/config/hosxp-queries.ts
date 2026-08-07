@@ -309,6 +309,167 @@ export const LABOUR_INFANTS: SqlQueryTemplate = {
       WHERE il.an = ?`,
 };
 
+// Batch variant of LABOUR_INFANTS for the polling cycle — one round trip per
+// hospital per cycle instead of one per admission. {{CUTOFF}} is substituted
+// in app code with a validated YYYY-MM-DD string (see polling.ts); an inline
+// literal is used because the BMS gateway's parameter contract varies across
+// versions, and the value is generated (never user input).
+export const LABOUR_INFANTS_SINCE: SqlQueryTemplate = {
+  postgresql: `
+      SELECT li.ipt_labour_infant_id, li.ipt_labour_id, il.an,
+             li.infant_number, li.sex, li.birth_weight, li.body_length, li.head_length,
+             li.temperature, li.rr, li.hr,
+             li.apgar_score_min1, li.apgar_score_min5, li.apgar_score_min10,
+             li.infant_check_ppv, li.infant_check_et_tube, li.infant_check_chest_pump,
+             li.infant_check_oxygen_box, li.infant_check_narcan,
+             li.infant_check_feed_milk, li.infant_check_vitk, li.infant_check_eyepaste,
+             li.infant_check_bcg, li.infant_check_hepb, li.infant_check_azt,
+             li.infant_icd10, li.hn AS infant_hn, li.infant_an, li.infant_dchstts,
+             li.birth_date, li.birth_time, ip.hn AS mother_hn,
+             pt.cid AS mother_cid,
+             CONCAT(pt.pname, pt.fname, ' ', pt.lname) AS mother_name,
+             pt.birthday AS mother_birthday
+      FROM ipt_labour_infant li
+      JOIN ipt_labour il ON il.ipt_labour_id = li.ipt_labour_id
+      JOIN ipt ip ON ip.an = il.an
+      LEFT JOIN patient pt ON pt.hn = ip.hn
+      WHERE li.birth_date >= '{{CUTOFF}}'`,
+  mysql: `
+      SELECT li.ipt_labour_infant_id, li.ipt_labour_id, il.an,
+             li.infant_number, li.sex, li.birth_weight, li.body_length, li.head_length,
+             li.temperature, li.rr, li.hr,
+             li.apgar_score_min1, li.apgar_score_min5, li.apgar_score_min10,
+             li.infant_check_ppv, li.infant_check_et_tube, li.infant_check_chest_pump,
+             li.infant_check_oxygen_box, li.infant_check_narcan,
+             li.infant_check_feed_milk, li.infant_check_vitk, li.infant_check_eyepaste,
+             li.infant_check_bcg, li.infant_check_hepb, li.infant_check_azt,
+             li.infant_icd10, li.hn AS infant_hn, li.infant_an, li.infant_dchstts,
+             li.birth_date, li.birth_time, ip.hn AS mother_hn,
+             pt.cid AS mother_cid,
+             CONCAT(pt.pname, pt.fname, ' ', pt.lname) AS mother_name,
+             pt.birthday AS mother_birthday
+      FROM ipt_labour_infant li
+      JOIN ipt_labour il ON il.ipt_labour_id = li.ipt_labour_id
+      JOIN ipt ip ON ip.an = il.an
+      LEFT JOIN patient pt ON pt.hn = ip.hn
+      WHERE li.birth_date >= '{{CUTOFF}}'`,
+};
+
+// Fallback delivery source: the IPD pregnancy summary (one row per admit
+// type 3 admission, PK an). Some sites record deliveries here without ever
+// filling the labour-module infant table — child_count/dead_child_count and
+// labor_date are enough to close journeys and count births. Same validated
+// {{CUTOFF}} (YYYY-MM-DD) contract as LABOUR_INFANTS_SINCE.
+export const IPT_PREGNANCY_DELIVERIES_SINCE: SqlQueryTemplate = {
+  postgresql: `
+      SELECT ipr.an, ip.hn AS mother_hn, ipr.labor_date,
+             ipr.child_count, ipr.dead_child_count, ipr.preg_number, ipr.ga,
+             pt.cid AS mother_cid,
+             CONCAT(pt.pname, pt.fname, ' ', pt.lname) AS mother_name,
+             pt.birthday AS mother_birthday
+      FROM ipt_pregnancy ipr
+      JOIN ipt ip ON ip.an = ipr.an
+      LEFT JOIN patient pt ON pt.hn = ip.hn
+      WHERE ipr.labor_date IS NOT NULL AND ipr.labor_date >= '{{CUTOFF}}'`,
+  mysql: `
+      SELECT ipr.an, ip.hn AS mother_hn, ipr.labor_date,
+             ipr.child_count, ipr.dead_child_count, ipr.preg_number, ipr.ga,
+             pt.cid AS mother_cid,
+             CONCAT(pt.pname, pt.fname, ' ', pt.lname) AS mother_name,
+             pt.birthday AS mother_birthday
+      FROM ipt_pregnancy ipr
+      JOIN ipt ip ON ip.an = ipr.an
+      LEFT JOIN patient pt ON pt.hn = ip.hn
+      WHERE ipr.labor_date IS NOT NULL AND ipr.labor_date >= '{{CUTOFF}}'`,
+};
+
+// Referral gateway sync (plan: docs/superpowers/plans/2026-07-20-referral-gateway-sync.md).
+// Same {{CUTOFF}} (YYYY-MM-DD) contract as LABOUR_INFANTS_SINCE. The maternity
+// EXISTS filter only trims payload volume — final relevance is enforced
+// server-side (journey-must-exist in processBrowserReferouts).
+export const REFEROUT_MATERNITY_SINCE: SqlQueryTemplate = {
+  postgresql: `
+      SELECT ro.refer_number, ro.refer_date, ro.refer_time, ro.refer_hospcode,
+             ro.pre_diagnosis, ro.pdx, ro.referout_emergency_type_id,
+             p.hn, p.cid
+      FROM referout ro
+      JOIN ovst o ON o.vn = ro.vn
+      JOIN patient p ON p.hn = o.hn
+      WHERE ro.refer_date >= '{{CUTOFF}}'
+        AND (
+          EXISTS (SELECT 1 FROM person_anc pa
+                  JOIN person pe ON pe.person_id = pa.person_id
+                  WHERE pe.cid = p.cid AND COALESCE(pa.discharge, 'N') <> 'Y')
+          OR EXISTS (SELECT 1 FROM ipt i
+                     JOIN ipt_pregnancy ip ON ip.an = i.an
+                     WHERE i.vn = ro.vn)
+        )`,
+  mysql: `
+      SELECT ro.refer_number, ro.refer_date, ro.refer_time, ro.refer_hospcode,
+             ro.pre_diagnosis, ro.pdx, ro.referout_emergency_type_id,
+             p.hn, p.cid
+      FROM referout ro
+      JOIN ovst o ON o.vn = ro.vn
+      JOIN patient p ON p.hn = o.hn
+      WHERE ro.refer_date >= '{{CUTOFF}}'
+        AND (
+          EXISTS (SELECT 1 FROM person_anc pa
+                  JOIN person pe ON pe.person_id = pa.person_id
+                  WHERE pe.cid = p.cid AND COALESCE(pa.discharge, 'N') <> 'Y')
+          OR EXISTS (SELECT 1 FROM ipt i
+                     JOIN ipt_pregnancy ip ON ip.an = i.an
+                     WHERE i.vn = ro.vn)
+        )`,
+};
+
+// Incoming referrals observed at the DESTINATION hospital — the arrival
+// evidence that advances cached_referrals to ARRIVED (processBrowserReferins).
+// referin's referout_number column is unpopulated at live sites, so the
+// server matches by origin hcode + patient CID + date window. Deliberately NO
+// maternity filter here: a referred woman is often not yet ANC-registered at
+// the destination when she arrives (review finding) — the server-side
+// open-referral match is the real filter, and unmatched rows are discarded.
+// Window kept short (browser-poll passes a ~14-day cutoff) to bound volume at
+// big hubs.
+export const REFERIN_SINCE: SqlQueryTemplate = {
+  postgresql: `
+      SELECT ri.hn, p.cid, ri.refer_hospcode, ri.refer_date, ri.refer_time
+      FROM referin ri
+      JOIN patient p ON p.hn = ri.hn
+      WHERE ri.refer_date >= '{{CUTOFF}}'`,
+  mysql: `
+      SELECT ri.hn, p.cid, ri.refer_hospcode, ri.refer_date, ri.refer_time
+      FROM referin ri
+      JOIN patient p ON p.hn = ri.hn
+      WHERE ri.refer_date >= '{{CUTOFF}}'`,
+};
+
+// ovst fallback for arrival evidence — some hospitals never fill the refer-in
+// form, so the earliest OPD visit after the referral date stands in for it.
+// {{CIDS}} is a quoted, comma-separated list the gateway builds ONLY from the
+// server-issued probe (getReferralArrivalProbe), each entry validated as a
+// 13-digit CID before interpolation. {{CUTOFF}} = min(since) across the probe.
+export const OVST_FIRST_VISIT_FOR_CIDS: SqlQueryTemplate = {
+  postgresql: `
+      SELECT p.cid,
+             MIN(CONCAT(o.vstdate, ' ', COALESCE(o.vsttime, '00:00:00'))) AS visit_datetime
+      FROM ovst o
+      JOIN patient p ON p.hn = o.hn
+      WHERE p.cid IN ({{CIDS}})
+        AND o.vstdate >= '{{CUTOFF}}'
+      GROUP BY p.cid`,
+  mysql: `
+      SELECT p.cid,
+             MIN(CONCAT(o.vstdate, ' ', COALESCE(o.vsttime, '00:00:00'))) AS visit_datetime
+      FROM ovst o
+      JOIN patient p ON p.hn = o.hn
+      WHERE p.cid IN ({{CIDS}})
+        AND o.vstdate >= '{{CUTOFF}}'
+      GROUP BY p.cid`,
+};
+
+// Retained for reference; superseded by REFEROUT_MATERNITY_SINCE (this one was
+// never consumed by any live code path).
 export const REFEROUT_PREGNANCY: SqlQueryTemplate = {
   postgresql: `
       SELECT ro.refer_number, ro.refer_date, p.hn,

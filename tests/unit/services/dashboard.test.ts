@@ -1,18 +1,21 @@
 // T046: Dashboard service tests — write FIRST (TDD)
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
-import { getProvinceDashboard, getSummaryTotals, getHospitalPatientList } from '@/services/dashboard';
+import {
+  getProvinceDashboard,
+  getSummaryTotals,
+  getHospitalPatientList,
+  getHospitalPartographAudit,
+} from '@/services/dashboard';
 import { v4 as uuidv4 } from 'uuid';
 
 describe('Dashboard Service', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
   });
 
@@ -69,6 +72,101 @@ describe('Dashboard Service', () => {
     expect(hospital!.counts.high).toBe(1);
   });
 
+  it('reports per-hospital partograph coverage over the quality window', async () => {
+    const hospitals = await db.query<{ id: string }>(
+      "SELECT id FROM hospitals WHERE hcode = '10670'",
+    );
+    const hospitalId = hospitals[0].id;
+    const now = new Date();
+    const iso = (daysAgo: number) => new Date(now.getTime() - daysAgo * 86_400_000).toISOString();
+
+    const insertPatient = (id: string, an: string, admitDaysAgo: number) =>
+      db.execute(
+        'INSERT INTO cached_patients (id, hospital_id, hn, an, name, age, admit_date, labor_status, synced_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          id,
+          hospitalId,
+          `HN-${an}`,
+          an,
+          'enc',
+          28,
+          iso(admitDaysAgo),
+          'ACTIVE',
+          iso(0),
+          iso(0),
+          iso(0),
+        ],
+      );
+    // Two admissions inside the window (one charted), one outside it.
+    await insertPatient('pq-1', 'PQ001', 2);
+    await insertPatient('pq-2', 'PQ002', 5);
+    await insertPatient('pq-3', 'PQ003', 60);
+    await db.execute(
+      `INSERT INTO cached_partograph_observations
+         (id, patient_id, hospital_id, source_system, source_pk, observe_datetime,
+          synced_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'hosxp', 'src-1', ?, ?, ?, ?)`,
+      [uuidv4(), 'pq-1', hospitalId, iso(1), iso(0), iso(0), iso(0)],
+    );
+
+    const result = await getProvinceDashboard(db);
+    const hospital = result.hospitals.find((h) => h.hcode === '10670')!;
+    expect(hospital.partographQuality).toEqual({ laborRecent: 2, withPartograph: 1 });
+
+    // Hospitals with no recent admissions report zeros, not undefined.
+    const other = result.hospitals.find((h) => h.hcode !== '10670')!;
+    expect(other.partographQuality).toEqual({ laborRecent: 0, withPartograph: 0 });
+  });
+
+  it('partograph audit lists window admissions, uncharted first; null for unknown hcode', async () => {
+    expect(await getHospitalPartographAudit(db, '99999')).toBeNull();
+
+    const hospitals = await db.query<{ id: string }>(
+      "SELECT id FROM hospitals WHERE hcode = '10670'",
+    );
+    const hospitalId = hospitals[0].id;
+    const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+    const insertPatient = (id: string, an: string, admitDaysAgo: number) =>
+      db.execute(
+        'INSERT INTO cached_patients (id, hospital_id, hn, an, name, age, admit_date, labor_status, synced_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          id,
+          hospitalId,
+          `HN-${an}`,
+          an,
+          'enc',
+          28,
+          iso(admitDaysAgo),
+          'ACTIVE',
+          iso(0),
+          iso(0),
+          iso(0),
+        ],
+      );
+    await insertPatient('pa-1', 'PA001', 2); // charted
+    await insertPatient('pa-2', 'PA002', 5); // never charted
+    await insertPatient('pa-3', 'PA003', 60); // outside window
+    await db.execute(
+      `INSERT INTO cached_partograph_observations
+         (id, patient_id, hospital_id, source_system, source_pk, observe_datetime,
+          synced_at, created_at, updated_at)
+       VALUES (?, 'pa-1', ?, 'hosxp', 'src-audit-1', ?, ?, ?, ?)`,
+      [uuidv4(), hospitalId, iso(1), iso(0), iso(0), iso(0)],
+    );
+
+    const audit = await getHospitalPartographAudit(db, '10670');
+    expect(audit).not.toBeNull();
+    expect(audit!.laborRecent).toBe(2);
+    expect(audit!.withPartograph).toBe(1);
+    expect(audit!.admissions).toHaveLength(2);
+    // Uncharted admissions sort first — they are the action items.
+    expect(audit!.admissions[0].an).toBe('PA002');
+    expect(audit!.admissions[0].observationCount).toBe(0);
+    expect(audit!.admissions[1].an).toBe('PA001');
+    expect(audit!.admissions[1].observationCount).toBe(1);
+    expect(audit!.admissions[1].lastObservedAt).toBeTruthy();
+  });
+
   it('should handle hospitals with OFFLINE status', async () => {
     // Update a hospital status
     await db.execute("UPDATE hospitals SET connection_status = 'OFFLINE' WHERE hcode = '10670'");
@@ -93,16 +191,25 @@ describe('Dashboard Service', () => {
   });
 
   // T105: Date range filtering tests
+  it('getHospitalPatientList returns lastSyncAt as an ISO string, not a pg Date', async () => {
+    await db.execute("UPDATE hospitals SET last_sync_at = ? WHERE hcode = '10670'", [
+      '2026-07-01T02:30:00.000Z',
+    ]);
+    const result = await getHospitalPatientList(db, '10670', { status: 'active' });
+    expect(result).not.toBeNull();
+    // pg returns TIMESTAMPTZ as a Date object; the API type declares string.
+    expect(result?.hospital?.lastSyncAt).toBe('2026-07-01T02:30:00.000Z');
+  });
+
   describe('getHospitalPatientList — date range filtering', () => {
     let hospitalId: string;
     const hcode = '10670';
 
     beforeEach(async () => {
       // Get hospital ID for test data
-      const hospitals = await db.query<{ id: string }>(
-        "SELECT id FROM hospitals WHERE hcode = ?",
-        [hcode],
-      );
+      const hospitals = await db.query<{ id: string }>('SELECT id FROM hospitals WHERE hcode = ?', [
+        hcode,
+      ]);
       hospitalId = hospitals[0].id;
 
       // Insert patients with different admit_date values

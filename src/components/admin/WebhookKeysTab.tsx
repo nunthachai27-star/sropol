@@ -17,6 +17,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { LoadingState } from '@/components/shared/LoadingState';
+import { ErrorState } from '@/components/shared/ErrorState';
 
 interface WebhookKey {
   id: string;
@@ -49,14 +50,26 @@ function formatDateTime(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   return d.toLocaleString('th-TH', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
   });
 }
 
 export function WebhookKeysTab() {
-  const { data: keysData, isLoading, mutate } = useSWR<{ keys: WebhookKey[] }>('/api/admin/webhooks');
-  const { data: hospitalsData } = useSWR<{ hospitals: AdminHospital[] }>('/api/admin/hospitals');
+  const {
+    data: keysData,
+    isLoading,
+    error: keysError,
+    mutate,
+  } = useSWR<{ keys: WebhookKey[] }>('/api/admin/webhooks');
+  const {
+    data: hospitalsData,
+    error: hospitalsError,
+    mutate: mutateHospitals,
+  } = useSWR<{ hospitals: AdminHospital[] }>('/api/admin/hospitals');
 
   const [formHcode, setFormHcode] = useState('');
   const [formLabel, setFormLabel] = useState('');
@@ -162,11 +175,29 @@ export function WebhookKeysTab() {
   const kpis: Array<{ k: string; v: number; color: string; label: string }> = [
     { k: 'TOTAL', v: keys.length, color: 'var(--accent-navy)', label: 'คีย์ทั้งหมด' },
     { k: 'ACTIVE', v: activeCount, color: 'var(--risk-low)', label: 'ใช้งานได้' },
-    { k: 'REVOKED', v: keys.length - activeCount, color: 'var(--ink-navy-muted)', label: 'ยกเลิกแล้ว' },
+    {
+      k: 'REVOKED',
+      v: keys.length - activeCount,
+      color: 'var(--ink-navy-muted)',
+      label: 'ยกเลิกแล้ว',
+    },
   ];
+
+  const loadError = keysError || hospitalsError;
 
   return (
     <div className="space-y-5">
+      {loadError ? (
+        <ErrorState
+          variant="banner"
+          message="โหลด API Keys หรือรายชื่อโรงพยาบาลไม่สำเร็จ — รายการอาจไม่ครบถ้วน"
+          onRetry={() => {
+            void mutate();
+            void mutateHospitals();
+          }}
+        />
+      ) : null}
+
       {/* KPI strip */}
       <div
         className="grid border bg-white"
@@ -275,10 +306,7 @@ export function WebhookKeysTab() {
       </form>
 
       {justCreated && (
-        <div
-          className="border-2 bg-white px-4 py-3"
-          style={{ borderColor: 'var(--risk-medium)' }}
-        >
+        <div className="border-2 bg-white px-4 py-3" style={{ borderColor: 'var(--risk-medium)' }}>
           <div className="mb-2 flex items-start justify-between gap-3">
             <div className="flex items-start gap-2">
               <AlertTriangle
@@ -474,7 +502,8 @@ export function WebhookKeysTab() {
                 className="border px-3 py-2 font-mono text-[11px]"
                 style={{ borderColor: 'var(--risk-high)', color: 'var(--risk-high)' }}
               >
-                คีย์ที่ยกเลิกแล้วจะใช้งานไม่ได้ทันที — webhooks จากโรงพยาบาลนี้จะถูกปฏิเสธจนกว่าจะสร้างคีย์ใหม่
+                คีย์ที่ยกเลิกแล้วจะใช้งานไม่ได้ทันที — webhooks
+                จากโรงพยาบาลนี้จะถูกปฏิเสธจนกว่าจะสร้างคีย์ใหม่
               </div>
 
               <div>

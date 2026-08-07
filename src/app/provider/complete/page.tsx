@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn } from 'next-auth/react';
 import { Building2, Loader2, Shield, UserRound } from 'lucide-react';
 import { removeMarketplaceToken, removeSessionCookie } from '@/utils/bms-session-storage';
-import { withBasePath } from '@/lib/base-path';
+import { sanitizeCallbackUrl } from '@/lib/safe-callback-url';
 
 interface ProviderOrgSummary {
   index: number;
@@ -27,11 +27,6 @@ interface ProviderPendingSummary {
     providerId: string;
   };
   organizations: ProviderOrgSummary[];
-}
-
-function sanitizeCallbackUrl(value: string | null): string {
-  if (!value || !value.startsWith('/') || value.startsWith('//')) return '/';
-  return value;
 }
 
 function ProviderCompleteContent() {
@@ -60,19 +55,35 @@ function ProviderCompleteContent() {
       removeMarketplaceToken();
       window.localStorage.setItem('kk-lrms:auth-provider', 'provider-id');
 
-      const result = await signIn('provider-id', {
-        token,
-        organizationIndex: String(organizationIndex),
-        redirect: false,
-      });
+      // Keep the spinner up during the success navigation; only the failure
+      // paths below unwind `signingIn` (via the finally block).
+      let navigating = false;
+      try {
+        const result = await signIn('provider-id', {
+          token,
+          organizationIndex: String(organizationIndex),
+          redirect: false,
+        });
 
-      if (result?.error) {
-        setError('ไม่สามารถเข้าสู่ระบบด้วย ProviderID ได้');
-        setSigningIn(false);
-        return;
+        if (result?.error) {
+          // Preflight already validated the token, so this is rare. Keep the
+          // Thai headline but surface the raw NextAuth error code so support
+          // can distinguish causes (CredentialsSignin, Configuration, etc.).
+          setError(`ไม่สามารถเข้าสู่ระบบด้วย ProviderID ได้ (${result.error})`);
+          return;
+        }
+
+        navigating = true;
+        router.replace(callbackUrl);
+      } catch (err) {
+        // A thrown network/CSRF error previously left signingIn=true forever
+        // (stuck spinner). Log it and show an actionable Thai message.
+        console.error('[provider-complete] signIn failed', err);
+        const detail = err instanceof Error ? err.message : String(err);
+        setError(`ไม่สามารถเข้าสู่ระบบด้วย ProviderID ได้ กรุณาลองใหม่อีกครั้ง (${detail})`);
+      } finally {
+        if (!navigating) setSigningIn(false);
       }
-
-      router.replace(callbackUrl);
     },
     [callbackUrl, router, signingIn, token],
   );
@@ -87,7 +98,7 @@ function ProviderCompleteContent() {
     async function loadSummary() {
       try {
         const response = await fetch(
-          withBasePath(`/api/auth/provider/pending?token=${encodeURIComponent(token)}`),
+          `/api/auth/provider/pending?token=${encodeURIComponent(token)}`,
         );
         if (!response.ok) {
           throw new Error('ProviderID session expired');
@@ -136,7 +147,9 @@ function ProviderCompleteContent() {
       <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6">
         <div className="w-full max-w-md rounded-lg border border-red-200 bg-white p-6 text-center shadow-sm">
           <Shield className="mx-auto h-10 w-10 text-red-500" />
-          <h1 className="mt-4 text-lg font-semibold text-slate-900">เข้าสู่ระบบ ProviderID ไม่สำเร็จ</h1>
+          <h1 className="mt-4 text-lg font-semibold text-slate-900">
+            เข้าสู่ระบบ ProviderID ไม่สำเร็จ
+          </h1>
           <p className="mt-2 text-sm text-red-600">{error ?? 'ไม่พบข้อมูลการเข้าสู่ระบบ'}</p>
           <button
             type="button"

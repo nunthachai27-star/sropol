@@ -1,19 +1,17 @@
 // Vitals API route logic tests — tests the DB query logic the route uses
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../../helpers/testDb';
+import type { DatabaseAdapter } from '@/db/adapter';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import { v4 as uuidv4 } from 'uuid';
 
 describe('Vitals API Logic', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let hospitalId: string;
   let patientId: string;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
 
     // Get hospital
@@ -56,7 +54,7 @@ describe('Vitals API Logic', () => {
     );
 
     return vitals.map((v) => ({
-      measuredAt: v.measured_at,
+      measuredAt: new Date(v.measured_at).toISOString(),
       maternalHr: v.maternal_hr,
       fetalHr: v.fetal_hr,
       sbp: v.sbp,
@@ -111,9 +109,9 @@ describe('Vitals API Logic', () => {
     const vitals = await getVitalsForAN('AN-V1');
     expect(vitals).toHaveLength(3);
     // Verify ascending order
-    expect(vitals![0].measuredAt).toBe('2026-03-09T08:00:00Z');
-    expect(vitals![1].measuredAt).toBe('2026-03-09T10:00:00Z');
-    expect(vitals![2].measuredAt).toBe('2026-03-09T12:00:00Z');
+    expect(vitals![0].measuredAt).toBe('2026-03-09T08:00:00.000Z');
+    expect(vitals![1].measuredAt).toBe('2026-03-09T10:00:00.000Z');
+    expect(vitals![2].measuredAt).toBe('2026-03-09T12:00:00.000Z');
     // Verify values match order
     expect(vitals![0].maternalHr).toBe(75);
     expect(vitals![1].maternalHr).toBe(82);

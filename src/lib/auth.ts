@@ -6,12 +6,11 @@ import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { authConfig } from '@/lib/auth.config';
 import { mapPositionToRole, validateBmsSession } from '@/lib/auth-utils';
+import { promoteRoleByAllowedCid } from '@/lib/admin-access';
 import { assertHospitalAccess } from '@/lib/hospital-access-guard';
 import { logger } from '@/lib/logger';
 import { UserRole } from '@/types/domain';
-import {
-  consumeProviderPendingSession,
-} from '@/lib/provider-id-session-store';
+import { consumeProviderPendingSession } from '@/lib/provider-id-session-store';
 import { extractProviderScopes } from '@/lib/provider-id';
 
 export { mapPositionToRole, validateBmsSession } from '@/lib/auth-utils';
@@ -33,6 +32,26 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const identity = await validateBmsSession(sessionId, tunnelUrl);
         if (!identity) return null;
 
+        // ADMIN_ALLOWED_CIDS is a grant as well as a cap: a BMS (readwrite)
+        // login whose CID is on the list becomes ADMIN even when the HOSxP
+        // position string doesn't say "director". Rule + rationale live in
+        // @/lib/admin-access; ProviderID readonly sessions are never promoted.
+        const role = promoteRoleByAllowedCid(identity.role, {
+          userCid: identity.userCid,
+          accessMode: 'readwrite',
+        });
+        if (role !== identity.role) {
+          logger.info('admin_role_promoted_by_cid', {
+            hospitalCode: identity.hospitalCode,
+            positionRole: identity.role,
+            // Named userIdLast4 (not userCidLast4) to match the denial logs in
+            // middleware.ts / admin-guard.ts — any key containing "cid" is
+            // redacted by the PDPA logger, which would blank the one line that
+            // attributes a privilege escalation.
+            userIdLast4: identity.userCid.slice(-4),
+          });
+        }
+
         // Reject the login when the BMS identity belongs to a hospital that
         // isn't registered (or is deactivated). Exempt only: hcode 00000 /
         // 99999 (system + provincial admin). Role does NOT bypass — even
@@ -42,14 +61,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // blocks new sessions.
         const access = await assertHospitalAccess({
           hospitalCode: identity.hospitalCode,
-          role: identity.role,
+          role,
           accessMode: 'readwrite',
         });
         if (!access.allowed) {
           logger.warn('bms_login_rejected', {
             hospitalCode: identity.hospitalCode,
             hospitalName: identity.hospitalName,
-            role: identity.role,
+            role,
             reason: access.reason,
           });
           return null;
@@ -59,7 +78,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           id: sessionId,
           name: identity.name,
           userCid: identity.userCid,
-          role: identity.role,
+          role,
           hospitalCode: identity.hospitalCode,
           hospitalName: identity.hospitalName,
           tunnelUrl: identity.tunnelUrl,

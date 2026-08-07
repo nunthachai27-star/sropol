@@ -93,14 +93,18 @@ describe('PartographTab (list + basics)', () => {
 
   it('renders empty state when data is [] (after switching to ตาราง)', async () => {
     await openTable([]);
-    await waitFor(() => expect(screen.getByText(/ไม่พบข้อมูล/)).toBeInTheDocument(), { timeout: 2000 });
+    await waitFor(() => expect(screen.getByText(/ไม่พบข้อมูล/)).toBeInTheDocument(), {
+      timeout: 2000,
+    });
   });
 
   it('renders error state when fetch fails', async () => {
     mockBmsSession.mockReturnValue({ config: cfg, userInfo });
     mockGet.mockRejectedValue(new Error('BMS down'));
     render(<PartographTab an="AN1" />, { wrapper });
-    await waitFor(() => expect(screen.getByText(/โหลดไม่สำเร็จ.*BMS down/)).toBeInTheDocument(), { timeout: 2000 });
+    await waitFor(() => expect(screen.getByText(/โหลดไม่สำเร็จ.*BMS down/)).toBeInTheDocument(), {
+      timeout: 2000,
+    });
   });
 });
 
@@ -144,8 +148,11 @@ describe('PartographTab entry dialog — Batch 1', () => {
     const dlg = await screen.findByRole('dialog');
     const q = within(dlg);
     // Each editable column from HOSxPIPDLabourPartographEntryFormUnit.
+    // observe_datetime is rendered as a BeDateTimeInput → two labelled inputs
+    // ("observe_datetime date" + "observe_datetime time").
     for (const field of [
-      'observe_datetime',
+      'observe_datetime date',
+      'observe_datetime time',
       'fetal_heart_rate',
       'amniotic_fluid',
       'moulding',
@@ -180,7 +187,9 @@ describe('PartographTab entry dialog — Batch 1', () => {
     fireEvent.click(addBtn);
     const dlg = await screen.findByRole('dialog');
     fireEvent.change(within(dlg).getByLabelText('fetal_heart_rate'), { target: { value: '145' } });
-    fireEvent.change(within(dlg).getByLabelText('cervical_dilation_cm'), { target: { value: '5' } });
+    fireEvent.change(within(dlg).getByLabelText('cervical_dilation_cm'), {
+      target: { value: '5' },
+    });
     fireEvent.change(within(dlg).getByLabelText('note'), { target: { value: 'ok' } });
     fireEvent.click(within(dlg).getByRole('button', { name: /^บันทึก$/ }));
     await waitFor(() => expect(mockUpsert).toHaveBeenCalled());
@@ -305,6 +314,23 @@ async function openTable(rows: unknown[]) {
   fireEvent.click(tableTab);
 }
 
+// observe_datetime is now a BeDateTimeInput (BE date + 24h time), which renders
+// TWO text inputs — aria-labels "observe_datetime date" and
+// "observe_datetime time" — that commit their parsed ISO value on blur, not on
+// keystroke. Drive them the way a nurse does: type the BE date + 24h time then
+// blur to commit. isoLocal is a datetime-local string 'YYYY-MM-DDTHH:mm'.
+function setObserveDatetime(dlg: HTMLElement, isoLocal: string) {
+  const [datePart, timePart] = isoLocal.split('T');
+  const [y, mo, d] = datePart.split('-').map(Number);
+  const beDate = `${d}/${mo}/${y + 543}`; // ISO Gregorian → BE display (D/M/YYYY+543)
+  const dateEl = within(dlg).getByLabelText('observe_datetime date');
+  fireEvent.change(dateEl, { target: { value: beDate } });
+  fireEvent.blur(dateEl);
+  const timeEl = within(dlg).getByLabelText('observe_datetime time');
+  fireEvent.change(timeEl, { target: { value: timePart } });
+  fireEvent.blur(timeEl);
+}
+
 describe('PartographTab — abnormal-range highlighting (Batch 2)', () => {
   it('marks FHR abnormal when <110 or >160', async () => {
     const dlg = await openAddDialog();
@@ -340,8 +366,16 @@ describe('PartographTab — abnormal-range highlighting (Batch 2)', () => {
 describe('PartographTab — status panel (Batch 2)', () => {
   it('shows the observation count + latent phase when no cervical reading', async () => {
     const dlg = await openAddDialog([
-      makeRow({ ipt_labour_partograph_id: 2, cervical_dilation_cm: 2, observe_datetime: '2026-04-19T08:00:00' }),
-      makeRow({ ipt_labour_partograph_id: 3, cervical_dilation_cm: null, observe_datetime: '2026-04-19T09:00:00' }),
+      makeRow({
+        ipt_labour_partograph_id: 2,
+        cervical_dilation_cm: 2,
+        observe_datetime: '2026-04-19T08:00:00',
+      }),
+      makeRow({
+        ipt_labour_partograph_id: 3,
+        cervical_dilation_cm: null,
+        observe_datetime: '2026-04-19T09:00:00',
+      }),
     ]);
     const panel = within(dlg).getByTestId('partograph-status');
     expect(panel).toHaveTextContent(/2 รายการ/);
@@ -364,8 +398,7 @@ describe('PartographTab — auto hour_no (Batch 2)', () => {
     const dlg = await openAddDialog([
       makeRow({ ipt_labour_partograph_id: 9, observe_datetime: '2026-04-19T08:00:00' }),
     ]);
-    const dt = within(dlg).getByLabelText('observe_datetime');
-    fireEvent.change(dt, { target: { value: '2026-04-19T11:00' } });
+    setObserveDatetime(dlg, '2026-04-19T11:00');
     expect(within(dlg).getByLabelText('hour_no')).toHaveValue('4');
   });
 
@@ -373,9 +406,7 @@ describe('PartographTab — auto hour_no (Batch 2)', () => {
     const dlg = await openAddDialog([
       makeRow({ ipt_labour_partograph_id: 9, observe_datetime: '2026-04-19T08:00:00' }),
     ]);
-    fireEvent.change(within(dlg).getByLabelText('observe_datetime'), {
-      target: { value: '2026-04-19T11:00' },
-    });
+    setObserveDatetime(dlg, '2026-04-19T11:00');
     fireEvent.change(within(dlg).getByLabelText('hour_no'), { target: { value: '7' } });
     expect(within(dlg).getByLabelText('hour_no')).toHaveValue('7');
   });
@@ -389,7 +420,7 @@ describe('PartographTab — BeforePost validation (Batch 2)', () => {
     const future = new Date(Date.now() + 7 * 24 * 3600_000);
     const p = (n: number) => n.toString().padStart(2, '0');
     const val = `${future.getFullYear()}-${p(future.getMonth() + 1)}-${p(future.getDate())}T${p(future.getHours())}:${p(future.getMinutes())}`;
-    fireEvent.change(within(dlg).getByLabelText('observe_datetime'), { target: { value: val } });
+    setObserveDatetime(dlg, val);
     fireEvent.click(within(dlg).getByRole('button', { name: /^บันทึก$/ }));
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(within(dlg).getByRole('alert')).toHaveTextContent(/อนาคต/);
@@ -406,7 +437,9 @@ describe('PartographTab — BeforePost validation (Batch 2)', () => {
 
   it('blocks save when contractions > 0 but duration/strength missing', async () => {
     const dlg = await openAddDialog();
-    fireEvent.change(within(dlg).getByLabelText('contraction_per_10min'), { target: { value: '3' } });
+    fireEvent.change(within(dlg).getByLabelText('contraction_per_10min'), {
+      target: { value: '3' },
+    });
     // leave duration + strength empty
     fireEvent.click(within(dlg).getByRole('button', { name: /^บันทึก$/ }));
     expect(mockUpsert).not.toHaveBeenCalled();
@@ -420,15 +453,21 @@ describe('PartographTab — soft confirmations (Batch 2)', () => {
     window.confirm = vi.fn().mockReturnValue(false);
     // Prior has cervix=6 at t-2h. User enters a new observation with cervix=4.
     const dlg = await openAddDialog([
-      makeRow({ ipt_labour_partograph_id: 5, cervical_dilation_cm: 6, observe_datetime: '2026-04-19T08:00:00' }),
+      makeRow({
+        ipt_labour_partograph_id: 5,
+        cervical_dilation_cm: 6,
+        observe_datetime: '2026-04-19T08:00:00',
+      }),
     ]);
-    fireEvent.change(within(dlg).getByLabelText('cervical_dilation_cm'), { target: { value: '4' } });
-    fireEvent.change(within(dlg).getByLabelText('observe_datetime'), {
-      target: { value: '2026-04-19T09:30' },
+    fireEvent.change(within(dlg).getByLabelText('cervical_dilation_cm'), {
+      target: { value: '4' },
     });
+    setObserveDatetime(dlg, '2026-04-19T09:30');
     fireEvent.click(within(dlg).getByRole('button', { name: /^บันทึก$/ }));
     expect(window.confirm).toHaveBeenCalled();
-    expect((window.confirm as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/ลดลง/);
+    expect((window.confirm as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+      /ลดลง/,
+    );
     expect(mockUpsert).not.toHaveBeenCalled();
     window.confirm = origConfirm;
   });
@@ -439,13 +478,15 @@ describe('PartographTab — soft confirmations (Batch 2)', () => {
     const dlg = await openAddDialog([
       makeRow({ ipt_labour_partograph_id: 5, observe_datetime: '2026-04-19T02:00:00' }),
     ]);
-    fireEvent.change(within(dlg).getByLabelText('cervical_dilation_cm'), { target: { value: '5' } });
-    fireEvent.change(within(dlg).getByLabelText('observe_datetime'), {
-      target: { value: '2026-04-19T10:00' },
+    fireEvent.change(within(dlg).getByLabelText('cervical_dilation_cm'), {
+      target: { value: '5' },
     });
+    setObserveDatetime(dlg, '2026-04-19T10:00');
     fireEvent.click(within(dlg).getByRole('button', { name: /^บันทึก$/ }));
     expect(window.confirm).toHaveBeenCalled();
-    expect((window.confirm as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/2 ชั่วโมง/);
+    expect((window.confirm as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+      /2 ชั่วโมง/,
+    );
     expect(mockUpsert).not.toHaveBeenCalled();
     window.confirm = origConfirm;
   });
@@ -456,13 +497,15 @@ describe('PartographTab — soft confirmations (Batch 2)', () => {
     const dlg = await openAddDialog([
       makeRow({ ipt_labour_partograph_id: 5, observe_datetime: '2026-04-19T10:00:00' }),
     ]);
-    fireEvent.change(within(dlg).getByLabelText('cervical_dilation_cm'), { target: { value: '5' } });
-    fireEvent.change(within(dlg).getByLabelText('observe_datetime'), {
-      target: { value: '2026-04-19T10:03' },
+    fireEvent.change(within(dlg).getByLabelText('cervical_dilation_cm'), {
+      target: { value: '5' },
     });
+    setObserveDatetime(dlg, '2026-04-19T10:03');
     fireEvent.click(within(dlg).getByRole('button', { name: /^บันทึก$/ }));
     expect(window.confirm).toHaveBeenCalled();
-    expect((window.confirm as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/5 นาที/);
+    expect((window.confirm as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+      /5 นาที/,
+    );
     expect(mockUpsert).not.toHaveBeenCalled();
     window.confirm = origConfirm;
   });

@@ -28,6 +28,11 @@ export interface LlmChatOptions {
   model?: string;
   messages: LlmChatMessage[];
   temperature?: number;
+  /** Nucleus sampling (DeepSeek V4 spec: 1.0). Only sent when provided. */
+  topP?: number;
+  /** Top-K (DeepSeek guidance: usually not needed; send <=0 to disable). Only
+   *  sent when provided and > 0, to keep strict JSON/dev-simulation unaffected. */
+  topK?: number;
   maxTokens?: number;
   /** When true, asks the server to return a strict JSON object. */
   jsonMode?: boolean;
@@ -38,6 +43,13 @@ export interface LlmChatOptions {
   /** Override the internal request-timeout ceiling (ms). Default 30_000. Use
    *  a larger value for heavy prompts like Tier-3 plan generation. */
   timeoutMs?: number;
+  /** Override the API base URL for this call only (chatbot points at the
+   *  GLM-5.2 SGLang endpoint without moving dev-simulation's defaults). */
+  baseUrl?: string;
+  /** Extra JSON fields merged into the OpenAI-compatible request body.
+   *  Example: { chat_template_kwargs: { enable_thinking: false } } to disable
+   *  GLM-5.2 reasoning (cost: thinking tokens are billed). */
+  extraBody?: Record<string, unknown>;
 }
 
 interface ChatCompletionResponse {
@@ -53,6 +65,16 @@ export interface LlmModelInfo {
   id: string;
   ownedBy?: string;
   maxContextLen?: number;
+}
+
+/** OpenAI-compatible function-tool declaration (for tool/function calling). */
+export interface ChatCompletionTool {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters: Record<string, unknown>;
+  };
 }
 
 function baseUrl(): string {
@@ -77,7 +99,9 @@ export async function listLlmModels(signal?: AbortSignal): Promise<LlmModelInfo[
   if (!res.ok) {
     throw new Error(`LLM /models returned ${res.status}`);
   }
-  const body = (await res.json()) as { data?: Array<{ id: string; owned_by?: string; max_model_len?: number }> };
+  const body = (await res.json()) as {
+    data?: Array<{ id: string; owned_by?: string; max_model_len?: number }>;
+  };
   return (body.data ?? []).map((m) => ({
     id: m.id,
     ownedBy: m.owned_by,
@@ -92,9 +116,7 @@ export async function llmChat(opts: LlmChatOptions): Promise<string> {
   // shared vLLM). Passing 0 disables the internal timer and defers entirely
   // to the caller-provided signal.
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const t = timeoutMs > 0
-    ? setTimeout(() => controller.abort(), timeoutMs)
-    : null;
+  const t = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
   // Merge external signal with internal timeout.
   if (opts.signal) {
     opts.signal.addEventListener('abort', () => controller.abort());
@@ -106,6 +128,17 @@ export async function llmChat(opts: LlmChatOptions): Promise<string> {
       temperature: opts.temperature ?? 0.7,
       max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
     };
+    // DeepSeek V4 sampling — top_p is sent only with a meaningful value; top_k
+    // is sent whenever the caller provides it (<=0 = disabled/no-restriction, a
+    // valid vLLM sentinel expressing "usually only need temperature").
+    if (opts.topP != null && opts.topP > 0) body.top_p = opts.topP;
+    if (opts.topK != null) body.top_k = opts.topK;
+    if (opts.extraBody) {
+      // Caller-supplied extensions (e.g. GLM-5.2 chat_template_kwargs) merged
+      // at top level — OpenAI-compatible servers (vLLM, SGLang) accept unknown
+      // top-level sampling keys. Never overwrites the fields above.
+      Object.assign(body, opts.extraBody);
+    }
     if (opts.jsonMode) {
       body.response_format = { type: 'json_object' };
     }
@@ -113,7 +146,8 @@ export async function llmChat(opts: LlmChatOptions): Promise<string> {
       // vLLM guided-generation extension — server forces output to conform.
       body.extra_body = { guided_json: opts.jsonSchema };
     }
-    const res = await fetch(`${baseUrl()}/chat/completions`, {
+    const effectiveBaseUrl = (opts.baseUrl || baseUrl()).replace(/\/+$/, '');
+    const res = await fetch(`${effectiveBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

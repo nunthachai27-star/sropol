@@ -13,7 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { CpdBadge } from '@/components/shared/CpdBadge';
 import { RiskLevel } from '@/types/domain';
-import { HIGH_RISK_RECOMMENDATION } from '@/config/risk-levels';
+import { HIGH_RISK_RECOMMENDATION, isHighRisk } from '@/config/risk-levels';
 
 interface HighRiskAlertProps {
   score: number;
@@ -30,27 +30,28 @@ export function HighRiskAlert({ score, an, patientName, onDismiss }: HighRiskAle
     onDismiss?.();
   };
 
-  if (score < 10) return null;
+  if (!isHighRisk(score)) return null;
 
   const open = !dismissed;
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) handleDismiss(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        if (!isOpen) handleDismiss();
+      }}
+    >
       <DialogContent className="border-2 border-red-500 sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-center text-lg text-red-600">
             แจ้งเตือนผู้คลอดเสี่ยงสูง
           </DialogTitle>
-          <DialogDescription className="text-center">
-            AN: {an}
-          </DialogDescription>
+          <DialogDescription className="text-center">AN: {an}</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col items-center gap-4 py-4">
           <CpdBadge score={score} riskLevel={RiskLevel.HIGH} size="lg" />
-          <p className="text-center text-lg font-bold text-red-600">
-            {HIGH_RISK_RECOMMENDATION}
-          </p>
+          <p className="text-center text-lg font-bold text-red-600">{HIGH_RISK_RECOMMENDATION}</p>
         </div>
 
         <DialogFooter>

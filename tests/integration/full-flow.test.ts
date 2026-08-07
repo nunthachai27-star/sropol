@@ -2,9 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { SqliteAdapter } from '@/db/sqlite-adapter';
-import { SchemaSync } from '@/db/schema-sync';
-import { ALL_TABLES } from '@/db/tables/index';
+import { createTestDb } from '../helpers/testDb';
 import { SeedOrchestrator } from '@/db/seeds/index';
 import type { DatabaseAdapter } from '@/db/adapter';
 import { encrypt, generateKey } from '@/lib/encryption';
@@ -55,12 +53,28 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
         hematocrit_pct, labor_status, synced_at, created_at, updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      p1Id, hospitalIds['10670'], 'HN-0001', 'AN-0001',
+      p1Id,
+      hospitalIds['10670'],
+      'HN-0001',
+      'AN-0001',
       encrypt('นาง สมหญิง ชุมแพ', TEST_ENCRYPTION_KEY),
-      encrypt(cidRaw1, TEST_ENCRYPTION_KEY), cidHash1,
-      32, 1, 42, 2,
-      '2026-03-01T08:00:00.000Z', 148, 78, 21, 38, 4200, 28,
-      'ACTIVE', now, now, now,
+      encrypt(cidRaw1, TEST_ENCRYPTION_KEY),
+      cidHash1,
+      32,
+      1,
+      42,
+      2,
+      '2026-03-01T08:00:00.000Z',
+      148,
+      78,
+      21,
+      38,
+      4200,
+      28,
+      'ACTIVE',
+      now,
+      now,
+      now,
     ],
   );
 
@@ -74,12 +88,28 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
         hematocrit_pct, labor_status, synced_at, created_at, updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      p2Id, hospitalIds['11000'], 'HN-0002', 'AN-0002',
+      p2Id,
+      hospitalIds['11000'],
+      'HN-0002',
+      'AN-0002',
       encrypt('นาง วิภา น้ำพอง', TEST_ENCRYPTION_KEY),
-      encrypt(cidRaw2, TEST_ENCRYPTION_KEY), cidHash2,
-      26, 2, 40, 3,
-      '2026-03-02T10:00:00.000Z', 153, 68, 16, 35, 3200, 33,
-      'ACTIVE', now, now, now,
+      encrypt(cidRaw2, TEST_ENCRYPTION_KEY),
+      cidHash2,
+      26,
+      2,
+      40,
+      3,
+      '2026-03-02T10:00:00.000Z',
+      153,
+      68,
+      16,
+      35,
+      3200,
+      33,
+      'ACTIVE',
+      now,
+      now,
+      now,
     ],
   );
 
@@ -93,12 +123,28 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
         hematocrit_pct, labor_status, synced_at, created_at, updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      p3Id, hospitalIds['11002'], 'HN-0003', 'AN-0003',
+      p3Id,
+      hospitalIds['11002'],
+      'HN-0003',
+      'AN-0003',
       encrypt('น.ส. สุดา บ้านไผ่', TEST_ENCRYPTION_KEY),
-      encrypt(cidRaw3, TEST_ENCRYPTION_KEY), cidHash3,
-      22, 2, 38, 6,
-      '2026-03-03T14:00:00.000Z', 162, 60, 12, 32, 2800, 36,
-      'ACTIVE', now, now, now,
+      encrypt(cidRaw3, TEST_ENCRYPTION_KEY),
+      cidHash3,
+      22,
+      2,
+      38,
+      6,
+      '2026-03-03T14:00:00.000Z',
+      162,
+      60,
+      12,
+      32,
+      2800,
+      36,
+      'ACTIVE',
+      now,
+      now,
+      now,
     ],
   );
 
@@ -112,12 +158,28 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
         hematocrit_pct, labor_status, synced_at, created_at, updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      p4Id, hospitalIds['11000'], 'HN-0004', 'AN-0004',
+      p4Id,
+      hospitalIds['11000'],
+      'HN-0004',
+      'AN-0004',
       encrypt('นาง สมหญิง ชุมแพ', TEST_ENCRYPTION_KEY),
-      encrypt(cidRaw1, TEST_ENCRYPTION_KEY), cidHash1,
-      32, 1, 42, 2,
-      '2026-03-05T06:00:00.000Z', 148, 78, 21, 38, 4200, 28,
-      'ACTIVE', now, now, now,
+      encrypt(cidRaw1, TEST_ENCRYPTION_KEY),
+      cidHash1,
+      32,
+      1,
+      42,
+      2,
+      '2026-03-05T06:00:00.000Z',
+      148,
+      78,
+      21,
+      38,
+      4200,
+      28,
+      'ACTIVE',
+      now,
+      now,
+      now,
     ],
   );
 
@@ -131,20 +193,43 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
         hematocrit_pct, labor_status, delivered_at, synced_at, created_at, updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      p5Id, hospitalIds['10670'], 'HN-0005', 'AN-0005',
+      p5Id,
+      hospitalIds['10670'],
+      'HN-0005',
+      'AN-0005',
       encrypt('นาง มาลี ชุมแพ', TEST_ENCRYPTION_KEY),
-      null, null,
-      29, 3, 39, 10,
-      '2026-02-25T08:00:00.000Z', 160, 65, 14, 33, 3000, 35,
-      'DELIVERED', '2026-02-28T12:00:00.000Z', now, now, now,
+      null,
+      null,
+      29,
+      3,
+      39,
+      10,
+      '2026-02-25T08:00:00.000Z',
+      160,
+      65,
+      14,
+      33,
+      3000,
+      35,
+      'DELIVERED',
+      '2026-02-28T12:00:00.000Z',
+      now,
+      now,
+      now,
     ],
   );
 
   // --- Insert CPD scores for active patients ---
   // Patient 1 — HIGH
   const cpdP1 = calculateCpdScore({
-    gravida: 1, ancCount: 2, gaWeeks: 42, heightCm: 148,
-    weightDiffKg: 21, fundalHeightCm: 38, usWeightG: 4200, hematocritPct: 28,
+    gravida: 1,
+    ancCount: 2,
+    gaWeeks: 42,
+    heightCm: 148,
+    weightDiffKg: 21,
+    fundalHeightCm: 38,
+    usWeightG: 4200,
+    hematocritPct: 28,
   });
   await db.execute(
     `INSERT INTO cpd_scores
@@ -153,19 +238,35 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
         factor_us_weight, factor_hematocrit, missing_factors, calculated_at, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      uuidv4(), p1Id, cpdP1.score, cpdP1.riskLevel, cpdP1.recommendation,
-      cpdP1.factorScores.gravida ?? null, cpdP1.factorScores.ancCount ?? null,
-      cpdP1.factorScores.gaWeeks ?? null, cpdP1.factorScores.heightCm ?? null,
-      cpdP1.factorScores.weightDiffKg ?? null, cpdP1.factorScores.fundalHeightCm ?? null,
-      cpdP1.factorScores.usWeightG ?? null, cpdP1.factorScores.hematocritPct ?? null,
-      JSON.stringify(cpdP1.missingFactors), now, now,
+      uuidv4(),
+      p1Id,
+      cpdP1.score,
+      cpdP1.riskLevel,
+      cpdP1.recommendation,
+      cpdP1.factorScores.gravida ?? null,
+      cpdP1.factorScores.ancCount ?? null,
+      cpdP1.factorScores.gaWeeks ?? null,
+      cpdP1.factorScores.heightCm ?? null,
+      cpdP1.factorScores.weightDiffKg ?? null,
+      cpdP1.factorScores.fundalHeightCm ?? null,
+      cpdP1.factorScores.usWeightG ?? null,
+      cpdP1.factorScores.hematocritPct ?? null,
+      JSON.stringify(cpdP1.missingFactors),
+      now,
+      now,
     ],
   );
 
   // Patient 2 — MEDIUM
   const cpdP2 = calculateCpdScore({
-    gravida: 2, ancCount: 3, gaWeeks: 40, heightCm: 153,
-    weightDiffKg: 16, fundalHeightCm: 35, usWeightG: 3200, hematocritPct: 33,
+    gravida: 2,
+    ancCount: 3,
+    gaWeeks: 40,
+    heightCm: 153,
+    weightDiffKg: 16,
+    fundalHeightCm: 35,
+    usWeightG: 3200,
+    hematocritPct: 33,
   });
   await db.execute(
     `INSERT INTO cpd_scores
@@ -174,19 +275,35 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
         factor_us_weight, factor_hematocrit, missing_factors, calculated_at, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      uuidv4(), p2Id, cpdP2.score, cpdP2.riskLevel, cpdP2.recommendation,
-      cpdP2.factorScores.gravida ?? null, cpdP2.factorScores.ancCount ?? null,
-      cpdP2.factorScores.gaWeeks ?? null, cpdP2.factorScores.heightCm ?? null,
-      cpdP2.factorScores.weightDiffKg ?? null, cpdP2.factorScores.fundalHeightCm ?? null,
-      cpdP2.factorScores.usWeightG ?? null, cpdP2.factorScores.hematocritPct ?? null,
-      JSON.stringify(cpdP2.missingFactors), now, now,
+      uuidv4(),
+      p2Id,
+      cpdP2.score,
+      cpdP2.riskLevel,
+      cpdP2.recommendation,
+      cpdP2.factorScores.gravida ?? null,
+      cpdP2.factorScores.ancCount ?? null,
+      cpdP2.factorScores.gaWeeks ?? null,
+      cpdP2.factorScores.heightCm ?? null,
+      cpdP2.factorScores.weightDiffKg ?? null,
+      cpdP2.factorScores.fundalHeightCm ?? null,
+      cpdP2.factorScores.usWeightG ?? null,
+      cpdP2.factorScores.hematocritPct ?? null,
+      JSON.stringify(cpdP2.missingFactors),
+      now,
+      now,
     ],
   );
 
   // Patient 3 — LOW
   const cpdP3 = calculateCpdScore({
-    gravida: 2, ancCount: 6, gaWeeks: 38, heightCm: 162,
-    weightDiffKg: 12, fundalHeightCm: 32, usWeightG: 2800, hematocritPct: 36,
+    gravida: 2,
+    ancCount: 6,
+    gaWeeks: 38,
+    heightCm: 162,
+    weightDiffKg: 12,
+    fundalHeightCm: 32,
+    usWeightG: 2800,
+    hematocritPct: 36,
   });
   await db.execute(
     `INSERT INTO cpd_scores
@@ -195,12 +312,22 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
         factor_us_weight, factor_hematocrit, missing_factors, calculated_at, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      uuidv4(), p3Id, cpdP3.score, cpdP3.riskLevel, cpdP3.recommendation,
-      cpdP3.factorScores.gravida ?? null, cpdP3.factorScores.ancCount ?? null,
-      cpdP3.factorScores.gaWeeks ?? null, cpdP3.factorScores.heightCm ?? null,
-      cpdP3.factorScores.weightDiffKg ?? null, cpdP3.factorScores.fundalHeightCm ?? null,
-      cpdP3.factorScores.usWeightG ?? null, cpdP3.factorScores.hematocritPct ?? null,
-      JSON.stringify(cpdP3.missingFactors), now, now,
+      uuidv4(),
+      p3Id,
+      cpdP3.score,
+      cpdP3.riskLevel,
+      cpdP3.recommendation,
+      cpdP3.factorScores.gravida ?? null,
+      cpdP3.factorScores.ancCount ?? null,
+      cpdP3.factorScores.gaWeeks ?? null,
+      cpdP3.factorScores.heightCm ?? null,
+      cpdP3.factorScores.weightDiffKg ?? null,
+      cpdP3.factorScores.fundalHeightCm ?? null,
+      cpdP3.factorScores.usWeightG ?? null,
+      cpdP3.factorScores.hematocritPct ?? null,
+      JSON.stringify(cpdP3.missingFactors),
+      now,
+      now,
     ],
   );
 
@@ -212,24 +339,88 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
         factor_us_weight, factor_hematocrit, missing_factors, calculated_at, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      uuidv4(), p4Id, cpdP1.score, cpdP1.riskLevel, cpdP1.recommendation,
-      cpdP1.factorScores.gravida ?? null, cpdP1.factorScores.ancCount ?? null,
-      cpdP1.factorScores.gaWeeks ?? null, cpdP1.factorScores.heightCm ?? null,
-      cpdP1.factorScores.weightDiffKg ?? null, cpdP1.factorScores.fundalHeightCm ?? null,
-      cpdP1.factorScores.usWeightG ?? null, cpdP1.factorScores.hematocritPct ?? null,
-      JSON.stringify(cpdP1.missingFactors), now, now,
+      uuidv4(),
+      p4Id,
+      cpdP1.score,
+      cpdP1.riskLevel,
+      cpdP1.recommendation,
+      cpdP1.factorScores.gravida ?? null,
+      cpdP1.factorScores.ancCount ?? null,
+      cpdP1.factorScores.gaWeeks ?? null,
+      cpdP1.factorScores.heightCm ?? null,
+      cpdP1.factorScores.weightDiffKg ?? null,
+      cpdP1.factorScores.fundalHeightCm ?? null,
+      cpdP1.factorScores.usWeightG ?? null,
+      cpdP1.factorScores.hematocritPct ?? null,
+      JSON.stringify(cpdP1.missingFactors),
+      now,
+      now,
     ],
   );
 
   // --- Seed vital signs for Patient 1 (6 readings over 12 hours) ---
   const baseTime = new Date('2026-03-01T08:00:00.000Z');
   const vitalReadings = [
-    { hoursOffset: 0, maternalHr: 82, fetalHr: '140', sbp: 120, dbp: 78, cervixCm: 3, effPct: 40, station: '-3' },
-    { hoursOffset: 2, maternalHr: 85, fetalHr: '142', sbp: 122, dbp: 80, cervixCm: 4, effPct: 50, station: '-2' },
-    { hoursOffset: 4, maternalHr: 88, fetalHr: '138', sbp: 125, dbp: 82, cervixCm: 5, effPct: 60, station: '-1' },
-    { hoursOffset: 6, maternalHr: 90, fetalHr: '144', sbp: 128, dbp: 84, cervixCm: 6, effPct: 70, station: '0' },
-    { hoursOffset: 8, maternalHr: 92, fetalHr: '146', sbp: 130, dbp: 85, cervixCm: 7, effPct: 80, station: '+1' },
-    { hoursOffset: 10, maternalHr: 95, fetalHr: '148', sbp: 132, dbp: 86, cervixCm: 8, effPct: 90, station: '+2' },
+    {
+      hoursOffset: 0,
+      maternalHr: 82,
+      fetalHr: '140',
+      sbp: 120,
+      dbp: 78,
+      cervixCm: 3,
+      effPct: 40,
+      station: '-3',
+    },
+    {
+      hoursOffset: 2,
+      maternalHr: 85,
+      fetalHr: '142',
+      sbp: 122,
+      dbp: 80,
+      cervixCm: 4,
+      effPct: 50,
+      station: '-2',
+    },
+    {
+      hoursOffset: 4,
+      maternalHr: 88,
+      fetalHr: '138',
+      sbp: 125,
+      dbp: 82,
+      cervixCm: 5,
+      effPct: 60,
+      station: '-1',
+    },
+    {
+      hoursOffset: 6,
+      maternalHr: 90,
+      fetalHr: '144',
+      sbp: 128,
+      dbp: 84,
+      cervixCm: 6,
+      effPct: 70,
+      station: '0',
+    },
+    {
+      hoursOffset: 8,
+      maternalHr: 92,
+      fetalHr: '146',
+      sbp: 130,
+      dbp: 85,
+      cervixCm: 7,
+      effPct: 80,
+      station: '+1',
+    },
+    {
+      hoursOffset: 10,
+      maternalHr: 95,
+      fetalHr: '148',
+      sbp: 132,
+      dbp: 86,
+      cervixCm: 8,
+      effPct: 90,
+      station: '+2',
+    },
   ];
   for (const v of vitalReadings) {
     const measuredAt = new Date(baseTime.getTime() + v.hoursOffset * 3600000).toISOString();
@@ -239,8 +430,18 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
           effacement_pct, station, synced_at, created_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        uuidv4(), p1Id, measuredAt, v.maternalHr, v.fetalHr, v.sbp, v.dbp, v.cervixCm,
-        v.effPct, v.station, now, now,
+        uuidv4(),
+        p1Id,
+        measuredAt,
+        v.maternalHr,
+        v.fetalHr,
+        v.sbp,
+        v.dbp,
+        v.cervixCm,
+        v.effPct,
+        v.station,
+        now,
+        now,
       ],
     );
   }
@@ -250,7 +451,7 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
   await db.execute(
     `INSERT INTO users (id, bms_user_name, bms_hospital_code, bms_position, role, is_active, created_at, updated_at)
      VALUES (?,?,?,?,?,?,?,?)`,
-    [userId, 'nurse_somying', '10670', 'Nurse', 'NURSE', 1, now, now],
+    [userId, 'nurse_somying', '10670', 'Nurse', 'NURSE', true, now, now],
   );
 
   return { hospitalIds, patientIds, userId };
@@ -260,12 +461,11 @@ async function seedRealisticData(db: DatabaseAdapter): Promise<SeededData> {
 // Tests
 // ===========================================================================
 describe('Full Flow Integration Tests', () => {
-  let db: SqliteAdapter;
+  let db: DatabaseAdapter;
   let seeded: SeededData;
 
   beforeEach(async () => {
-    db = new SqliteAdapter(':memory:');
-    await SchemaSync.sync(db, ALL_TABLES, 'sqlite');
+    db = await createTestDb();
     await new SeedOrchestrator().run(db);
     seeded = await seedRealisticData(db);
   });
@@ -337,8 +537,14 @@ describe('Full Flow Integration Tests', () => {
       // hematocritPct=28 -> 1.5 (< 30)
       // Total expected: 2 + 1.5 + 1.5 + 2 + 2 + 2 + 2 + 1.5 = 14.5
       const result = calculateCpdScore({
-        gravida: 1, ancCount: 2, gaWeeks: 42, heightCm: 148,
-        weightDiffKg: 21, fundalHeightCm: 38, usWeightG: 4200, hematocritPct: 28,
+        gravida: 1,
+        ancCount: 2,
+        gaWeeks: 42,
+        heightCm: 148,
+        weightDiffKg: 21,
+        fundalHeightCm: 38,
+        usWeightG: 4200,
+        hematocritPct: 28,
       });
 
       expect(result.score).toBe(14.5);
@@ -367,8 +573,14 @@ describe('Full Flow Integration Tests', () => {
       // hematocritPct=33 -> 0 (>= 30)
       // Total: 0 + 1.5 + 1.5 + 1 + 1 + 1 + 1 + 0 = 7
       const result = calculateCpdScore({
-        gravida: 2, ancCount: 3, gaWeeks: 40, heightCm: 153,
-        weightDiffKg: 16, fundalHeightCm: 35, usWeightG: 3200, hematocritPct: 33,
+        gravida: 2,
+        ancCount: 3,
+        gaWeeks: 40,
+        heightCm: 153,
+        weightDiffKg: 16,
+        fundalHeightCm: 35,
+        usWeightG: 3200,
+        hematocritPct: 33,
       });
 
       expect(result.score).toBe(7);
@@ -380,8 +592,14 @@ describe('Full Flow Integration Tests', () => {
       // weightDiffKg=12 -> 0, fundalHeightCm=32 -> 0, usWeightG=2800 -> 0, hematocritPct=36 -> 0
       // Total: 0
       const result = calculateCpdScore({
-        gravida: 2, ancCount: 6, gaWeeks: 38, heightCm: 162,
-        weightDiffKg: 12, fundalHeightCm: 32, usWeightG: 2800, hematocritPct: 36,
+        gravida: 2,
+        ancCount: 6,
+        gaWeeks: 38,
+        heightCm: 162,
+        weightDiffKg: 12,
+        fundalHeightCm: 32,
+        usWeightG: 2800,
+        hematocritPct: 36,
       });
 
       expect(result.score).toBe(0);
@@ -397,8 +615,14 @@ describe('Full Flow Integration Tests', () => {
       expect(stored).toHaveLength(1);
 
       const recalculated = calculateCpdScore({
-        gravida: 1, ancCount: 2, gaWeeks: 42, heightCm: 148,
-        weightDiffKg: 21, fundalHeightCm: 38, usWeightG: 4200, hematocritPct: 28,
+        gravida: 1,
+        ancCount: 2,
+        gaWeeks: 42,
+        heightCm: 148,
+        weightDiffKg: 21,
+        fundalHeightCm: 38,
+        usWeightG: 4200,
+        hematocritPct: 28,
       });
       expect(stored[0].score).toBe(recalculated.score);
       expect(stored[0].risk_level).toBe(recalculated.riskLevel);
@@ -566,14 +790,18 @@ describe('Full Flow Integration Tests', () => {
     it('pagination works correctly', async () => {
       // Hospital 10671 has 2 active patients
       const page1 = await getHospitalPatientList(db, '11000', {
-        status: 'active', perPage: 1, page: 1,
+        status: 'active',
+        perPage: 1,
+        page: 1,
       });
       expect(page1.patients).toHaveLength(1);
       expect(page1.pagination.total).toBe(2);
       expect(page1.pagination.totalPages).toBe(2);
 
       const page2 = await getHospitalPatientList(db, '11000', {
-        status: 'active', perPage: 1, page: 2,
+        status: 'active',
+        perPage: 1,
+        page: 2,
       });
       expect(page2.patients).toHaveLength(1);
 
@@ -639,7 +867,7 @@ describe('Full Flow Integration Tests', () => {
         resource_id: string | null;
         ip_address: string | null;
         user_agent: string | null;
-        metadata: string | null;
+        metadata: Record<string, unknown> | null;
         created_at: string;
       }>(
         'SELECT user_id, action, resource_type, resource_id, ip_address, user_agent, metadata, created_at FROM audit_logs WHERE user_id = ? ORDER BY created_at ASC',
@@ -663,7 +891,7 @@ describe('Full Flow Integration Tests', () => {
       // Verify PRINT entry with metadata
       expect(logs[2].action).toBe('PRINT');
       expect(logs[2].metadata).toBeTruthy();
-      const meta = JSON.parse(logs[2].metadata!);
+      const meta = logs[2].metadata!;
       expect(meta.format).toBe('PDF');
       expect(meta.includeVitals).toBe(true);
     });
@@ -727,9 +955,7 @@ describe('Full Flow Integration Tests', () => {
       );
 
       // Now change to OFFLINE
-      await db.execute(
-        "UPDATE hospitals SET connection_status = 'OFFLINE' WHERE hcode = '10670'",
-      );
+      await db.execute("UPDATE hospitals SET connection_status = 'OFFLINE' WHERE hcode = '10670'");
 
       const result = await getProvinceDashboard(db);
       const h10670 = result.hospitals.find((h) => h.hcode === '10670');
@@ -748,9 +974,7 @@ describe('Full Flow Integration Tests', () => {
         "UPDATE hospitals SET connection_status = 'ONLINE', last_sync_at = ? WHERE hcode = '10670'",
         [new Date().toISOString()],
       );
-      await db.execute(
-        "UPDATE hospitals SET connection_status = 'OFFLINE' WHERE hcode = '11000'",
-      );
+      await db.execute("UPDATE hospitals SET connection_status = 'OFFLINE' WHERE hcode = '11000'");
 
       const result = await getProvinceDashboard(db);
       const h10670 = result.hospitals.find((h) => h.hcode === '10670');
@@ -767,7 +991,9 @@ describe('Full Flow Integration Tests', () => {
   describe('Scenario 8: Health check reflects system state', () => {
     it('health endpoint shows correct connection summary', async () => {
       // Mark 2 hospitals ONLINE, 1 OFFLINE
-      await db.execute("UPDATE hospitals SET connection_status = 'ONLINE' WHERE hcode IN ('10670','11000')");
+      await db.execute(
+        "UPDATE hospitals SET connection_status = 'ONLINE' WHERE hcode IN ('10670','11000')",
+      );
       await db.execute("UPDATE hospitals SET connection_status = 'OFFLINE' WHERE hcode = '11002'");
       // Rest remain UNKNOWN
 
@@ -790,7 +1016,9 @@ describe('Full Flow Integration Tests', () => {
 
     it('status is healthy when no hospital is offline', async () => {
       // Note: UNKNOWN does NOT cause degraded -- only OFFLINE does
-      await db.execute("UPDATE hospitals SET connection_status = 'ONLINE' WHERE hcode IN ('10670','11000')");
+      await db.execute(
+        "UPDATE hospitals SET connection_status = 'ONLINE' WHERE hcode IN ('10670','11000')",
+      );
       // Rest are UNKNOWN
 
       const health = await getHealthStatus(db);

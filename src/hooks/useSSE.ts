@@ -1,7 +1,7 @@
 // T053: useSSE hook — EventSource for real-time updates
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SsePatientUpdateEvent, SseConnectionStatusEvent } from '@/types/api';
 import { withBasePath } from '@/lib/base-path';
 
@@ -11,7 +11,12 @@ interface UseSSEOptions {
   onSyncComplete?: (data: { hcode: string; patientsUpdated: number }) => void;
 }
 
-export function useSSE(options: UseSSEOptions = {}) {
+/** Live health of the EventSource — lets pages show a truthful LIVE/SSE
+ *  indicator instead of a hardcoded "OK". */
+export type SseConnectionState = 'connecting' | 'connected' | 'reconnecting';
+
+export function useSSE(options: UseSSEOptions = {}): { connectionState: SseConnectionState } {
+  const [connectionState, setConnectionState] = useState<SseConnectionState>('connecting');
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -59,10 +64,12 @@ export function useSSE(options: UseSSEOptions = {}) {
 
       es.addEventListener('connected', () => {
         reconnectAttemptRef.current = 0;
+        setConnectionState('connected');
       });
 
       es.onerror = () => {
         es.close();
+        setConnectionState('reconnecting');
         // Exponential backoff: 1s, 2s, 4s, 8s, max 30s
         const delay = Math.min(1000 * Math.pow(2, reconnectAttemptRef.current), 30000);
         reconnectAttemptRef.current++;
@@ -79,4 +86,6 @@ export function useSSE(options: UseSSEOptions = {}) {
       }
     };
   }, []);
+
+  return { connectionState };
 }
